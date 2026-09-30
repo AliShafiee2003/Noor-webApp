@@ -390,7 +390,8 @@ export function ResultCard({
     const citation = [
       result.work?.title ?? "",
       docPart,
-      pageLabel ? `صفحهٔ ${pageLabel}` : "",
+      /* صفحهٔ بدون شمارهٔ چاپی («—») در ارجاع نمی‌آید — بدون جعل شماره */
+      pageLabel && pageLabel !== "—" ? `صفحهٔ ${pageLabel}` : "",
     ]
       .filter(Boolean)
       .join("، ");

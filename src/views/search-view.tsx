@@ -332,21 +332,29 @@ export function SearchView() {
     setDraft(parseSearchParams(route.query));
   }
 
+  /** ساخت پارامترهای hash از وضعیت فرم — مشترک میان setQuery و submit */
+  const searchQueryParams = useCallback(
+    (state: SearchHashState): Record<string, string | undefined> => ({
+      q: state.q.trim() || undefined,
+      mode: state.mode,
+      scope: state.scope,
+      work: state.work || undefined,
+      doc: state.doc || undefined,
+      roles: state.roles.length > 0 ? state.roles.join(",") : undefined,
+      lang: state.lang || undefined,
+      slop: state.mode === "near" ? String(state.slop) : undefined,
+      ordered: state.mode === "near" && !state.ordered ? "0" : undefined,
+    }),
+    [],
+  );
+
   /** نوشتن وضعیت در hash — هر بار کل پارامترها داده می‌شود */
   const setQuery = useCallback(
     (state: SearchHashState, extra: Record<string, string | undefined> = {}, replace = false) => {
       navigate(
         "/search",
         {
-          q: state.q.trim() || undefined,
-          mode: state.mode,
-          scope: state.scope,
-          work: state.work || undefined,
-          doc: state.doc || undefined,
-          roles: state.roles.length > 0 ? state.roles.join(",") : undefined,
-          lang: state.lang || undefined,
-          slop: state.mode === "near" ? String(state.slop) : undefined,
-          ordered: state.mode === "near" && !state.ordered ? "0" : undefined,
+          ...searchQueryParams(state),
           page: undefined,
           view: undefined,
           ...extra,
@@ -354,12 +362,22 @@ export function SearchView() {
         { replace },
       );
     },
-    [navigate],
+    [navigate, searchQueryParams],
   );
 
+  const queryClient = useQueryClient();
   const submit = useCallback(() => {
+    /* اگر پارامترهای جست‌وجو تغییر نکرده باشد، navigate بی‌اثر است و کشِ
+       نشست دوباره استفاده می‌شد — برای «اجرای دوبارهٔ همان جست‌وجو» (پس از
+       انقضای نشست سرور یا بازسازی نمایه) کش باطل و بازاجرایی می‌شود
+       (SEARCH-20/WORK-02). در غیر این صورت hash با پارامترهای تازه نوشته
+       می‌شود و کلید تازه، نشست تازه می‌سازد. */
+    if (searchStateKey(draft) === searchKey) {
+      queryClient.invalidateQueries({ queryKey: ["search-session", searchKey] });
+      return;
+    }
     setQuery(draft);
-  }, [draft, setQuery]);
+  }, [draft, queryClient, searchKey, setQuery]);
 
   const patchCommitted = useCallback(
     (patch: Partial<SearchHashState>) => {
@@ -768,6 +786,11 @@ export function SearchView() {
                     <BooksGroupedView
                       sessionUid={sessionUid}
                       onSessionExpired={() => void sessionQuery.refetch()}
+                      releaseUid={meta?.release_uid ?? null}
+                      onOpenSplit={openSplit}
+                      splitActiveUid={
+                        splitLocator ? splitLocator.key.split(":")[0] : null
+                      }
                     />
                   </TabsContent>
                 </Tabs>

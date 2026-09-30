@@ -5,100 +5,50 @@
  * POST /search/{sessionUID}/books → گروه‌بندی اثر/سند با شواهد.
  * عنوان دقیق: «منابع دارای این عبارت» + توضیح صریح: این فهرست به معنی
  * اثبات یکسانی حدیث یا اعتبار سند نیست (عدم جعل قطعیت).
+ *
+ * شواهد هر سند با همان کارت نتیجهٔ مواضع (ResultCard) رندر می‌شود تا
+ * همهٔ اقدام‌ها یکسان در دسترس باشد: نشان نوع تطبیق، چیپ روایت لینک‌پذیر
+ * (HAD-08) با «در کدام کتاب‌ها؟» (§۴۷)، افزودن به فیش، کپی ارجاع و
+ * «کنار نتایج» (SEARCH-11). پاسخ سرور برای شواهد همان ساختار Result است.
  */
 import { useQuery } from "@tanstack/react-query";
-import { BookOpenText, FileText, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState, ListSkeleton } from "@/components/feedback";
 import { api, ApiError, errorMessage } from "@/lib/api";
-import { HashLink } from "@/lib/hash-router";
 import { faNum } from "@/lib/format";
-import type { SearchBooksGroup, SearchHighlight } from "@/lib/types";
-import {
-  HighlightedSnippet,
-  normalizeOffsets,
-} from "@/components/search/result-card";
+import { ResultCard } from "@/components/search/result-card";
+import type { SearchResultItem } from "@/lib/types";
 
 interface BooksResponse {
-  groups: SearchBooksGroup[];
-}
-
-/** شاهد سند — سرور همان ساختار Result را می‌فرستد؛ ساختار محلی با پوشش کامل */
-interface EvidenceItem {
-  passage_uid?: string;
-  snippet?: string;
-  highlight?: SearchHighlight[];
-  page?: { uid: string; label: string } | null;
-  document?: { uid: string; label: string } | null;
-  source_offsets?: unknown;
-  match_offsets?: [number, number] | null;
-}
-
-function EvidenceRow({
-  evidence,
-  workUid,
-}: {
-  evidence: EvidenceItem;
-  workUid: string;
-}) {
-  const docUid = evidence.document?.uid ?? null;
-  const offsets = evidence.source_offsets ? normalizeOffsets(evidence.source_offsets) : null;
-  const hlOffsets = normalizeOffsets(evidence.match_offsets) ?? offsets;
-  const readHref = docUid
-    ? {
-        to: `/read/${docUid}`,
-        query: {
-          ...(evidence.page?.uid ? { pg: evidence.page.uid } : {}),
-          ...(hlOffsets ? { hl: `${hlOffsets.start}:${hlOffsets.end}` } : {}),
-        },
-      }
-    : null;
-
-  return (
-    <li className="rounded-lg border border-border bg-reader p-3">
-      <p className="mb-2 text-xs text-muted-foreground">
-        {[
-          evidence.document?.label ? `سند: ${evidence.document.label}` : null,
-          evidence.page?.label ? `صفحهٔ چاپی: ${evidence.page.label}` : null,
-        ]
-          .filter(Boolean)
-          .join(" · ") || "جای‌گیری ثبت نشده"}
-      </p>
-      {evidence.snippet ? (
-        <HighlightedSnippet snippet={evidence.snippet} highlight={evidence.highlight} />
-      ) : (
-        <p className="text-sm text-muted-foreground">شاهدی برای این سند ثبت نشده است.</p>
-      )}
-      {readHref ? (
-        <HashLink
-          to={readHref.to}
-          query={readHref.query}
-          className="mt-2 inline-flex min-h-9 items-center gap-1.5 rounded-md px-2 text-sm text-link hover:underline md:min-h-0"
-        >
-          <FileText className="size-4" aria-hidden="true" />
-          بازکردن در متن
-        </HashLink>
-      ) : workUid ? (
-        <HashLink
-          to={`/book/${workUid}`}
-          className="mt-2 inline-flex min-h-9 items-center gap-1.5 rounded-md px-2 text-sm text-link hover:underline md:min-h-0"
-        >
-          <BookOpenText className="size-4" aria-hidden="true" />
-          بازکردن اثر
-        </HashLink>
-      ) : null}
-    </li>
-  );
+  groups: {
+    work: { uid: string; title?: string | null };
+    documents: Array<{
+      document: { uid: string; label?: string | null };
+      verified_occurrences?: number | null;
+      /** شواهد — همان ساختار Result موتور؛ به ResultCard منتقل می‌شود */
+      evidence: SearchResultItem[];
+    }>;
+  }[];
 }
 
 export function BooksGroupedView({
   sessionUid,
   onSessionExpired,
+  releaseUid,
+  onOpenSplit,
+  splitActiveUid,
 }: {
   sessionUid: string | null;
   onSessionExpired: () => void;
+  /** نسخهٔ فعال نمایه برای ثبت فیش (TECH-08) */
+  releaseUid?: string | null;
+  /** SEARCH-11: بازکردن شاهد در پنل کنار نتایج */
+  onOpenSplit?: (result: SearchResultItem) => void;
+  /** گذرِ نتیجه‌ای که اکنون در پنل باز است (نشانی سند) */
+  splitActiveUid?: string | null;
 }) {
   const query = useQuery({
     queryKey: ["search-books", sessionUid],
@@ -221,14 +171,22 @@ export function BooksGroupedView({
                             </span>
                           ) : null}
                         </div>
-                        {(doc.evidence as unknown as EvidenceItem[]).length > 0 ? (
+                        {doc.evidence?.length > 0 ? (
                           <ul className="mt-2 space-y-2">
-                            {(doc.evidence as unknown as EvidenceItem[]).map((ev, i) => (
-                              <EvidenceRow
-                                key={`${doc.document.uid}-${i}`}
-                                evidence={ev}
-                                workUid={group.work.uid}
-                              />
+                            {doc.evidence.map((ev, i) => (
+                              /* کلید با ایندکس — ممکن است دو تطبیقِ یک passage
+                                 (با بازهٔ متفاوت) در شواهد یک سند بیاید */
+                              <li key={`${doc.document.uid}-${ev.passage_uid ?? "ev"}-${i}`}>
+                                <ResultCard
+                                  result={ev}
+                                  releaseUid={releaseUid ?? null}
+                                  onOpenSplit={onOpenSplit}
+                                  splitActive={
+                                    Boolean(splitActiveUid) &&
+                                    ev.document?.uid === splitActiveUid
+                                  }
+                                />
+                              </li>
                             ))}
                           </ul>
                         ) : (

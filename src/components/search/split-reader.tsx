@@ -14,6 +14,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   BookOpenText,
+  BookMarked,
+  Check,
   ChevronLeft,
   ChevronRight,
   Copy,
@@ -208,6 +210,45 @@ export function SplitReaderPanel({ locator, onClose, onNavigate }: PanelProps) {
     window.setTimeout(() => setFlash(null), 1500);
   }, [locator, pageQuery.data?.label]);
 
+  /* RES-08: ارجاع متنی + نشانی عمیق — همان قاعدهٔ کارت نتیجه (بدون تکرار «جلد») */
+  const [citationCopied, setCitationCopied] = useState(false);
+  const copyCitation = useCallback(async () => {
+    const docLabel = locator.documentLabel;
+    const docPart = docLabel
+      ? /^ج\s|جلد/.test(docLabel)
+        ? docLabel
+        : `جلد ${docLabel}`
+      : "";
+    const citation = [
+      locator.workTitle,
+      docPart,
+      /* صفحهٔ بدون شمارهٔ چاپی («—»، آغاز سند) در ارجاع نمی‌آید — بدون جعل شماره */
+      pageQuery.data?.label && pageQuery.data.label !== "—"
+        ? `صفحهٔ ${pageQuery.data.label}`
+        : "",
+    ]
+      .filter(Boolean)
+      .join("، ");
+    const address = `#/read/${locator.documentUid}${
+      resolvedPageUid || locator.hl
+        ? `?${[
+            resolvedPageUid ? `pg=${resolvedPageUid}` : "",
+            locator.hl ? `hl=${locator.hl[0]}:${locator.hl[1]}` : "",
+          ]
+            .filter(Boolean)
+            .join("&")}`
+        : ""
+    }`;
+    try {
+      await navigator.clipboard.writeText([citation, address].filter(Boolean).join("\n"));
+      setCitationCopied(true);
+      window.setTimeout(() => setCitationCopied(false), 1500);
+    } catch {
+      setFlash("کپی ممکن نشد");
+      window.setTimeout(() => setFlash(null), 1500);
+    }
+  }, [locator, pageQuery.data, resolvedPageUid]);
+
   /* ---------- ناوبری صفحه‌ای درون پنل ---------- */
   const pageIdx = pageRefs.findIndex((p) => p.page_uid === resolvedPageUid);
   const jumpPage = useCallback(
@@ -247,6 +288,16 @@ export function SplitReaderPanel({ locator, onClose, onNavigate }: PanelProps) {
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-1">
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="کپی ارجاع متنی با نشانی عمیق"
+            title="ارجاع متنی + نشانی عمیق برای یادداشت‌های شما (RES-08)"
+            className="size-8"
+            onClick={() => void copyCitation()}
+          >
+            {citationCopied ? <Check className="size-3.5 text-primary" /> : <BookMarked className="size-3.5" />}
+          </Button>
           <Button
             variant="ghost"
             size="icon"
