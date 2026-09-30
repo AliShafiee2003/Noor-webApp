@@ -483,16 +483,17 @@ export interface Clip {
   trashed?: boolean;
 }
 
-export interface NoteTarget {
+/**
+ * یادداشت شخصی روی سند/صفحه (RES) — شکل تختِ هم‌نام با سرور:
+ * GET /notes → {items:[Note]}؛ POST /notes → Note؛ PATCH /notes/{uid} {version,body}
+ * هیچ توکن/شناسهٔ خصوصی دیگری جابه‌جا نمی‌شود.
+ */
+export interface Note {
+  uid: string;
   document_uid: string;
   page_uid?: string | null;
   section_uid?: string | null;
   local_hadith_uid?: string | null;
-}
-
-export interface Note {
-  uid: string;
-  target: NoteTarget;
   body: string;
   version: number;
   created_at?: string | null;

@@ -21,12 +21,14 @@ import {
   PanelLeftOpen,
   Search,
   SlidersHorizontal,
+  StickyNote,
 } from "lucide-react";
-import type { Bookmark as BookmarkT } from "@/lib/types";
+import type { Bookmark as BookmarkT, Note as NoteT } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
+import { faNum } from "@/lib/format";
 import type {
   BlockLink,
   PageBlock,
@@ -43,6 +45,7 @@ import { FicheDialog } from "@/components/reader/fiche-dialog";
 import { HadithLocationsDialog } from "@/components/search/hadith-locations-dialog";
 import { ReaderToolbar } from "@/components/reader/reader-toolbar";
 import { SettingsPopover } from "@/components/reader/settings-popover";
+import { NotesPanel } from "@/components/reader/notes-panel";
 
 export function ReaderView({ documentUid }: { documentUid: string }) {
   const queryClient = useQueryClient();
@@ -122,6 +125,17 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
     queryFn: () => api.get<{ items: BookmarkT[] }>("/bookmarks"),
   });
 
+  /* یادداشت‌های شخصی (RES) — شمار برای نشان؛ دادهٔ کامل در NotesPanel با همان کلید */
+  const notesCountQuery = useQuery({
+    queryKey: ["notes", documentUid],
+    queryFn: () => api.get<{ items: NoteT[] }>("/notes", { document_uid: documentUid }),
+    staleTime: 15_000,
+    retry: false,
+  });
+  const pageNoteCount =
+    notesCountQuery.data?.items.filter((n) => n.page_uid === currentPageUid).length ?? 0;
+  const docNoteCount = notesCountQuery.data?.items.length ?? 0;
+
   /* ---------- نگاشت بلوک→بخش برای لنگر فهرست ---------- */
   const sectionUidByBlockId = useMemo(() => {
     const map: Record<string, string> = {};
@@ -151,6 +165,10 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
   const [selection, setSelection] = useState<ReaderSelection | null>(null);
   const [ficheOpen, setFicheOpen] = useState(false);
   const [saveFlash, setSaveFlash] = useState<string | null>(null);
+  /** تب پنل زمینه: پاورقی/آیه/روایت یا یادداشت‌ها */
+  const [ctxTab, setCtxTab] = useState<"context" | "notes">("context");
+  /** شیت یادداشت‌ها در موبایل/تبلت */
+  const [notesSheetOpen, setNotesSheetOpen] = useState(false);
   /* §۴۷: پرس‌وجوی میان‌کتابی روایت از پنل زمینه */
   const [hadithLookupUid, setHadithLookupUid] = useState<string | null>(null);
 
@@ -159,6 +177,11 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
     setFootnote(null);
     setSelection(null);
   }, [currentPageUid]);
+
+  /* بازشدن پاورقی/ارجاع → تب زمینه فعال می‌شود تا محتوا دیده شود */
+  useEffect(() => {
+    if (footnote) setCtxTab("context");
+  }, [footnote]);
 
   /* highlight نتیجهٔ جست‌وجو → بلوک مقصد */
   /* آفست hl سطح سند است؛ با source_offsets بلوک‌ها به مختصات درون‌بلوکی نگاشت می‌شود (بدون hlb) */
@@ -517,16 +540,46 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
 
         {/* پنل زمینه — دسکتاپ */}
         <aside className="hidden w-80 shrink-0 border-s border-border xl:block">
-          <div className="flex items-center justify-between border-b border-border px-3 py-2">
-            <span className="text-sm font-medium">پنل زمینه</span>
-            {footnote && (
-              <Button variant="ghost" size="sm" onClick={() => setFootnote(null)}>
-                بستن
-              </Button>
-            )}
+          {/* تب‌های زمینه / یادداشت */}
+          <div role="tablist" aria-label="پنل کناری متن" className="flex border-b border-border">
+            <button
+              role="tab"
+              aria-selected={ctxTab === "context"}
+              onClick={() => setCtxTab("context")}
+              className={`min-h-11 flex-1 border-b-2 px-2 text-xs font-medium transition-colors md:min-h-9 ${
+                ctxTab === "context"
+                  ? "border-primary bg-primary/5 text-foreground"
+                  : "border-transparent text-muted-foreground hover:bg-accent/60"
+              }`}
+            >
+              زمینه
+            </button>
+            <button
+              role="tab"
+              aria-selected={ctxTab === "notes"}
+              onClick={() => setCtxTab("notes")}
+              className={`min-h-11 flex-1 border-b-2 px-2 text-xs font-medium transition-colors md:min-h-9 ${
+                ctxTab === "notes"
+                  ? "border-primary bg-primary/5 text-foreground"
+                  : "border-transparent text-muted-foreground hover:bg-accent/60"
+              }`}
+            >
+              یادداشت‌ها
+              {docNoteCount > 0 ? (
+                <span className="ms-1 inline-flex min-w-5 justify-center rounded-full bg-primary/15 px-1 text-[10px] font-semibold text-primary">
+                  {faNum(docNoteCount)}
+                </span>
+              ) : null}
+            </button>
           </div>
-          <div className="h-[calc(100%-2.6rem)] overflow-y-auto">
-            {footnote ? (
+          <div className="h-[calc(100%-2.75rem)] overflow-y-auto">
+            {ctxTab === "notes" ? (
+              <NotesPanel
+                documentUid={documentUid}
+                currentPageUid={currentPageUid}
+                pageLabel={pageQuery.data?.label ?? null}
+              />
+            ) : footnote ? (
               <FootnotePanel
                 data={footnote}
                 onBack={() => setFootnote(null)}
@@ -559,6 +612,25 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
         </div>
       )}
 
+      {/* یادداشت‌ها — موبایل/تبلت: شیت پایین */}
+      <Sheet open={notesSheetOpen} onOpenChange={setNotesSheetOpen}>
+        <SheetContent side="bottom" className="flex h-[75vh] flex-col overflow-hidden">
+          <SheetHeader className="border-b border-border pb-2">
+            <SheetTitle className="flex items-center gap-1.5 text-sm">
+              <StickyNote className="size-4 text-primary" aria-hidden="true" />
+              یادداشت‌های این سند
+            </SheetTitle>
+          </SheetHeader>
+          <div className="min-h-0 flex-1 overflow-hidden">
+            <NotesPanel
+              documentUid={documentUid}
+              currentPageUid={currentPageUid}
+              pageLabel={pageQuery.data?.label ?? null}
+            />
+          </div>
+        </SheetContent>
+      </Sheet>
+
       <FicheDialog
         open={ficheOpen}
         onOpenChange={(o) => {
@@ -583,6 +655,23 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
 
       {/* دکمه‌های شناور برای موبایل */}
       <div className="fixed bottom-20 left-3 z-30 flex gap-2 xl:hidden">
+        <Button
+          size="icon"
+          variant={pageNoteCount > 0 ? "default" : "outline"}
+          aria-label={`یادداشت‌ها${pageNoteCount > 0 ? ` (${pageNoteCount} در این صفحه)` : ""}`}
+          title={pageNoteCount > 0 ? `${pageNoteCount} یادداشت در این صفحه` : "یادداشت‌ها"}
+          className="size-11 rounded-full bg-surface"
+          onClick={() => setNotesSheetOpen(true)}
+        >
+          <span className="relative">
+            <StickyNote className="size-4" />
+            {pageNoteCount > 0 ? (
+              <span className="absolute -end-1.5 -top-2 min-w-3.5 rounded-full bg-primary px-0.5 text-center text-[9px] font-bold leading-3.5 text-primary-foreground">
+                {faNum(pageNoteCount)}
+              </span>
+            ) : null}
+          </span>
+        </Button>
         <Button
           size="icon"
           variant="outline"
