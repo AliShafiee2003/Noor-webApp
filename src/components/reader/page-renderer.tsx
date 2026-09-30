@@ -123,12 +123,14 @@ function BlockText({
   highlight,
   onFootnoteClick,
   onLinkClick,
+  semantic,
 }: {
   block: PageBlock;
   footnoteLabelFor: (refUid: string) => string | null;
   highlight: { start: number; end: number; blockId?: string | null } | null;
   onFootnoteClick: (refUid: string, anchorId: string) => void;
   onLinkClick: (link: BlockLink) => void;
+  semantic: boolean;
 }) {
   const cps = useMemo(() => Array.from(block.text), [block.text]);
   const cpLen = cps.length;
@@ -232,6 +234,14 @@ function BlockText({
           );
         }
         const span = mark.span as BlockSpan;
+        if (!semantic) {
+          // READ-13 خاموش: نقش‌ها فقط متن ساده — بدون رنگ و نشان (دسترس‌پذیر و خنثی)
+          return (
+            <span key={i} data-cp-start={seg.start} data-cp-end={seg.end}>
+              {text}
+            </span>
+          );
+        }
         switch (span.role) {
           case "sanad":
             return (
@@ -455,6 +465,8 @@ interface BlockViewProps {
   onFootnoteClick: (refUid: string, anchorId: string) => void;
   onLinkClick: (link: BlockLink) => void;
   onToggleSanad: (blockId: string) => void;
+  /** READ-13: نمایش رنگ/نشان نقش‌های معنایی */
+  semantic: boolean;
 }
 
 function BlockView({
@@ -466,6 +478,7 @@ function BlockView({
   onFootnoteClick,
   onLinkClick,
   onToggleSanad,
+  semantic,
 }: BlockViewProps) {
   const isPersian = blockIsPersian(block);
   const style: React.CSSProperties = {
@@ -476,6 +489,7 @@ function BlockView({
   const text = (
     <BlockText
       block={block}
+      semantic={semantic}
       highlight={highlight}
       footnoteLabelFor={footnoteLabelFor}
       onFootnoteClick={onFootnoteClick}
@@ -737,6 +751,7 @@ export function PageRenderer({
                   onFootnoteClick={onFootnoteClick}
                   onLinkClick={onLinkClick}
                   onToggleSanad={onToggleSanad}
+                  semantic={prefs.semantic_colors === true}
                 />
               </div>
             </div>

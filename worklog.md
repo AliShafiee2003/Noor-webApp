@@ -90,3 +90,24 @@ Work Log:
 Stage Summary:
 - محدودیت‌های صادقانه: corpus واقعی/app_development.zip موجود نبود → fixture طبق §۳۰؛ OpenSearch/Docker در سندباکس اجرا نمی‌شوند → adapter/compose نوشته‌شده و آزمون‌نشده؛ benchmark/SLO نیازمند محیط مصوب؛ توقف ۱۰GB/۱۰۰GB طبق §۵۵ برقرار است.
 - اقدام بعدی پیشنهادی: import corpus واقعی → inventory/پایلوت ظرفیت §۳۷ → اعتبارسنجی parser با ۳ فایل مرجع PRD → golden set روی متن واقعی → benchmark.
+
+---
+Task ID: cron-review-1 (دور نخست بازبینی دوره‌ای)
+Agent: main (cron review)
+Task: ارزیابی وضعیت، QA مرورگر، رفع اشکال، افزودن قابلیت و polish ظاهری
+
+Work Log:
+- سلامت سرویس‌ها تأیید شد (API/worker/Next همه زنده؛ gateway :81 پاسخ ۲۰۰).
+- QA با agent-browser: خانه/کتاب‌خوان/پژوهش‌های من بررسی شد؛ هشدارهای قدیمی کنسول (کلید تکراری psg-*) ریشه‌یابی شد: keyهای نسخهٔ قبل از fix بودند؛ ممیزی کامل همهٔ keyها در search-view/compare-view/books-grouped انجام شد (همه یکتا با پسوند index).
+- **باگ ساختاری مهم رفع شد (§۱۹)**: عناصر معنایی تو‌در‌توی پاراگراف (آیه داخل <p>، لینک، G/K/maasoom درون سند) توسط fillText صاف می‌شدند و نقش‌شان از دست می‌رفت → بازنویسی fillText با ثبت inline-span (نگاشت تقریبی code point)؛ حالا آیات و لینک‌های درون پاراگراف در مدل حفظ می‌شوند.
+- **باگ دادهٔ fixture**: تکرار ناخواستهٔ `</sanadHadith>` در آیتم ۴ بحار (منبع my own) → اصلاح داده، بازتولید fixture و بازسازی نمایه.
+- **قابلیت جدید — جست‌وجوی استناد قرآنی (QUR-03)**: Scope.Quran در موتور (sure/aya + بازهٔ ayaFrom–ayaTo با نرمال ارقام)، مسیر citation-only بدون عبارت، helperهای parseCitations/between/numNorm + تست‌های واحد؛ آزمون HTTP: بقره ۲۱۳=۱ نتیجه (بحار)، الرحمن ۳۳–۴۱←۳۵=۱، ←۹۹=۰، regression ۳۰۰-match=۳۰۰ دقیق.
+- **قابلیت جدید — READ-13 رنگ‌بندی نقش‌ها**: pref به `semantic_colors` (پیش‌فرض خاموش)؛ Switch در تنظیمات خواننده؛ BlockText/BlockView بدون نقش‌دهی وقتی خاموش است (خنثی و دسترس‌پذیر).
+- **قابلیت جدید — WORK-08/09 میان‌برها**: components/shortcuts.tsx — گفت‌وگوی راهنما با دکمهٔ «?» در نوار بالا، دنباله‌های g h/g l/g s/g r/g t، «/» تمرکز جست‌وجو، اجرا نشدن داخل ورودی‌ها، کلید فعال/غیرفعال ذخیره در ترجیحات حساب (PUT /workspace/prefs.shortcuts_enabled). آزمون مرورگر: «?» گفت‌وگو را باز کرد، «/» روی جست‌وجوی سریع فوکوس زد.
+- **polish ظاهری (§۴۱)**: لایهٔ components تازه — nav-pill (حالت فعال با قرص primary/10)، quiet-card (سایهٔ کم و hover)، focus-ring، filter-chip با hover و حذف لمسی، hl-mark با کنتراست تیره، ::selection هماهنگ با primary، bottom-bar با safe-area و backdrop-blur. باگ CSS (utility تعریف‌نشدهٔ border-control-border در @apply) → جایگزینی با var مستقیم.
+- **UI استناد قرآنی**: فرم پیشرفته (سوره/آیه)، چیپ قابل حذف «استناد: سورهٔ ۲، آیهٔ ۲۱۳»، شروع جست‌وجو بدون عبارت (canSubmit و hasQuery شامل sure)؛ آزمون مرورگر: نتایج بحار با چیپ و شاهد رندر شد.
+- lint و tsc پاس (خطاهای examples/skills خارج از دامنه‌اند).
+
+Stage Summary:
+- وضعیت: همهٔ سرویس‌ها سالم؛ جست‌وجوی استناد قرآنی، رنگ‌بندی نقش‌ها و میان‌برها افزوده و آزمون شد؛ دو باگ ساختاری (نقش‌های تو در تو، دادهٔ fixture) رفع شد.
+- برای دور بعد: اتصال «پنل آیه» در کتاب‌خوان به citations بلوک‌ها (QUR-01/02)، نمایش RevayatIndex به‌صورت لینک‌پذیر (HAD-08)، گروه‌بندی نتایج بر اساس اثر/جلد در لیست مواضع (SEARCH-14)، و افزودن شمارش جداگانهٔ قطعات/روایت‌ها در پاسخ (TECH-11 کامل).

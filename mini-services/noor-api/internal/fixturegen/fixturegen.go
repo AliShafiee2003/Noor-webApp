@@ -130,7 +130,7 @@ func Generate(dir string) ([]WorkManifest, error) {
 		{1, `<heading level="1">کتاب الإيمان</heading>`},
 		{1, `<heading level="2">باب ما الرسول وما النبي</heading>`},
 		{1, `<p>قال الشيخ الطبرسي في <K book="بحار" vol="۲" page="۱۱۵">بحار الأنوار</K> إنَّ الفرق بين الرسول والنبي في الاصطلاح معروف.</p>`},
-		{1, `<hadith id="h-101" revayatindex="112"><sanadHadith>عن أبي <G n="أبيه">أبيه</G> <maasoom mno="7">الإمام الصادق عليه السلام</maasoom> قال</sanadHadith><p>كانت الأنبياء أرسلوا للناس وأن الرسول ما الرسول وما النبي فرقٌ بينهما في القول.</p></sanadHadith><p>وذكَر المحقّق أنَّ النبيّ مُلهمٌ وأنَّ الرسول مُبعثٌ إلى الناس جميعًا.</p><ayah sure="2" aya="213" ayahAddress="البقرة: ٢١٣"><p>كانَ النَّاسُ أُمَّةً وَاحِدَةً فَبَعَثَ اللهُ النَّبِيِّينَ</p></ayah><K book="الخصال" vol="۱" page="۱۳۰">مأخذ</K></hadith>`},
+		{1, `<hadith id="h-101" revayatindex="112"><sanadHadith>عن أبي <G n="أبيه">أبيه</G> <maasoom mno="7">الإمام الصادق عليه السلام</maasoom> قال</sanadHadith><p>كانت الأنبياء أرسلوا للناس وأن الرسول ما الرسول وما النبي فرقٌ بينهما في القول.</p><p>وذكَر المحقّق أنَّ النبيّ مُلهمٌ وأنَّ الرسول مُبعثٌ إلى الناس جميعًا.</p><ayah sure="2" aya="213" ayahAddress="البقرة: ٢١٣"><p>كانَ النَّاسُ أُمَّةً وَاحِدَةً فَبَعَثَ اللهُ النَّبِيِّينَ</p></ayah><K book="الخصال" vol="۱" page="۱۳۰">مأخذ</K></hadith>`},
 		{1, `<p><lfootnote ref="fn-1" num="۱"/>انظر بيان مؤلف در ذیل همین باب.</p>`},
 		{1, `<B>مراد از الرسول در کلام پیشین، پیامبری است که به‌سوی همهٔ مردم مبعث شده؛ و این بیان مؤلف است نه متن روایت.</B>`},
 		{1, `<lfootnote id="fn-1" num="۱">بحار الأنوار، ج ۲، ص ۱۱۵، ح ۱۲.</lfootnote>`},
@@ -258,3 +258,6 @@ func Generate(dir string) ([]WorkManifest, error) {
 	}
 	return works, nil
 }
+
+// DictForTest برای تست‌های decode.
+func DictForTest() string { return commonDict }

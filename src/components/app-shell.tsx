@@ -31,6 +31,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { HashLink, setPendingDestination, useRoute, type RouteInfo } from "@/lib/hash-router";
+import { ShortcutsHelp } from "@/components/shortcuts";
 import { roleLabels } from "@/lib/labels";
 import { useAuthStore } from "@/store/auth";
 import { useWorkspaceStore } from "@/store/workspace";
@@ -234,6 +235,7 @@ function TopBar() {
           </span>
         </HashLink>
         <div className="flex-1" />
+        <ShortcutsHelp />
         <QuickSearch />
         <UserMenu />
       </div>

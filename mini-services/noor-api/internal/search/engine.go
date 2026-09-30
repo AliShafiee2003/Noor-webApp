@@ -34,12 +34,20 @@ const (
 
 // Scope دامنهٔ جست‌وجو (§۴۸).
 type Scope struct {
-	Target         string   `json:"target"` // library|collection|work|document|section|titles
+	Target         string   `json:"target"` // library|collection|work|document|section|titles|citations
 	CollectionUIDs []string `json:"collection_uids,omitempty"`
 	WorkUID        *string  `json:"work_uid,omitempty"`
 	DocumentUIDs   []string `json:"document_uids,omitempty"`
 	Roles          []string `json:"roles,omitempty"`
 	Language       *string  `json:"language,omitempty"`
+	// Quran فیلتر استناد قرآنی (QUR-03): سوره و آیه/بازهٔ مشخص
+	Quran *QuranRef `json:"quran,omitempty"`
+}
+
+// QuranRef نشانی استناد؛ سوره الزامی، آیه اختیاری (بازهٔ آیه نیز پوشش داده می‌شود).
+type QuranRef struct {
+	Sure string `json:"sure"`
+	Aya  string `json:"aya,omitempty"`
 }
 
 // Request درخواست جست‌وجو.
@@ -216,7 +224,8 @@ func (e *LocalEngine) ensureRelease(db *sql.DB, releaseUID string) (*sql.DB, err
 }
 
 func (e *LocalEngine) validate(req *Request) error {
-	if len([]rune(req.Query)) == 0 {
+	// جست‌وجوی صرفاً استنادی (بدون عبارت) مجاز است — QUR-03
+	if len([]rune(req.Query)) == 0 && req.Scope.Quran == nil {
 		return errors.New("عبارت جست‌وجو خالی است")
 	}
 	modeOK := false
@@ -453,12 +462,16 @@ func scanCand(rows *sql.Rows, r *candRow) error {
 func (e *LocalEngine) run(ctx context.Context, db *sql.DB, req *Request, releaseUID string) ([]Result, bool, error) {
 	qN, _ := norm.Normalize(req.Query)
 	toks := norm.Tokenize(qN)
-	if len(toks) == 0 {
+	citationOnly := req.Scope.Quran != nil && len(toks) == 0
+	if len(toks) == 0 && !citationOnly {
 		return nil, true, nil
 	}
 	var rows *sql.Rows
 	var err error
-	if req.Mode == StrictPhrase {
+	if citationOnly {
+		// جست‌وجوی استناد قرآنی (QUR-03): همهٔ passages دامنه، فیلتر در verifier
+		rows, err = db.Query(`SELECT * FROM passages WHERE release_uid=? ORDER BY work_uid, document_uid, block_start`, releaseUID)
+	} else if req.Mode == StrictPhrase {
 		// عبارت دقیق: اسکن متنی scope با مرز واژه روی متن اصلی (بدون stemming/fuzzy)
 		rows, err = db.Query(`SELECT * FROM passages WHERE release_uid=? ORDER BY work_uid, document_uid, block_start`, releaseUID)
 	} else if req.Mode == AnyWords || req.Mode == Linguistic {
@@ -508,7 +521,43 @@ func (e *LocalEngine) run(ctx context.Context, db *sql.DB, req *Request, release
 		if req.Scope.Language != nil && *req.Scope.Language != "" && r.Language != *req.Scope.Language {
 			continue
 		}
+		if req.Scope.Quran != nil {
+			cits, err := parseCitations(r.Citations.String)
+			if err != nil {
+				continue
+			}
+			matched := false
+			for _, c := range cits {
+				if c.Sure == req.Scope.Quran.Sure {
+					if req.Scope.Quran.Aya == "" {
+						matched = true
+						break
+					}
+					if c.Aya == req.Scope.Quran.Aya {
+						matched = true
+						break
+					}
+					if c.AyaFrom != "" && c.AyaTo != "" {
+						if between(c.AyaFrom, c.AyaTo, req.Scope.Quran.Aya) {
+							matched = true
+							break
+						}
+					}
+				}
+			}
+			if !matched {
+				continue // استناد باید واقعاً در همین passage باشد، نه فقط در سند
+			}
+		}
 		hits, matchType := verifyInText(req, &r)
+		if req.Scope.Quran != nil && len([]rune(req.Query)) == 0 && len(hits) == 0 {
+			// جست‌وجوی صرفاً استنادی: خود passage با شاهد ابتدایی نمایش داده می‌شود
+			n1r := []rune(r.TextOriginal)
+			hi := clampInt(160, 0, len(n1r))
+			hits = []hit{{Range: [2]int{0, hi}}}
+			matchType = "exact"
+		}
+
 		for _, h := range hits {
 			// کلید رخداد = document + محدودهٔ واقعی مطلق در جریان متن سند (§۴۵)
 			key := r.DocumentUID + ":" + fmt.Sprint(r.SourceStart+h.Range[0]) + ":" + fmt.Sprint(r.SourceStart+h.Range[1])
@@ -853,4 +902,53 @@ func newID(prefix string) string {
 	b := make([]byte, 8)
 	_, _ = rand.Read(b)
 	return prefix + "-" + hex.EncodeToString(b)
+}
+
+// parseCitations استنادهای ذخیره‌شدهٔ passage را می‌خواند (فرمت xmlparse.Citation).
+func parseCitations(raw string) ([]citationRef, error) {
+	if raw == "" || raw == "null" {
+		return nil, nil
+	}
+	var out []citationRef
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+type citationRef struct {
+	Sure     string `json:"sure"`
+	Aya      string `json:"aya"`
+	AyaFrom  string `json:"aya_from"`
+	AyaTo    string `json:"aya_to"`
+	Address  string `json:"address"`
+	BlockID  string `json:"block_id"`
+	InHadith string `json:"in_hadith"`
+}
+
+// between بررسی تعلق آیهٔ پرس‌شده به بازهٔ استناد (اعداد فارسی/عربی/لاتین نرمال می‌شوند).
+func between(from, to, aya string) bool {
+	f := numNorm(from)
+	t := numNorm(to)
+	a := numNorm(aya)
+	if f == "" || t == "" || a == "" {
+		return false
+	}
+	return a >= f && a <= t
+}
+
+func numNorm(s string) string {
+	digits := map[rune]string{
+		'٠': "0", '١': "1", '٢': "2", '٣': "3", '٤': "4", '٥': "5", '٦': "6", '٧': "7", '٨': "8", '٩': "9",
+		'۰': "0", '۱': "1", '۲': "2", '۳': "3", '۴': "4", '۵': "5", '۶': "6", '۷': "7", '۸': "8", '۹': "9",
+	}
+	var b []byte
+	for _, r := range s {
+		if d, ok := digits[r]; ok {
+			b = append(b, d...)
+		} else if r >= '0' && r <= '9' {
+			b = append(b, byte(r))
+		}
+	}
+	return string(b)
 }

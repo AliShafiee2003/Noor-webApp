@@ -343,8 +343,8 @@ function ComparePane({ sideLabel }: { sideLabel: string }) {
                   : "در حال شمارش"}
               </p>
               <ul className="max-h-56 space-y-2 overflow-y-auto pe-1">
-                {searchMutation.data.results.map((r) => (
-                  <li key={r.passage_uid}>
+                {searchMutation.data.results.map((r, ri) => (
+                  <li key={r.passage_uid + "-" + ri}>
                     <button
                       type="button"
                       className="w-full rounded-lg border border-border px-3 py-2 text-start transition-colors hover:bg-accent"

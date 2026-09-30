@@ -41,7 +41,7 @@ import type {
 /* ---------- انواع وضعیت hash ---------- */
 
 /** دامنه‌های رابط؛ «titles» = جست‌وجو در نام کتاب‌ها (هم‌نام قرارداد موتور). */
-export type FormScope = "library" | "work" | "document" | "titles";
+export type FormScope = "library" | "work" | "document" | "titles" | "citations";
 
 export interface SearchHashState {
   q: string;
@@ -59,6 +59,9 @@ export interface SearchHashState {
   slop: number;
   /** ترتیب واژه‌ها در حالت near */
   ordered: boolean;
+  /** استناد قرآنی (QUR-03): سوره/آیه — خالی = غیرفعال */
+  sure: string;
+  aya: string;
 }
 
 export const DEFAULT_SEARCH_STATE: SearchHashState = {
@@ -71,6 +74,8 @@ export const DEFAULT_SEARCH_STATE: SearchHashState = {
   lang: "",
   slop: 3,
   ordered: true,
+  sure: "",
+  aya: "",
 };
 
 /** فیلترهای نقش — برچسب گروه: «در منابع دارای نشانه‌گذاری» (§۴۵).
@@ -141,7 +146,10 @@ export function parseSearchParams(query: Record<string, string>): SearchHashStat
     : DEFAULT_SEARCH_STATE.mode;
   const scopeRaw = query.scope;
   const scope: FormScope =
-    scopeRaw === "work" || scopeRaw === "document" || scopeRaw === "titles"
+    scopeRaw === "work" ||
+    scopeRaw === "document" ||
+    scopeRaw === "titles" ||
+    scopeRaw === "citations"
       ? scopeRaw
       : DEFAULT_SEARCH_STATE.scope;
   const roles = (query.roles ?? "")
@@ -162,6 +170,8 @@ export function parseSearchParams(query: Record<string, string>): SearchHashStat
         ? slopRaw
         : DEFAULT_SEARCH_STATE.slop,
     ordered: query.ordered === "0" ? false : DEFAULT_SEARCH_STATE.ordered,
+    sure: query.sure ?? "",
+    aya: query.aya ?? "",
   };
 }
 
@@ -177,13 +187,22 @@ export function searchStateKey(state: SearchHashState): string {
     state.lang,
     state.slop,
     state.ordered,
+    state.sure,
+    state.aya,
   ]);
 }
 
 /** ساخت بدنهٔ POST /search از وضعیت hash */
 export function buildSearchRequest(state: SearchHashState, pageSize = 20): SearchRequest {
   const scope: SearchScope =
-    state.scope === "titles" ? { target: "titles" as SearchScopeTarget } : { target: "library" as SearchScopeTarget };
+    state.scope === "titles"
+      ? { target: "titles" as SearchScopeTarget }
+      : state.scope === "citations" || state.sure.trim() !== ""
+        ? { target: "citations" as SearchScopeTarget }
+        : { target: "library" as SearchScopeTarget };
+  if (state.sure.trim() !== "") {
+    scope.quran = { sure: state.sure.trim(), aya: state.aya.trim() || undefined };
+  }
   if (state.scope === "work" && state.work) {
     scope.target = "work";
     scope.work_uid = state.work;
@@ -329,7 +348,8 @@ export function SearchForm({ value, onChange, onSubmit, busy = false }: SearchFo
   });
   const documents = useMemo(() => workDetailQuery.data?.documents ?? [], [workDetailQuery.data]);
 
-  const canSubmit = value.q.trim().length > 0 && !busy;
+  // جست‌وجوی صرفاً استنادی (بدون عبارت) نیز مجاز است — QUR-03
+  const canSubmit = (value.q.trim().length > 0 || value.sure.trim().length > 0) && !busy;
 
   return (
     <form
@@ -564,6 +584,41 @@ export function SearchForm({ value, onChange, onSubmit, busy = false }: SearchFo
               </SelectContent>
             </Select>
           </div>
+          {/* استناد قرآنی — QUR-03 */}
+          <fieldset className="space-y-2">
+            <legend className="text-sm font-medium">استناد قرآنی</legend>
+            <p className="text-xs text-muted-foreground">
+              جست‌وجوی مواضع دارای استناد به سوره و آیه یا بازهٔ آیه؛ بدون عبارت هم کار می‌کند.
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <Input
+                value={value.sure}
+                onChange={(e) => onChange({ sure: e.target.value })}
+                placeholder="شمارهٔ سوره (مثلاً ۲)"
+                aria-label="شمارهٔ سوره"
+                inputMode="numeric"
+                className="min-h-11 w-40"
+              />
+              <Input
+                value={value.aya}
+                onChange={(e) => onChange({ aya: e.target.value })}
+                placeholder="آیه (اختیاری)"
+                aria-label="شمارهٔ آیه"
+                inputMode="numeric"
+                className="min-h-11 w-36"
+              />
+              {value.sure.trim() !== "" ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="min-h-11"
+                  onClick={() => onChange({ sure: "", aya: "" })}
+                >
+                  حذف فیلتر استناد
+                </Button>
+              ) : null}
+            </div>
+          </fieldset>
         </CollapsibleContent>
       </Collapsible>
     </form>

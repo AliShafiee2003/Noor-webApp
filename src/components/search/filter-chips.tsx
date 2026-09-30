@@ -10,6 +10,7 @@ import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { languageLabel } from "@/lib/labels";
+import { faNum } from "@/lib/format";
 import type { WorkDetail, WorkListResponse } from "@/lib/types";
 import { ROLE_FILTERS, modeLabel, type SearchHashState } from "@/components/search/search-form";
 
@@ -95,6 +96,14 @@ export function FilterChips({
       key: "scope-doc",
       label: `سند: ${docLabel ?? workLabel ?? "انتخاب‌شده"}`,
       onRemove: () => onChange({ scope: "library", work: "", doc: "" }),
+    });
+  }
+
+  if (state.sure.trim() !== "") {
+    chips.push({
+      key: "quran",
+      label: `استناد: سورهٔ ${faNum(Number(state.sure))}${state.aya.trim() ? "، آیهٔ " + faNum(Number(state.aya)) : ""}`,
+      onRemove: () => onChange({ sure: "", aya: "" }),
     });
   }
 

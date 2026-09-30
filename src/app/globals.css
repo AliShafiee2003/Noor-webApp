@@ -194,3 +194,66 @@
   }
 }
 
+
+/* ---------- polish ظاهری (§۴۱: آرام، دانشگاهی، کم‌تزئین) ---------- */
+@layer components {
+  /* ناوبری فعال: قرص ملایم با متن primary — رنگ تنها حامل معنا نیست */
+  .nav-pill {
+    @apply inline-flex min-h-11 items-center gap-2 whitespace-nowrap rounded-lg px-3 text-sm text-muted-foreground transition-colors;
+  }
+  .nav-pill:hover {
+    @apply bg-accent text-foreground;
+  }
+  .nav-pill[aria-current="page"] {
+    @apply bg-primary/10 font-medium text-primary;
+  }
+
+  /* کارت‌ها: سایهٔ کم و تعامل آرام */
+  .quiet-card {
+    @apply rounded-xl border border-border bg-surface shadow-[0_1px_2px_rgba(24,42,50,0.04)];
+    transition: box-shadow 160ms ease, border-color 160ms ease;
+  }
+  .quiet-card:hover {
+    box-shadow: 0 2px 8px rgba(24, 42, 50, 0.06);
+  }
+  :is(.dark) .quiet-card {
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  }
+  :is(.dark) .quiet-card:hover {
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+  }
+
+  /* حلقهٔ فوکوس یکدست برای همهٔ تعامل‌ها */
+  .focus-ring:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+
+  /* چیپ فیلتر: hover ظریف + دکمهٔ حذف با هدف لمسی کافی */
+  .filter-chip {
+    @apply inline-flex min-h-9 items-center gap-1.5 rounded-full border border-border bg-surface px-3 text-xs transition-colors;
+  }
+  .filter-chip:hover {
+    border-color: var(--control-border);
+  }
+
+  /* highlight تطبیق: کنتراست کافی در هر دو حالت (§۴۱) */
+  .hl-mark {
+    @apply rounded-sm px-0.5 text-foreground;
+    background: var(--match);
+  }
+  :is(.dark) .hl-mark {
+    text-shadow: 0 1px 1px rgba(0, 0, 0, 0.4);
+  }
+
+  /* متن مطالعه: انتخاب‌رنگ هماهنگ با تم */
+  ::selection {
+    background: color-mix(in srgb, var(--primary) 22%, transparent);
+  }
+
+  /* نوار پایین موبایل: جداکنندهٔ ظریف + محتوای پشت آن دیده شود */
+  .bottom-bar {
+    @apply border-t border-border bg-surface/95 backdrop-blur supports-[backdrop-filter]:bg-surface/85;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+}

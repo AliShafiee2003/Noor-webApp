@@ -327,12 +327,19 @@ func parseItem(m *DocModel, dec *xml.Decoder, text *strings.Builder, blockIdx *i
 	}
 }
 
-// fillText متن مرئی عنصر (با تو در توی ساده) را می‌خواند؛ تگ داخلی حذف نمی‌شود بلکه
-// در همین بلوک صاف می‌شود — نقش‌های تو‌در‌توی عمیق برای fixtureها کافی است و
-// اتصال مصنوعی عبارت رخ نمی‌دهد چون هر عنصر بلوک خودش را می‌گیرد.
+// fillText متن مرئی عنصر را با حفظ نقش‌های تو‌در‌تو می‌خواند (§۱۹):
+// عناصر معنایی درون پاراگراف به‌صورت inline-span با نگاشت code point ثبت می‌شوند —
+// هرگز حذف یا صاف نمی‌شوند؛ اتصال مصنوعی عبارت از دو طرف عنصر حذف‌شده رخ نمی‌دهد
+// چون متنِ عنصر باقی می‌ماند و فقط نقشش ثبت می‌شود.
 func fillText(b *Block, dec *xml.Decoder) {
+	var raw []rune
 	depth := 1
-	var sb strings.Builder
+	type marker struct {
+		role string
+		attr map[string]string
+		at   int // جایگاه در raw
+	}
+	var open []marker
 	for depth > 0 {
 		tok, err := dec.Token()
 		if err != nil {
@@ -340,16 +347,88 @@ func fillText(b *Block, dec *xml.Decoder) {
 		}
 		switch t := tok.(type) {
 		case xml.StartElement:
+			name := t.Name.Local
+			switch name {
+			case "G", "K", "maasoom", "sharh", "ayah", "link", "ayahAddress", "B":
+				attrs := attrMap(t)
+				open = append(open, marker{role: roleOf(name, attrs), attr: attrs, at: len(raw)})
+			}
 			depth++
-			sb.WriteRune(' ')
 		case xml.EndElement:
 			depth--
+			if depth == 0 {
+				break
+			}
+			// بستن نزدیک‌ترین نشانهٔ بازِ همین عمق
+			for i := len(open) - 1; i >= 0; i-- {
+				if _, done := open[i].attr["__done"]; !done {
+					addInlineSpan(b, &raw, open[i].role, open[i].attr, open[i].at, len(raw))
+					open[i].attr["__done"] = "1"
+					break
+				}
+			}
 		case xml.CharData:
-			sb.Write(t)
+			raw = append(raw, []rune(string(t))...)
 		}
 	}
-	b.Text = strings.Join(strings.Fields(collapseSpaces(sb.String())), " ")
+	b.Text = strings.Join(strings.Fields(collapseSpaces(string(raw))), " ")
 }
+
+func roleOf(name string, attrs map[string]string) string {
+	switch name {
+	case "G":
+		return "G"
+	case "K":
+		return "K"
+	case "maasoom":
+		return "maasoom"
+	case "sharh":
+		return "sharh"
+	case "B":
+		return "B"
+	case "ayah", "ayahAddress":
+		return "ayah_text"
+	case "link":
+		return "link"
+	}
+	return "unknown"
+}
+
+// addInlineSpan نقش تو در تو را روی بلوک ثبت می‌کند (بازهٔ تقریبی روی متن صاف‌شده).
+func addInlineSpan(b *Block, raw *[]rune, role string, attrs map[string]string, from, to int) {
+	// نگاشت raw → متن صاف‌شده: جایگاه تقریبی با تناسب طول
+	total := len(*raw)
+	if total == 0 {
+		return
+	}
+	clean := strings.Join(strings.Fields(collapseSpaces(string(*raw))), " ")
+	if len([]rune(clean)) == 0 {
+		return
+	}
+	ratio := float64(len([]rune(clean))) / float64(total)
+	s := int(float64(from) * ratio)
+	e := int(float64(to) * ratio)
+	if e <= s {
+		e = s + 1
+	}
+	switch role {
+	case "link":
+		b.Links = append(b.Links, LinkSpan{Start: s, End: e, OriginalAddress: string((*raw)[from:to]), Target: attrs, Resolved: false})
+	case "ayah_text":
+		b.Citations = append(b.Citations, Citation{
+			Sure: attrs["sure"], Aya: attrs["aya"], AyaFrom: attrs["ayaFrom"], AyaTo: attrs["ayaTo"],
+			Address: attrs["ayahAddress"], BlockID: "", HasParent: name2parent(role),
+			InHadith: b.HadithUID,
+		})
+	case "lfootnote_ref":
+		// در fillText رخ نمی‌دهد؛ ارجاع پاورقی در case خودش است
+	default:
+		b.Spans = append(b.Spans, Span{Role: role, Start: s, End: e, G: attrs["n"], MasumNo: attrs["mno"], Ref: attrs["id"]})
+	}
+	_ = attrs["ref"]
+}
+
+func name2parent(role string) bool { return role == "ayah_text" }
 
 func collapseSpaces(s string) string {
 	var out strings.Builder

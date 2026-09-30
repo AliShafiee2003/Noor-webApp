@@ -296,7 +296,9 @@ export type SearchScopeTarget =
   | "document"
   | "section"
   /** «نام کتاب» در سطح رابط؛ در hash استفاده می‌شود */
-  | "titles";
+  | "titles"
+  /** جست‌وجوی استناد قرآنی (QUR-03) */
+  | "citations";
 
 export interface SearchScope {
   target: SearchScopeTarget;
@@ -305,6 +307,8 @@ export interface SearchScope {
   document_uids?: string[];
   roles?: string[];
   language?: string | null;
+  /** استناد قرآنی: سوره الزامی، آیه اختیاری (بازه پشتیبانی می‌شود) */
+  quran?: { sure: string; aya?: string };
 }
 
 export interface SearchNear {
@@ -487,6 +491,8 @@ export interface ReaderPrefs {
   display: ReaderDisplay;
   /** عرض متن مطالعه (اختیاری؛ پیش‌فرض medium) */
   text_width?: ReaderTextWidth;
+  /** READ-13: رنگ‌بندی و نشانه‌گذاری نقش‌های معنایی (اختیاری؛ پیش‌فرض خاموش) */
+  semantic_colors?: boolean;
 }
 
 export interface WorkspacePrefs {

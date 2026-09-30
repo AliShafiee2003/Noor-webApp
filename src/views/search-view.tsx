@@ -320,7 +320,8 @@ export function SearchView() {
   const hashPage = clampPage(route.query.page);
   const [saveOpen, setSaveOpen] = useState(false);
   const view: "results" | "books" = route.query.view === "books" ? "books" : "results";
-  const hasQuery = params.q.trim().length > 0;
+  // عبارت یا استناد قرآنی (QUR-03) هر دو شروع‌کنندهٔ جست‌وجو هستند
+  const hasQuery = params.q.trim().length > 0 || params.sure.trim().length > 0;
 
   /* پیش‌نویس فرم — هم‌گام‌سازی با hash در زمان رندر (الگوی مجاز React) */
   const [draft, setDraft] = useState<SearchHashState>(() => parseSearchParams(route.query));

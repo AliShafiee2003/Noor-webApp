@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Separator } from "@/components/ui/separator";
 import { Slider } from "@/components/ui/slider";
@@ -170,6 +171,23 @@ export function SettingsPopover({
               const lh = v[0];
               if (typeof lh === "number") updatePrefs({ line_height: lh });
             }}
+          />
+        </div>
+
+        {/* رنگ‌بندی نقش‌های معنایی — READ-13 (اختیاری) */}
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2">
+          <div className="min-w-0">
+            <Label htmlFor="reader-semantic" className="cursor-pointer text-sm">
+              نشانه‌گذاری نقش‌های معنایی
+            </Label>
+            <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">
+              رنگ و نشان برای سند، آیه، بیان مؤلف و راوی — فقط نمایش؛ متن تغییر نمی‌کند.
+            </p>
+          </div>
+          <Switch
+            id="reader-semantic"
+            checked={prefs.semantic_colors === true}
+            onCheckedChange={(checked) => updatePrefs({ semantic_colors: checked })}
           />
         </div>
 
