@@ -58,14 +58,20 @@ Mutationها باید هدر `X-Noor-CSRF` داشته باشند (token از `GE
 →
 ```json
 { "session_uid":"s-...","release_uid":"rel-...","completion_state":"complete|in_progress|cancelled|failed",
-  "verified_occurrences":12,"verified_books":3,"count_relation":"lower_bound|exact",
+  "verified_occurrences":12,"verified_books":3,
+  "verified_passages":9,"verified_hadiths":4,"count_relation":"lower_bound|exact",
   "continuation_available":true,"next_cursor":"<opaque-signed>","count_job_uid":null,
   "results":[{"passage_uid":"...","match_type":"exact|normalized|linguistic|fuzzy",
     "work":{"uid":"w-...","title":"..."},"document":{"uid":"d-...","label":"ج ۲"},
     "page":{"uid":"p-42","label":"۴۲"},"section":{"uid":"sec-7","title":"..."},
     "snippet":"متن ... با ... متن","highlight":[{"start":40,"end":52,"unit":"codepoint"}],
-    "roles":["body"],"local_hadith_uid":"h-9","fingerprint":"fp-...","source_offsets":{"start":1200,"end":1600}}] }
+    "roles":["body"],"local_hadith_uid":"h-9","fingerprint":"fp-...","source_offsets":{"start":1200,"end":1600},
+    "match_offsets":{"start":1240,"end":1252}}] }
 ```
+- شمارش‌ها مخلوط نمی‌شوند (§۴۶/TECH-11): `verified_occurrences` = رخدادهای تأییدشده؛ `verified_passages` = قطعه‌های متمایز؛ `verified_hadiths` = روایت‌های متمایز (کلید یکتا = document_uid/local_hadith_uid)؛ `verified_books` = آثار متمایز.
+- `match_offsets`: بازهٔ دقیق تطبیق در مختصات سند (نه فقط بازهٔ passage) — مبنای هایلایت کتاب‌خوان. `source_offsets` بازهٔ passage است.
+- کتاب‌خوان با پارامتر `pg` صفحه را می‌گیرد (نه `page`) و `hl=start:end` را با نگاشت `source_offsets` بلوک‌ها به هایلایت درون‌بلوکی تبدیل می‌کند.
+- صفحهٔ `p-front`: بلوک‌های پیش از نخستین صفحهٔ چاپی سند (یا کل سند بی‌صفحه). موتور جست‌وجو ممکن است نتایج را با این نشانی بدهد؛ `GET /documents/{uid}/pages/p-front` همین بلوک‌ها را برمی‌گرداند و در `GET /documents/{uid}/pages` هم با serial=0 فهرست می‌شود. label آن «—» است (شمارهٔ چاپی ندارد — حدس زده نمی‌شود).
 - `POST /search/{session_uid}/continue` `{cursor}` → همان شکل؛ 410 `gone_cursor` پس از TTL (۵ دقیقه) با پیام قابل تلاش مجدد.
 - `POST /search/{session_uid}/books` → گروه‌بندی کتاب‌های دارای تطبیق تأییدشده: `[{work,documents:[{document,verified_occurrences,evidence:[...]}]}]`
 - «این روایت در چه کتاب‌هایی آمده؟» = normalized_phrase + view books؛ UI صریح می‌گوید «منابع دارای این عبارت» و ادعای یکسانی حدیث نمی‌کند (§۴۷).

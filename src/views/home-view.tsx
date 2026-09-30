@@ -23,6 +23,7 @@ import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { ErrorState, ListSkeleton } from "@/components/feedback";
 import { api, errorMessage } from "@/lib/api";
+import { fetchProjects } from "@/lib/projects";
 import { HashLink, useRoute } from "@/lib/hash-router";
 import { faDate, faNum } from "@/lib/format";
 import type { Project } from "@/lib/types";
@@ -54,25 +55,28 @@ function HeroSearch() {
   };
 
   return (
-    <section aria-labelledby="home-search-title">
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle id="home-search-title" className="text-lg">
-            جست‌وجو
+    <section aria-labelledby="home-search-title" className="hero-surface">
+      <Card className="border-0 bg-transparent shadow-none">
+        <CardHeader className="pb-3 text-center">
+          <CardTitle id="home-search-title" className="text-2xl font-bold tracking-tight">
+            جست‌وجو در منابع
           </CardTitle>
+          <p className="mx-auto mt-1 max-w-md text-sm leading-6 text-muted-foreground">
+            عبارت را در متن منابع بنویسید؛ فقط مواضع تأییدشده با نشانی دقیق نمایش داده می‌شود.
+          </p>
         </CardHeader>
         <CardContent className="space-y-4">
           <div
             role="group"
             aria-label="انتخاب دامنهٔ جست‌وجو"
-            className="flex flex-wrap gap-2"
+            className="flex flex-wrap justify-center gap-2"
           >
             {MODES.map((m) => (
               <button
                 key={m.value}
                 type="button"
                 aria-pressed={mode === m.value}
-                className="choice-chip"
+                className="choice-chip bg-surface"
                 onClick={() => setMode(m.value)}
               >
                 {m.value === "normalized_phrase" ? (
@@ -84,18 +88,21 @@ function HeroSearch() {
               </button>
             ))}
           </div>
-          <p className="text-xs text-muted-foreground">{activeMode.hint}</p>
-          <form onSubmit={submit} className="flex flex-col gap-2 sm:flex-row">
+          <p className="text-center text-xs text-muted-foreground">{activeMode.hint}</p>
+          <form
+            onSubmit={submit}
+            className="mx-auto flex w-full max-w-xl flex-col gap-2 sm:flex-row"
+          >
             <Input
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder="عبارت مورد نظر را بنویسید…"
               aria-label="عبارت جست‌وجو"
-              className="min-h-11 flex-1"
+              className="min-h-11 flex-1 bg-surface shadow-sm"
             />
             <Button
               type="submit"
-              className="min-h-11 gap-2 sm:w-32"
+              className="min-h-11 gap-2 shadow-sm transition-all hover:shadow sm:w-32"
               disabled={!q.trim()}
             >
               <Search className="size-4" aria-hidden="true" />
@@ -244,12 +251,12 @@ function ContinueReading() {
 
 function RecentProjects() {
   const { navigate } = useRoute();
-  const projectsQuery = useQuery<{ items: Project[] }>({
+  const projectsQuery = useQuery<Project[]>({
     queryKey: ["projects"],
-    queryFn: () => api.get<{ items: Project[] }>("/projects"),
+    queryFn: fetchProjects,
   });
 
-  const projects = [...(projectsQuery.data?.items ?? [])]
+  const projects = [...(projectsQuery.data ?? [])]
     .sort((a, b) => (b.updated_at ?? "").localeCompare(a.updated_at ?? ""))
     .slice(0, 4);
 

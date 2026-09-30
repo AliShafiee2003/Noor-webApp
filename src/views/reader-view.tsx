@@ -29,6 +29,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
 import type {
   BlockLink,
+  PageBlock,
   PagePayload,
   PageRef,
   TocSection,
@@ -150,10 +151,32 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
   const [ficheOpen, setFicheOpen] = useState(false);
   const [saveFlash, setSaveFlash] = useState<string | null>(null);
 
+  /* تغییر صفحهٔ مقصد → پنل زمینه بسته می‌شود (پنل مالِ همان صفحه است) */
+  useEffect(() => {
+    setFootnote(null);
+    setSelection(null);
+  }, [currentPageUid]);
+
   /* highlight نتیجهٔ جست‌وجو → بلوک مقصد */
+  /* آفست hl سطح سند است؛ با source_offsets بلوک‌ها به مختصات درون‌بلوکی نگاشت می‌شود (بدون hlb) */
   const highlight = useMemo(() => {
     if (!hl || !pageQuery.data) return null;
-    return { start: hl[0], end: hl[1], blockId: params.get("hlb") ?? null };
+    const explicitBlock = params.get("hlb");
+    if (explicitBlock) return { start: hl[0], end: hl[1], blockId: explicitBlock };
+    for (const block of pageQuery.data.blocks) {
+      const raw = block.source_offsets;
+      const range = Array.isArray(raw)
+        ? { start: raw[0], end: raw[1] }
+        : raw && typeof raw.start === "number" && typeof raw.end === "number"
+          ? { start: raw.start, end: raw.end }
+          : null;
+      if (range && hl[0] >= range.start && hl[0] < range.end) {
+        const relStart = hl[0] - range.start;
+        const relEnd = Math.max(relStart + 1, Math.min(hl[1], range.end) - range.start);
+        return { start: relStart, end: relEnd, blockId: block.id };
+      }
+    }
+    return null;
   }, [hl, pageQuery.data, params]);
 
   /* ---------- پرش فهرست / صفحه ---------- */
@@ -268,6 +291,32 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
   const onLinkClick = useCallback((link: BlockLink) => {
     // همهٔ ارجاع‌ها در این نسخه حل‌نشده‌اند — نشانی اصلی حفظ می‌شود (REL-10)
     setFootnote({ kind: "link", originalAddress: link.original_address || "ارجاع" });
+  }, []);
+
+  /* ---------- پنل آیه (QUR-01/02) و اطلاعات روایت (HAD-08) ---------- */
+  const onVerseClick = useCallback((block: PageBlock) => {
+    const cit = block.citations?.[0];
+    if (!cit) return;
+    setFootnote({
+      kind: "verse",
+      verse: {
+        citation: cit,
+        quotedText: block.text,
+        inHadith: block.hadith_uid ?? cit.in_hadith ?? null,
+        hasParent: cit.has_parent,
+      },
+    });
+  }, []);
+
+  const onHadithClick = useCallback((block: PageBlock) => {
+    if (!block.hadith_uid) return;
+    setFootnote({
+      kind: "hadith",
+      hadith: {
+        localUid: block.hadith_uid,
+        revayatIndex: block.revayat_index ?? null,
+      },
+    });
   }, []);
 
   const onSearchInDocument = useCallback(
@@ -442,6 +491,8 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
                 onToggleSanad={() => undefined}
                 onFootnoteClick={onFootnoteClick}
                 onLinkClick={onLinkClick}
+                onVerseClick={onVerseClick}
+                onHadithClick={onHadithClick}
                 onSelection={onSelection}
               />
               {/* ناوبری پایین صفحه */}

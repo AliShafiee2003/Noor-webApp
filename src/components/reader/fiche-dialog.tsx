@@ -43,6 +43,7 @@ import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { api, ApiError, errorMessage } from "@/lib/api";
+import { fetchProjects } from "@/lib/projects";
 import type { ClipKind, PagePayload, Project } from "@/lib/types";
 import type { ReaderSelection } from "./page-renderer";
 
@@ -73,14 +74,14 @@ export function FicheDialog({
   const queryClient = useQueryClient();
 
   const projectsQuery = useQuery({
-    queryKey: ["reader", "projects"],
-    queryFn: () => api.get<{ items: Project[] }>("/projects"),
+    queryKey: ["projects"],
+    queryFn: fetchProjects,
     enabled: open,
     staleTime: 30_000,
   });
 
   const projects = useMemo(
-    () => (projectsQuery.data?.items ?? []).filter((p) => !p.archived),
+    () => (projectsQuery.data ?? []).filter((p) => !p.archived),
     [projectsQuery.data],
   );
 
@@ -130,7 +131,7 @@ export function FicheDialog({
       return api.post<Project>("/projects", { name });
     },
     onSuccess: (p) => {
-      void queryClient.invalidateQueries({ queryKey: ["reader", "projects"] });
+      void queryClient.invalidateQueries({ queryKey: ["projects"] });
       setProjectUid(p.uid);
       setCreatingProject(false);
       setNewProjectName("");

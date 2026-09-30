@@ -44,18 +44,13 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EmptyState, ErrorState, ListSkeleton } from "@/components/feedback";
 import { api, ApiError, errorMessage } from "@/lib/api";
+import { fetchProjects } from "@/lib/projects";
 import { HashLink } from "@/lib/hash-router";
 import { faDate, faNum } from "@/lib/format";
 import { useToast } from "@/hooks/use-toast";
 import type { Project } from "@/lib/types";
 
 type ProjectFilter = "all" | "active" | "archived";
-
-/** پاسخ قرارداد می‌تواند آرایهٔ خام یا {items} باشد — هر دو پذیرفته می‌شود. */
-function normalizeItems<T>(data: T[] | { items?: T[] } | undefined | null): T[] {
-  if (Array.isArray(data)) return data;
-  return data?.items ?? [];
-}
 
 const NOT_FOUND_MESSAGE = "این مورد در پژوهش‌های شما یافت نشد.";
 
@@ -65,8 +60,7 @@ export function ResearchView() {
 
   const projectsQuery = useQuery({
     queryKey: ["projects"],
-    queryFn: async () =>
-      normalizeItems<Project>(await api.get<Project[] | { items: Project[] }>("/projects")),
+    queryFn: fetchProjects,
   });
 
   const [filter, setFilter] = useState<ProjectFilter>("all");

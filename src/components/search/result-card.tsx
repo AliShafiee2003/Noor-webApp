@@ -10,7 +10,16 @@
  */
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BookOpenText, Check, Loader2, Plus, TriangleAlert } from "lucide-react";
+import {
+  BookMarked,
+  BookOpenText,
+  Check,
+  FileText,
+  ListTree,
+  Loader2,
+  Plus,
+  TriangleAlert,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -25,7 +34,13 @@ import { HashLink } from "@/lib/hash-router";
 import { api, errorMessage } from "@/lib/api";
 import { faNum } from "@/lib/format";
 import { matchTypeLabels } from "@/lib/labels";
-import type { ClipKind, Project, SearchHighlight, SearchResultItem } from "@/lib/types";
+import type {
+  ClipKind,
+  MatchType,
+  Project,
+  SearchHighlight,
+  SearchResultItem,
+} from "@/lib/types";
 import { useToast } from "@/hooks/use-toast";
 
 /* ---------- برچسب نقش‌های تطبیق ---------- */
@@ -45,6 +60,26 @@ const ROLE_CHIP_LABELS: Record<string, string> = {
 
 export function roleChipLabel(role: string): string {
   return ROLE_CHIP_LABELS[role] ?? role;
+}
+
+/* ---------- نشان نوع تطبیق — هر حالت رنگ متمایز ---------- */
+
+const MATCH_TONE: Record<MatchType, string> = {
+  exact: "border-primary/40 bg-primary/10 text-primary",
+  normalized: "border-link/40 bg-link/10 text-link",
+  linguistic: "border-ayah/50 bg-ayah-soft text-foreground",
+  fuzzy: "border-border bg-muted text-muted-foreground",
+};
+
+function MatchTypeBadge({ type }: { type: MatchType }) {
+  return (
+    <Badge
+      variant="outline"
+      className={`shrink-0 font-medium ${MATCH_TONE[type] ?? ""}`}
+    >
+      {matchTypeLabels[type] ?? "تطبیق"}
+    </Badge>
+  );
 }
 
 /* ---------- هایلایت code point → UTF-16 ---------- */
@@ -157,11 +192,15 @@ function AddToClipDialog({
 
   const projectsQuery = useQuery({
     queryKey: ["projects"],
-    queryFn: ({ signal }) => api.get<Project[]>("/projects", undefined, signal),
+    queryFn: ({ signal }) =>
+      api.get<Project[] | { items?: Project[] }>("/projects", undefined, signal),
     enabled: open,
     staleTime: 30_000,
   });
-  const projects = projectsQuery.data ?? [];
+  // قرارداد می‌تواند آرایهٔ خام یا {items} برگرداندد — هر دو پذیرفته می‌شود
+  const projects = Array.isArray(projectsQuery.data)
+    ? projectsQuery.data
+    : (projectsQuery.data?.items ?? []);
 
   const offsets = result.source_offsets ? normalizeOffsets(result.source_offsets) : null;
 
@@ -306,7 +345,6 @@ export function ResultCard({
 }) {
   const [clipOpen, setClipOpen] = useState(defaultOpenClip);
 
-  const matchLabel = matchTypeLabels[result.match_type] ?? "تطبیق";
   const docLabel = result.document?.label ?? null;
   const pageLabel = result.page?.label ?? null;
   const roles = Array.isArray(result.roles) ? result.roles : [];
@@ -315,58 +353,83 @@ export function ResultCard({
   const hasDocument = Boolean(result.document?.uid);
 
   // مقصد «بازکردن در متن»: سند + صفحه + بازهٔ هایلایت (code point در مختصات سند)
+  // توجه: پارامتر صفحه باید «pg» باشد (قرارداد کتاب‌خوان)
+  // بازهٔ دقیق تطبیق (match_offsets) مقدم بر بازهٔ passage است — هر دو ممکن است آرایه باشند
+  const hlOffsets = normalizeOffsets(result.match_offsets) ?? offsets;
   const readHref = hasDocument
     ? {
         to: `/read/${result.document.uid}`,
         query: {
-          ...(result.page?.uid ? { page: result.page.uid } : {}),
-          ...(offsets ? { hl: `${offsets.start}:${offsets.end}` } : {}),
+          ...(result.page?.uid ? { pg: result.page.uid } : {}),
+          ...(hlOffsets ? { hl: `${hlOffsets.start}:${hlOffsets.end}` } : {}),
         },
       }
     : null;
 
   return (
-    <article className="rounded-xl border border-border bg-surface p-4 transition-colors hover:border-control-border/60">
+    <article className="quiet-card anim-rise rounded-xl border border-border bg-surface p-4 transition-all duration-200 hover:-translate-y-px hover:border-control-border/60 hover:shadow-[0_2px_12px_-4px_rgb(0_0_0/0.08)]">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <h3 className="font-semibold text-foreground">
             {result.work?.title ?? "منبع بدون عنوان"}
           </h3>
-          <p className="mt-0.5 text-sm text-muted-foreground">
-            {[
-              docLabel ? `سند: ${docLabel}` : null,
-              pageLabel ? `صفحهٔ چاپی: ${pageLabel}` : null,
-              result.section?.title ? result.section.title : null,
-            ]
-              .filter(Boolean)
-              .join(" · ") || "مشخصات جای‌گیری ثبت نشده"}
+          <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+            {docLabel ? (
+              <span className="inline-flex items-center gap-1">
+                <BookMarked className="size-3.5" aria-hidden="true" />
+                {docLabel}
+              </span>
+            ) : null}
+            {pageLabel ? (
+              <span className="inline-flex items-center gap-1">
+                <FileText className="size-3.5" aria-hidden="true" />
+                ص {pageLabel}
+              </span>
+            ) : null}
+            {result.section?.title ? (
+              <span className="inline-flex items-center gap-1">
+                <ListTree className="size-3.5" aria-hidden="true" />
+                {result.section.title}
+              </span>
+            ) : null}
+            {!docLabel && !pageLabel && !result.section?.title ? (
+              <span>مشخصات جای‌گیری ثبت نشده</span>
+            ) : null}
           </p>
         </div>
-        <Badge variant="secondary" className="shrink-0 font-normal">
-          {matchLabel}
-        </Badge>
+        <MatchTypeBadge type={result.match_type} />
       </div>
 
-      <blockquote className="mt-3 rounded-lg border-s-4 border-match/70 bg-reader p-3">
-        <HighlightedSnippet snippet={result.snippet} highlight={result.highlight} />
+      <blockquote className="mt-3 rounded-lg border-s-4 border-match/70 bg-reader px-3.5 py-3">
+        <p
+          lang="ar"
+          dir="rtl"
+          className="font-reader text-[15px] leading-9 text-foreground sm:text-base sm:leading-[2.1]"
+        >
+          <HighlightedSnippet snippet={result.snippet} highlight={result.highlight} />
+        </p>
       </blockquote>
 
       {roles.length > 0 ? (
-        <div className="mt-2 flex flex-wrap gap-1.5" aria-label="نقش‌های تطبیق">
+        <div className="mt-2.5 flex flex-wrap gap-1.5" aria-label="نقش‌های تطبیق">
           {roles.map((role) => (
-            <Badge key={role} variant="outline" className="font-normal text-muted-foreground">
+            <Badge
+              key={role}
+              variant="outline"
+              className="gap-1 bg-muted/40 font-normal text-muted-foreground"
+            >
               {roleChipLabel(role)}
             </Badge>
           ))}
         </div>
       ) : null}
 
-      <div className="mt-3 flex flex-wrap items-center gap-2">
+      <div className="mt-3.5 flex flex-wrap items-center gap-2">
         {readHref ? (
           <HashLink
             to={readHref.to}
             query={readHref.query}
-            className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+            className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground shadow-sm transition-all hover:bg-primary/90 hover:shadow"
           >
             <BookOpenText className="size-4" aria-hidden="true" />
             بازکردن در متن
@@ -374,7 +437,7 @@ export function ResultCard({
         ) : result.work?.uid ? (
           <HashLink
             to={`/book/${result.work.uid}`}
-            className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+            className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground shadow-sm transition-all hover:bg-primary/90 hover:shadow"
           >
             <BookOpenText className="size-4" aria-hidden="true" />
             بازکردن اثر
@@ -414,13 +477,17 @@ export function ResultCardSkeleton() {
   );
 }
 
-/** شمارش صادقانهٔ §۴۷ — «تطبیق‌های تأییدشده تا این لحظه» */
+/** شمارش صادقانهٔ §۴۷ + تفکیک TECH-11 — مواضع/قطعات/روایت‌ها/کتاب‌ها مخلوط نمی‌شوند */
 export function VerifiedCountLine({
   occurrences,
   countRelation,
+  passages,
+  hadiths,
 }: {
   occurrences: number | null;
   countRelation: string;
+  passages?: number | null;
+  hadiths?: number | null;
 }) {
   if (occurrences === null || occurrences === undefined) {
     return (
@@ -429,10 +496,19 @@ export function VerifiedCountLine({
       </p>
     );
   }
+  const exact = countRelation === "exact";
+  const parts: string[] = [];
+  if (typeof passages === "number" && passages > 0) {
+    parts.push(`${faNum(passages)} قطعهٔ متمایز`);
+  }
+  if (typeof hadiths === "number" && hadiths > 0) {
+    parts.push(`${faNum(hadiths)} روایت متمایز`);
+  }
   return (
     <p className="text-sm text-muted-foreground" aria-live="polite">
       تطبیق‌های تأییدشده تا این لحظه: {faNum(occurrences)}
-      {countRelation === "exact" ? " (شمارش کامل)" : ""}
+      {exact ? " (شمارش کامل)" : ""}
+      {parts.length > 0 ? ` — شامل ${parts.join(" و ")}` : ""}
     </p>
   );
 }

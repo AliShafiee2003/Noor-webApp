@@ -33,6 +33,7 @@ interface EvidenceItem {
   page?: { uid: string; label: string } | null;
   document?: { uid: string; label: string } | null;
   source_offsets?: unknown;
+  match_offsets?: [number, number] | null;
 }
 
 function EvidenceRow({
@@ -44,12 +45,13 @@ function EvidenceRow({
 }) {
   const docUid = evidence.document?.uid ?? null;
   const offsets = evidence.source_offsets ? normalizeOffsets(evidence.source_offsets) : null;
+  const hlOffsets = normalizeOffsets(evidence.match_offsets) ?? offsets;
   const readHref = docUid
     ? {
         to: `/read/${docUid}`,
         query: {
-          ...(evidence.page?.uid ? { page: evidence.page.uid } : {}),
-          ...(offsets ? { hl: `${offsets.start}:${offsets.end}` } : {}),
+          ...(evidence.page?.uid ? { pg: evidence.page.uid } : {}),
+          ...(hlOffsets ? { hl: `${hlOffsets.start}:${hlOffsets.end}` } : {}),
         },
       }
     : null;

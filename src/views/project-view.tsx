@@ -46,6 +46,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { EmptyState, ErrorState, ListSkeleton } from "@/components/feedback";
 import { api, ApiError, apiUrl, errorMessage } from "@/lib/api";
+import { fetchProjects } from "@/lib/projects";
 import { HashLink } from "@/lib/hash-router";
 import { faDate, faNum } from "@/lib/format";
 import { useToast } from "@/hooks/use-toast";
@@ -247,8 +248,7 @@ export function ProjectView({ uid }: { uid: string }) {
   /* ---------- نام پرونده (از فهرست پرونده‌ها) ---------- */
   const projectsQuery = useQuery({
     queryKey: ["projects"],
-    queryFn: async () =>
-      normalizeItems<ProjectRow>(await api.get<ProjectRow[] | { items: ProjectRow[] }>("/projects")),
+    queryFn: fetchProjects,
     staleTime: 30_000,
   });
   const projectName = projectsQuery.data?.find((p) => p.uid === uid)?.name ?? "پروندهٔ پژوهش";

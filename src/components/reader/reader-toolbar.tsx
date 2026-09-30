@@ -141,7 +141,7 @@ function PageJump({
                       isCurrent && "bg-primary/10 font-semibold text-primary",
                     )}
                   >
-                    <span>صفحهٔ {p.label}</span>
+                    <span>{p.page_uid === "p-front" ? "آغاز سند" : `صفحهٔ ${p.label}`}</span>
                     {dupCount > 1 ? (
                       <span className="text-[10px] text-muted-foreground">
                         نوبت {faNum(dupIndex)} از {faNum(dupCount)}

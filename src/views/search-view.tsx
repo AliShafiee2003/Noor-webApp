@@ -55,11 +55,11 @@ import {
 } from "@/components/search/search-form";
 import { FilterChips } from "@/components/search/filter-chips";
 import {
-  ResultCard,
   ResultCardSkeleton,
   VerifiedCountLine,
 } from "@/components/search/result-card";
 import { BooksGroupedView } from "@/components/search/books-grouped-view";
+import { GroupedPositions } from "@/components/search/grouped-positions";
 
 /* ---------- ابزار hash ---------- */
 
@@ -586,6 +586,8 @@ export function SearchView() {
                   <VerifiedCountLine
                     occurrences={meta?.verified_occurrences ?? null}
                     countRelation={meta?.count_relation ?? ""}
+                    passages={meta?.verified_passages ?? null}
+                    hadiths={meta?.verified_hadiths ?? null}
                   />
                   {meta && meta.completion_state !== "complete" ? (
                     <p className="text-xs text-muted-foreground">
@@ -642,13 +644,7 @@ export function SearchView() {
                     </TabsTrigger>
                   </TabsList>
                   <TabsContent value="results" className="space-y-3">
-                    <ul className="space-y-3" aria-live="polite">
-                      {items.map((item, idx) => (
-                        <li key={item.passage_uid + "-" + idx}>
-                          <ResultCard result={item} releaseUid={meta?.release_uid ?? null} />
-                        </li>
-                      ))}
-                    </ul>
+                    <GroupedPositions items={items} releaseUid={meta?.release_uid ?? null} />
                     {/* صفحه‌بندی مواضع: ادامهٔ بررسی */}
                     {meta?.continuation_available ? (
                       <div className="flex flex-col items-center gap-1 pt-2">

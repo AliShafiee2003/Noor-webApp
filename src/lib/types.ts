@@ -348,6 +348,8 @@ export interface SearchResultItem {
   local_hadith_uid: string | null;
   fingerprint: string | null;
   source_offsets: SourceOffsets | null;
+  /** بازهٔ دقیق تطبیق در مختصات سند — برای هایلایت کتاب‌خوان */
+  match_offsets?: [number, number] | null;
 }
 
 export interface SearchResponse {
@@ -356,6 +358,9 @@ export interface SearchResponse {
   completion_state: CompletionState;
   verified_occurrences: number | null;
   verified_books: number | null;
+  /** TECH-11: شمارش جداگانهٔ قطعه‌ها و روایت‌های متمایز */
+  verified_passages?: number | null;
+  verified_hadiths?: number | null;
   count_relation: "lower_bound" | "exact";
   continuation_available: boolean;
   next_cursor: string | null;

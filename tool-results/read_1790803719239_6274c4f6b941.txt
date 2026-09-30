@@ -1,0 +1,786 @@
+     1→"use client";
+     2→
+     3→/**
+     4→ * رندر بلوک‌های ساخت‌یافتهٔ صفحه (READ-05..READ-15):
+     5→ * - type=p|heading|sanad|hadith_body|ayah_quote|b_note|sharh|maasoom|unknown
+     6→ * - نقش‌های span: sanad/G/K/maasoom/ayah_text/B/sharh/unknown — تگ ناشناخته هرگز تفسیر نمی‌شود.
+     7→ * - آفست‌ها code point است (تبدیل به UTF-16 با Array.from).
+     8→ * - ارجاع حل‌نشده: پیام فارسی + نشانی اصلی، بدون هدایت حدسی (REL-10) — در والد مدیریت می‌شود.
+     9→ * - انتخاب متن → دکمهٔ شناور «ثبت فیش» با آفست code point داخل بلوک.
+    10→ */
+    11→import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+    12→import { Bookmark, Quote, UserRound } from "lucide-react";
+    13→import { Button } from "@/components/ui/button";
+    14→import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+    15→import { faNum } from "@/lib/format";
+    16→import type {
+    17→  BlockLink,
+    18→  BlockSpan,
+    19→  PageBlock,
+    20→  PagePayload,
+    21→  ReaderPrefs,
+    22→} from "@/lib/types";
+    23→
+    24→/* ---------- ابزار code point ---------- */
+    25→
+    26→interface Mark {
+    27→  start: number;
+    28→  end: number;
+    29→  priority: number; // fnref=3, link=2, span=1, hl=0
+    30→  span?: BlockSpan;
+    31→  link?: BlockLink;
+    32→  refUid?: string;
+    33→  isHl?: boolean;
+    34→}
+    35→
+    36→interface Segment {
+    37→  start: number;
+    38→  end: number;
+    39→  mark?: Mark;
+    40→}
+    41→
+    42→/** پوشش بازه‌ها با اولویت؛ خروجی قطعه‌های بدون هم‌پوشانی است. */
+    43→function buildSegments(cpLen: number, marks: Mark[]): Segment[] {
+    44→  if (cpLen === 0) return [];
+    45→  const sorted = [...marks]
+    46→    .filter((m) => m.end > m.start)
+    47→    .sort((a, b) => a.start - b.start || b.priority - a.priority);
+    48→
+    49→  const segs: Segment[] = [];
+    50→  let cursor = 0;
+    51→  while (cursor < cpLen) {
+    52→    // مرز بعدی: نزدیک‌ترین شروع یا پایان markها بعد از cursor
+    53→    let boundary = cpLen;
+    54→    for (const m of sorted) {
+    55→      if (m.start > cursor) boundary = Math.min(boundary, m.start);
+    56→      if (m.end > cursor) boundary = Math.min(boundary, m.end);
+    57→    }
+    58→    if (boundary <= cursor) break;
+    59→    // پراولویت‌ترین mark که کل بازهٔ [cursor, boundary) را می‌پوشاند
+    60→    let best: Mark | undefined;
+    61→    for (const m of sorted) {
+    62→      if (m.start <= cursor && m.end >= boundary) {
+    63→        if (!best || m.priority > best.priority) best = m;
+    64→      }
+    65→    }
+    66→    segs.push({ start: cursor, end: boundary, mark: best });
+    67→    cursor = boundary;
+    68→  }
+    69→  return segs;
+    70→}
+    71→
+    72→/** بیان مؤلف (B) و شرح فارسی است؛ بقیهٔ بلوک‌ها عربی فرض می‌شوند. */
+    73→function blockIsPersian(block: PageBlock): boolean {
+    74→  return block.type === "b_note" || block.type === "sharh";
+    75→}
+    76→
+    77→function fontFamilyFor(prefs: ReaderPrefs): string {
+    78→  return prefs.font_family === "vazirmatn"
+    79→    ? "var(--font-ui)"
+    80→    : "var(--font-arabic)";
+    81→}
+    82→
+    83→function citationAddress(block: PageBlock): string | null {
+    84→  for (const c of block.citations ?? []) {
+    85→    if (c.address && c.address.trim() !== "") return c.address.trim();
+    86→    if (c.sure) {
+    87→      const range = c.aya ?? [c.aya_from, c.aya_to].filter(Boolean).join("–");
+    88→      return range ? `${c.sure}: ${range}` : c.sure;
+    89→    }
+    90→  }
+    91→  return null;
+    92→}
+    93→
+    94→/* ---------- نشان‌های نقش ---------- */
+    95→
+    96→function RoleBadge({
+    97→  children,
+    98→  tone = "muted",
+    99→}: {
+   100→  children: React.ReactNode;
+   101→  tone?: "muted" | "green" | "paper";
+   102→}) {
+   103→  const cls =
+   104→    tone === "green"
+   105→      ? "border-ayah/40 bg-ayah-soft text-ayah"
+   106→      : tone === "paper"
+   107→        ? "border-border bg-sharh-soft text-foreground"
+   108→        : "border-border bg-muted text-muted-foreground";
+   109→  return (
+   110→    <span
+   111→      className={`inline-flex shrink-0 items-center rounded-full border px-1.5 py-px align-middle text-[10px] leading-4 font-medium ${cls}`}
+   112→    >
+   113→      {children}
+   114→    </span>
+   115→  );
+   116→}
+   117→
+   118→/* ---------- متن بلوک با نقش‌ها ---------- */
+   119→
+   120→function BlockText({
+   121→  block,
+   122→  footnoteLabelFor,
+   123→  highlight,
+   124→  onFootnoteClick,
+   125→  onLinkClick,
+   126→  semantic,
+   127→}: {
+   128→  block: PageBlock;
+   129→  footnoteLabelFor: (refUid: string) => string | null;
+   130→  highlight: { start: number; end: number; blockId?: string | null } | null;
+   131→  onFootnoteClick: (refUid: string, anchorId: string) => void;
+   132→  onLinkClick: (link: BlockLink) => void;
+   133→  semantic: boolean;
+   134→}) {
+   135→  const cps = useMemo(() => Array.from(block.text), [block.text]);
+   136→  const cpLen = cps.length;
+   137→
+   138→  const marks = useMemo<Mark[]>(() => {
+   139→    const out: Mark[] = [];
+   140→    for (const s of block.spans ?? []) {
+   141→      out.push({
+   142→        start: Math.max(0, Math.min(s.start, cpLen)),
+   143→        end: Math.max(0, Math.min(s.end, cpLen)),
+   144→        priority: 1,
+   145→        span: s,
+   146→      });
+   147→    }
+   148→    for (const l of block.links ?? []) {
+   149→      out.push({
+   150→        start: Math.max(0, Math.min(l.start, cpLen)),
+   151→        end: Math.max(0, Math.min(l.end, cpLen)),
+   152→        priority: 2,
+   153→        link: l,
+   154→      });
+   155→    }
+   156→    for (const f of block.footnote_refs ?? []) {
+   157→      out.push({
+   158→        start: Math.max(0, Math.min(f.start, cpLen)),
+   159→        end: Math.max(0, Math.min(f.end, cpLen)),
+   160→        priority: 3,
+   161→        refUid: f.ref,
+   162→      });
+   163→    }
+   164→    if (highlight && highlight.end > highlight.start) {
+   165→      out.push({
+   166→        start: Math.max(0, Math.min(highlight.start, cpLen)),
+   167→        end: Math.max(0, Math.min(highlight.end, cpLen)),
+   168→        priority: 0,
+   169→        isHl: true,
+   170→      });
+   171→    }
+   172→    return out;
+   173→  }, [block, cpLen, highlight]);
+   174→
+   175→  const segs = useMemo(() => buildSegments(cpLen, marks), [cpLen, marks]);
+   176→
+   177→  return (
+   178→    <>
+   179→      {segs.map((seg, i) => {
+   180→        const text = cps.slice(seg.start, seg.end).join("");
+   181→        const mark = seg.mark;
+   182→        if (!mark) {
+   183→          return (
+   184→            <span key={i} data-cp-start={seg.start} data-cp-end={seg.end}>
+   185→              {text}
+   186→            </span>
+   187→          );
+   188→        }
+   189→        if (mark.isHl) {
+   190→          return (
+   191→            <mark
+   192→              key={i}
+   193→              id="reader-hl-anchor"
+   194→              data-cp-start={seg.start}
+   195→              data-cp-end={seg.end}
+   196→              className="rounded-sm bg-match px-0.5 text-foreground"
+   197→            >
+   198→              {text}
+   199→            </mark>
+   200→          );
+   201→        }
+   202→        if (mark.refUid) {
+   203→          const anchorId = `fnref-${block.id}-${seg.start}`;
+   204→          const label = footnoteLabelFor(mark.refUid) ?? "*";
+   205→          return (
+   206→            <button
+   207→              key={i}
+   208→              type="button"
+   209→              id={anchorId}
+   210→              data-cp-start={seg.start}
+   211→              data-cp-end={seg.end}
+   212→              className="mx-0.5 inline cursor-pointer align-super text-[0.62em] font-semibold text-link hover:underline"
+   213→              onClick={() => onFootnoteClick(mark.refUid as string, anchorId)}
+   214→              aria-label={`نمایش پاورقی ${label}`}
+   215→              title="نمایش پاورقی"
+   216→            >
+   217→              ({label})
+   218→            </button>
+   219→          );
+   220→        }
+   221→        if (mark.link) {
+   222→          return (
+   223→            <button
+   224→              key={i}
+   225→              type="button"
+   226→              data-cp-start={seg.start}
+   227→              data-cp-end={seg.end}
+   228→              className="inline cursor-pointer text-link underline decoration-dotted underline-offset-4 hover:decoration-solid"
+   229→              onClick={() => onLinkClick(mark.link as BlockLink)}
+   230→              title={`ارجاع: ${mark.link.original_address}`}
+   231→            >
+   232→              {text}
+   233→            </button>
+   234→          );
+   235→        }
+   236→        const span = mark.span as BlockSpan;
+   237→        if (!semantic) {
+   238→          // READ-13 خاموش: نقش‌ها فقط متن ساده — بدون رنگ و نشان (دسترس‌پذیر و خنثی)
+   239→          return (
+   240→            <span key={i} data-cp-start={seg.start} data-cp-end={seg.end}>
+   241→              {text}
+   242→            </span>
+   243→          );
+   244→        }
+   245→        switch (span.role) {
+   246→          case "sanad":
+   247→            return (
+   248→              <span
+   249→                key={i}
+   250→                data-cp-start={seg.start}
+   251→                data-cp-end={seg.end}
+   252→                className="rounded bg-muted/55 px-0.5 text-muted-foreground"
+   253→              >
+   254→                {text}
+   255→              </span>
+   256→            );
+   257→          case "G":
+   258→            return (
+   259→              <Tooltip key={i}>
+   260→                <TooltipTrigger asChild>
+   261→                  <span
+   262→                    data-cp-start={seg.start}
+   263→                    data-cp-end={seg.end}
+   264→                    className="inline-flex items-baseline gap-0.5 rounded border border-border bg-surface px-0.5"
+   265→                  >
+   266→                    {text}
+   267→                    <UserRound className="size-3 self-center text-primary" aria-hidden="true" />
+   268→                  </span>
+   269→                </TooltipTrigger>
+   270→                <TooltipContent className="max-w-60 text-xs">
+   271→                  راوی: {span.G ?? text}
+   272→                </TooltipContent>
+   273→              </Tooltip>
+   274→            );
+   275→          case "K":
+   276→            return (
+   277→              <Tooltip key={i}>
+   278→                <TooltipTrigger asChild>
+   279→                  <span
+   280→                    data-cp-start={seg.start}
+   281→                    data-cp-end={seg.end}
+   282→                    className="inline-flex items-baseline gap-0.5 rounded border border-border bg-surface px-0.5 text-link"
+   283→                  >
+   284→                    {text}
+   285→                    <Bookmark className="size-3 self-center" aria-hidden="true" />
+   286→                  </span>
+   287→                </TooltipTrigger>
+   288→                <TooltipContent className="text-xs">مأخذ: {span.ref ?? text}</TooltipContent>
+   289→              </Tooltip>
+   290→            );
+   291→          case "maasoom":
+   292→            return (
+   293→              <Tooltip key={i}>
+   294→                <TooltipTrigger asChild>
+   295→                  <span
+   296→                    data-cp-start={seg.start}
+   297→                    data-cp-end={seg.end}
+   298→                    className="rounded bg-ayah-soft px-0.5"
+   299→                  >
+   300→                    {text}
+   301→                    <RoleBadge tone="green">سخن معصوم</RoleBadge>
+   302→                  </span>
+   303→                </TooltipTrigger>
+   304→                <TooltipContent className="text-xs">
+   305→                  بخش منسوب به سخن معصوم (نشانه‌گذاری‌شده)
+   306→                </TooltipContent>
+   307→              </Tooltip>
+   308→            );
+   309→          case "B":
+   310→            return (
+   311→              <span
+   312→                key={i}
+   313→                data-cp-start={seg.start}
+   314→                data-cp-end={seg.end}
+   315→                className="rounded bg-sharh-soft px-0.5"
+   316→              >
+   317→                <RoleBadge tone="paper">بیان مؤلف</RoleBadge> {text}
+   318→              </span>
+   319→            );
+   320→          case "sharh":
+   321→            return (
+   322→              <span
+   323→                key={i}
+   324→                data-cp-start={seg.start}
+   325→                data-cp-end={seg.end}
+   326→                className="rounded bg-sharh-soft px-0.5"
+   327→              >
+   328→                <RoleBadge tone="paper">شرح</RoleBadge> {text}
+   329→              </span>
+   330→            );
+   331→          case "ayah_text":
+   332→            return (
+   333→              <span
+   334→                key={i}
+   335→                data-cp-start={seg.start}
+   336→                data-cp-end={seg.end}
+   337→                className="rounded bg-ayah-soft px-0.5"
+   338→              >
+   339→                {text}
+   340→              </span>
+   341→            );
+   342→          default:
+   343→            // نقش ناشناخته → بدون تفسیر، فقط متن
+   344→            return (
+   345→              <span key={i} data-cp-start={seg.start} data-cp-end={seg.end}>
+   346→                {text}
+   347→              </span>
+   348→            );
+   349→        }
+   350→      })}
+   351→    </>
+   352→  );
+   353→}
+   354→
+   355→/* ---------- بلوک سند روایت (قابل جمع — HAD-10/HAD-14) ---------- */
+   356→
+   357→function SanadBlock({
+   358→  block,
+   359→  collapsed,
+   360→  onToggle,
+   361→  children,
+   362→}: {
+   363→  block: PageBlock;
+   364→  collapsed: boolean;
+   365→  onToggle: (blockId: string) => void;
+   366→  children: React.ReactNode;
+   367→}) {
+   368→  const cps = Array.from(block.text);
+   369→  const gCount = (block.spans ?? []).filter((s) => s.role === "G").length;
+   370→  const countLabel =
+   371→    gCount > 0 ? `${faNum(gCount)} راوی` : `${faNum(cps.length)} نویسه`;
+   372→  return (
+   373→    <div data-block-id={block.id} className="border-s-2 border-muted-foreground/40 ps-3">
+   374→      <div className="flex flex-wrap items-center gap-1.5">
+   375→        <button
+   376→          type="button"
+   377→          onClick={() => onToggle(block.id)}
+   378→          aria-expanded={!collapsed}
+   379→          className="inline-flex min-h-11 items-center gap-1.5 rounded-lg px-1 text-xs font-medium text-muted-foreground hover:bg-accent md:min-h-8"
+   380→          title={
+   381→            collapsed
+   382→              ? "بدنهٔ روایت بدون سند نمایش داده می‌شود؛ به معنی سخن معصوم نیست"
+   383→              : "جمع‌کردن سند روایت"
+   384→          }
+   385→        >
+   386→          <span
+   387→            className={`inline-block text-[9px] transition-transform ${collapsed ? "rotate-180" : ""}`}
+   388→            aria-hidden="true"
+   389→          >
+   390→            ▼
+   391→          </span>
+   392→          سند روایت
+   393→          <span className="rounded-full border border-border bg-muted px-1.5 py-px text-[10px] leading-4">
+   394→            {countLabel}
+   395→          </span>
+   396→        </button>
+   397→        {block.revayat_index ? (
+   398→          <span
+   399→            className="text-[10px] text-muted-foreground/80"
+   400→            title={`شمارهٔ روایت در منبع: ${block.revayat_index}`}
+   401→          >
+   402→            شمار روایت: {faNum(block.revayat_index)}
+   403→          </span>
+   404→        ) : null}
+   405→        {collapsed ? (
+   406→          <span className="sr-only">
+   407→            بدنهٔ روایت بدون سند نمایش داده می‌شود؛ به معنی سخن معصوم نیست
+   408→          </span>
+   409→        ) : null}
+   410→      </div>
+   411→      {collapsed ? (
+   412→        <p className="text-xs italic text-muted-foreground/80">سند جمع شده است.</p>
+   413→      ) : (
+   414→        <p lang="ar" dir="rtl" className="text-muted-foreground" style={{ fontSize: "0.92em" }}>
+   415→          {children}
+   416→        </p>
+   417→      )}
+   418→    </div>
+   419→  );
+   420→}
+   421→
+   422→/* ---------- انتخاب متن → فیش ---------- */
+   423→
+   424→export interface ReaderSelection {
+   425→  blockId: string;
+   426→  start: number;
+   427→  end: number;
+   428→  text: string;
+   429→  hadithUid?: string | null;
+   430→}
+   431→
+   432→function cpOffsetFromNode(node: Node | null, offset: number): {
+   433→  blockId: string | null;
+   434→  cp: number;
+   435→} {
+   436→  if (!node) return { blockId: null, cp: 0 };
+   437→  let textNode: Text | null = null;
+   438→  let utf16Offset = offset;
+   439→  if (node.nodeType === Node.TEXT_NODE) {
+   440→    textNode = node as Text;
+   441→  } else {
+   442→    const child = node.childNodes[offset] ?? node.firstChild;
+   443→    if (child && child.nodeType === Node.TEXT_NODE) {
+   444→      textNode = child as Text;
+   445→      utf16Offset = 0;
+   446→    }
+   447→  }
+   448→  if (!textNode) return { blockId: null, cp: 0 };
+   449→  const spanEl = textNode.parentElement?.closest<HTMLElement>("span[data-cp-start], mark[data-cp-start]");
+   450→  const blockEl = textNode.parentElement?.closest<HTMLElement>("[data-block-id]");
+   451→  if (!blockEl) return { blockId: null, cp: 0 };
+   452→  const base = spanEl ? Number(spanEl.dataset.cpStart ?? 0) : 0;
+   453→  const rel = Array.from((textNode.textContent ?? "").slice(0, utf16Offset)).length;
+   454→  return { blockId: blockEl.dataset.blockId ?? null, cp: base + rel };
+   455→}
+   456→
+   457→/* ---------- رندر یک بلوک ---------- */
+   458→
+   459→interface BlockViewProps {
+   460→  block: PageBlock;
+   461→  prefs: ReaderPrefs;
+   462→  highlight: { start: number; end: number; blockId?: string | null } | null;
+   463→  collapsed: boolean;
+   464→  footnoteLabelFor: (refUid: string) => string | null;
+   465→  onFootnoteClick: (refUid: string, anchorId: string) => void;
+   466→  onLinkClick: (link: BlockLink) => void;
+   467→  onToggleSanad: (blockId: string) => void;
+   468→  /** READ-13: نمایش رنگ/نشان نقش‌های معنایی */
+   469→  semantic: boolean;
+   470→}
+   471→
+   472→function BlockView({
+   473→  block,
+   474→  prefs,
+   475→  highlight,
+   476→  collapsed,
+   477→  footnoteLabelFor,
+   478→  onFootnoteClick,
+   479→  onLinkClick,
+   480→  onToggleSanad,
+   481→  semantic,
+   482→}: BlockViewProps) {
+   483→  const isPersian = blockIsPersian(block);
+   484→  const style: React.CSSProperties = {
+   485→    fontSize: `${prefs.font_size}px`,
+   486→    lineHeight: prefs.line_height,
+   487→    fontFamily: isPersian ? "var(--font-ui)" : fontFamilyFor(prefs),
+   488→  };
+   489→  const text = (
+   490→    <BlockText
+   491→      block={block}
+   492→      semantic={semantic}
+   493→      highlight={highlight}
+   494→      footnoteLabelFor={footnoteLabelFor}
+   495→      onFootnoteClick={onFootnoteClick}
+   496→      onLinkClick={onLinkClick}
+   497→    />
+   498→  );
+   499→
+   500→  switch (block.type) {
+   501→    case "heading":
+   502→      return (
+   503→        <h3
+   504→          className="mt-6 mb-2 border-b border-border/70 pb-1.5 text-xl font-bold text-foreground first:mt-0"
+   505→          lang={isPersian ? "fa" : "ar"}
+   506→          dir="rtl"
+   507→          style={{ fontFamily: isPersian ? "var(--font-ui)" : fontFamilyFor(prefs) }}
+   508→        >
+   509→          {block.text}
+   510→        </h3>
+   511→      );
+   512→    case "sanad":
+   513→      return (
+   514→        <SanadBlock block={block} collapsed={collapsed} onToggle={onToggleSanad}>
+   515→          {text}
+   516→        </SanadBlock>
+   517→      );
+   518→    case "hadith_body":
+   519→      return (
+   520→        <div className="rounded-lg border-e-2 border-primary/30 bg-surface/40 py-1 pe-3 ps-0">
+   521→          <p lang="ar" dir="rtl" style={style}>
+   522→            {text}
+   523→          </p>
+   524→        </div>
+   525→      );
+   526→    case "ayah_quote": {
+   527→      const addr = citationAddress(block);
+   528→      return (
+   529→        <figure className="rounded-xl border border-ayah/30 bg-ayah-soft px-4 py-3">
+   530→          <figcaption className="mb-1.5 flex flex-wrap items-center gap-2">
+   531→            <RoleBadge tone="green">آیه</RoleBadge>
+   532→            {addr ? (
+   533→              <span className="text-xs text-muted-foreground">نشانی: {addr}</span>
+   534→            ) : null}
+   535→          </figcaption>
+   536→          <blockquote lang="ar" dir="rtl" style={style}>
+   537→            {text}
+   538→          </blockquote>
+   539→        </figure>
+   540→      );
+   541→    }
+   542→    case "b_note":
+   543→      return (
+   544→        <aside className="rounded-xl border border-border bg-sharh-soft px-4 py-3">
+   545→          <p className="mb-1 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+   546→            <RoleBadge tone="paper">بیان مؤلف</RoleBadge>
+   547→          </p>
+   548→          <p lang="fa" dir="rtl" style={style}>
+   549→            {text}
+   550→          </p>
+   551→        </aside>
+   552→      );
+   553→    case "sharh":
+   554→      return (
+   555→        <aside className="rounded-xl border border-border bg-sharh-soft px-4 py-3">
+   556→          <p className="mb-1 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+   557→            <RoleBadge tone="paper">شرح / بیان مؤلف</RoleBadge>
+   558→          </p>
+   559→          <p lang="fa" dir="rtl" style={style}>
+   560→            {text}
+   561→          </p>
+   562→        </aside>
+   563→      );
+   564→    case "maasoom":
+   565→      return (
+   566→        <div className="rounded-lg border border-ayah/25 bg-ayah-soft/60 px-3 py-2">
+   567→          <p className="mb-0.5">
+   568→            <RoleBadge tone="green">سخن معصوم</RoleBadge>
+   569→          </p>
+   570→          <p lang="ar" dir="rtl" style={style}>
+   571→            {text}
+   572→          </p>
+   573→        </div>
+   574→      );
+   575→    case "unknown":
+   576→      // تگ ناشناخته: فقط متن، بدون هیچ تفسیر و نقش‌دهی (§۱۹)
+   577→      return (
+   578→        <p lang="ar" dir="rtl" style={style}>
+   579→          {block.text}
+   580→        </p>
+   581→      );
+   582→    default:
+   583→      return (
+   584→        <p lang={isPersian ? "fa" : "ar"} dir="rtl" style={style}>
+   585→          {text}
+   586→        </p>
+   587→      );
+   588→  }
+   589→}
+   590→
+   591→/* ---------- رندر صفحه ---------- */
+   592→
+   593→export interface PageRendererProps {
+   594→  page: PagePayload;
+   595→  prefs: ReaderPrefs;
+   596→  /** نگاشت block_id → section_uid برای لنگرهای فهرست */
+   597→  sectionUidByBlockId: Record<string, string>;
+   598→  /** بلوک مقصد پرش از فهرست — با رنگ زمینه ظریف برجسته می‌شود */
+   599→  flashBlockId?: string | null;
+   600→  /** بازهٔ highlight نتیجهٔ جست‌وجو (code point در بلوک) */
+   601→  highlight?: { start: number; end: number; blockId?: string | null } | null;
+   602→  collapsedSanads: ReadonlySet<string>;
+   603→  onToggleSanad: (blockId: string) => void;
+   604→  onFootnoteClick: (refUid: string, anchorId: string) => void;
+   605→  onLinkClick: (link: BlockLink) => void;
+   606→  onSelection: (sel: ReaderSelection | null) => void;
+   607→}
+   608→
+   609→export function PageRenderer({
+   610→  page,
+   611→  prefs,
+   612→  sectionUidByBlockId,
+   613→  flashBlockId,
+   614→  highlight,
+   615→  collapsedSanads,
+   616→  onToggleSanad,
+   617→  onFootnoteClick,
+   618→  onLinkClick,
+   619→  onSelection,
+   620→}: PageRendererProps) {
+   621→  const wrapRef = useRef<HTMLDivElement>(null);
+   622→  const [selRect, setSelRect] = useState<{ top: number; left: number } | null>(null);
+   623→  const [sel, setSel] = useState<ReaderSelection | null>(null);
+   624→
+   625→  const clearSelection = useCallback(() => {
+   626→    setSel(null);
+   627→    setSelRect(null);
+   628→  }, []);
+   629→
+   630→  const computeSelection = useCallback(() => {
+   631→    const wrapper = wrapRef.current;
+   632→    if (!wrapper) return;
+   633→    const s = window.getSelection();
+   634→    if (!s || s.isCollapsed || s.rangeCount === 0) {
+   635→      clearSelection();
+   636→      return;
+   637→    }
+   638→    const range = s.getRangeAt(0);
+   639→    if (!wrapper.contains(range.commonAncestorContainer)) {
+   640→      clearSelection();
+   641→      return;
+   642→    }
+   643→    const a = cpOffsetFromNode(range.startContainer, range.startOffset);
+   644→    const b = cpOffsetFromNode(range.endContainer, range.endOffset);
+   645→    const blockId = a.blockId ?? b.blockId;
+   646→    if (!blockId) {
+   647→      clearSelection();
+   648→      return;
+   649→    }
+   650→    const block = page.blocks.find((bl) => bl.id === blockId);
+   651→    if (!block) {
+   652→      clearSelection();
+   653→      return;
+   654→    }
+   655→    const blockLen = Array.from(block.text).length;
+   656→    let start: number;
+   657→    let end: number;
+   658→    if (a.blockId === b.blockId) {
+   659→      start = Math.min(a.cp, b.cp);
+   660→      end = Math.max(a.cp, b.cp);
+   661→    } else {
+   662→      // انتخاب چندبلوکی: به بلوک لنگر محدود می‌شود (snapshot فیش یک بازهٔ پیوسته است)
+   663→      if (a.blockId === blockId) {
+   664→        start = a.cp;
+   665→        end = blockLen;
+   666→      } else {
+   667→        start = 0;
+   668→        end = Math.min(b.cp, blockLen);
+   669→      }
+   670→      if (end < start) [start, end] = [end, start];
+   671→    }
+   672→    if (end - start < 1) {
+   673→      clearSelection();
+   674→      return;
+   675→    }
+   676→    const text = Array.from(block.text).slice(start, end).join("");
+   677→    const rect = range.getBoundingClientRect();
+   678→    const wrapRect = wrapper.getBoundingClientRect();
+   679→    setSelRect({ top: rect.top - wrapRect.top, left: rect.left - wrapRect.left });
+   680→    setSel({ blockId, start, end, text, hadithUid: block.hadith_uid ?? null });
+   681→  }, [clearSelection, page.blocks]);
+   682→
+   683→  // با اسکرول، دکمهٔ شناور پاک می‌شود تا جای آن از متن جدا نماند
+   684→  useEffect(() => {
+   685→    if (!sel) return;
+   686→    const onScroll = () => clearSelection();
+   687→    window.addEventListener("scroll", onScroll, true);
+   688→    return () => window.removeEventListener("scroll", onScroll, true);
+   689→  }, [sel, clearSelection]);
+   690→
+   691→  const footnoteLabelFor = useCallback(
+   692→    (refUid: string) => {
+   693→      const fn = page.footnotes.find((f) => f.uid === refUid);
+   694→      return fn?.label ?? null;
+   695→    },
+   696→    [page.footnotes],
+   697→  );
+   698→
+   699→  return (
+   700→    <div
+   701→      ref={wrapRef}
+   702→      className="relative select-text rounded-2xl border border-border bg-reader px-4 py-5 shadow-sm md:px-8 md:py-6"
+   703→      onMouseUp={computeSelection}
+   704→      onKeyUp={(e) => {
+   705→        if (e.shiftKey || e.key.startsWith("Arrow")) computeSelection();
+   706→      }}
+   707→    >
+   708→      {page.blocks.length === 0 ? (
+   709→        <p className="py-10 text-center text-sm text-muted-foreground">
+   710→          این صفحه متنی برای نمایش ندارد.
+   711→        </p>
+   712→      ) : (
+   713→        page.blocks.map((block, idx) => {
+   714→          const sectionUid = sectionUidByBlockId[block.id];
+   715→          const flash = flashBlockId === block.id;
+   716→          const untaggedRun =
+   717→            block.untagged === true &&
+   718→            (idx === 0 || page.blocks[idx - 1]?.untagged !== true);
+   719→          const hlHere =
+   720→            highlight && highlight.end > highlight.start
+   721→              ? highlight.blockId
+   722→                ? highlight.blockId === block.id
+   723→                : // بدون blockId: اولین بلوکی که بازه در آن جا می‌شود
+   724→                  idx === 0 && highlight.end <= Array.from(block.text).length
+   725→              : null;
+   726→          return (
+   727→            <div key={block.id} className="group">
+   728→              {untaggedRun ? (
+   729→                <p className="mt-5 mb-2 inline-flex items-center gap-1.5 rounded-full border border-border bg-muted px-2.5 py-0.5 text-[11px] text-muted-foreground first:mt-0">
+   730→                  <span
+   731→                    className="inline-block size-1.5 rounded-full bg-muted-foreground/60"
+   732→                    aria-hidden="true"
+   733→                  />
+   734→                  این منبع نشانه‌گذاری تخصصی ندارد
+   735→                </p>
+   736→              ) : null}
+   737→              <div
+   738→                id={sectionUid ? `sec-block-${block.id}` : undefined}
+   739→                data-block-id={block.id}
+   740→                data-section-uid={sectionUid}
+   741→                className={`rounded-lg transition-colors duration-700 ${
+   742→                  flash ? "bg-match/40" : ""
+   743→                }`}
+   744→              >
+   745→                <BlockView
+   746→                  block={block}
+   747→                  prefs={prefs}
+   748→                  highlight={hlHere && highlight ? highlight : null}
+   749→                  collapsed={collapsedSanads.has(block.id)}
+   750→                  footnoteLabelFor={footnoteLabelFor}
+   751→                  onFootnoteClick={onFootnoteClick}
+   752→                  onLinkClick={onLinkClick}
+   753→                  onToggleSanad={onToggleSanad}
+   754→                  semantic={prefs.semantic_colors === true}
+   755→                />
+   756→              </div>
+   757→            </div>
+   758→          );
+   759→        })
+   760→      )}
+   761→
+   762→      {/* دکمهٔ شناور «ثبت فیش» روی انتخاب متن */}
+   763→      {sel && selRect ? (
+   764→        <div
+   765→          className="absolute z-20"
+   766→          style={{ top: Math.max(selRect.top - 44, 4), left: selRect.left }}
+   767→        >
+   768→          <Button
+   769→            size="sm"
+   770→            className="min-h-11 gap-1.5 shadow-md md:min-h-9"
+   771→            onMouseDown={(e) => e.preventDefault()}
+   772→            onClick={() => {
+   773→              onSelection(sel);
+   774→              clearSelection();
+   775→              window.getSelection()?.removeAllRanges();
+   776→            }}
+   777→          >
+   778→            <Quote className="size-4" aria-hidden="true" />
+   779→            ثبت فیش
+   780→          </Button>
+   781→        </div>
+   782→      ) : null}
+   783→    </div>
+   784→  );
+   785→}
+   786→

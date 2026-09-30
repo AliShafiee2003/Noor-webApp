@@ -32,6 +32,8 @@
   --color-ring: var(--ring);
 
   /* توکن‌های اختصاصی میزکار نور */
+  --color-control-border: var(--control-border);
+  --color-paper-2: var(--paper-2);
   --color-canvas: var(--canvas);
   --color-surface: var(--surface);
   --color-reader: var(--reader);
@@ -255,5 +257,55 @@
   .bottom-bar {
     @apply border-t border-border bg-surface/95 backdrop-blur supports-[backdrop-filter]:bg-surface/85;
     padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  /* سطح قهرمان خانه: متمایز ولی آرام — قاب دانشگاهی با نشان ظریف */
+  .hero-surface {
+    @apply relative overflow-hidden rounded-2xl border border-border bg-surface px-4 pb-5 pt-2 shadow-[0_1px_2px_rgba(24,42,50,0.04)];
+  }
+  .hero-surface::before {
+    content: "";
+    position: absolute;
+    inset-inline: 0;
+    top: 0;
+    height: 3px;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      color-mix(in srgb, var(--primary) 55%, transparent),
+      transparent
+    );
+  }
+  .hero-surface::after {
+    content: "";
+    position: absolute;
+    inset-inline-start: 1.25rem;
+    top: 1.1rem;
+    width: 7px;
+    height: 7px;
+    transform: rotate(45deg);
+    border: 1px solid color-mix(in srgb, var(--primary) 38%, transparent);
+    background: color-mix(in srgb, var(--primary) 8%, transparent);
+    pointer-events: none;
+  }
+
+  /* ورود نرم بلوک‌های صفحه — بدون جابه‌جایی چیدمان */
+  .anim-rise {
+    animation: rise-in 260ms ease-out both;
+  }
+  @keyframes rise-in {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .anim-rise {
+      animation: none;
+    }
   }
 }

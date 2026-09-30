@@ -9,7 +9,7 @@
  * - انتخاب متن → دکمهٔ شناور «ثبت فیش» با آفست code point داخل بلوک.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bookmark, Quote, UserRound } from "lucide-react";
+import { Bookmark, Landmark, Quote, ScrollText, UserRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { faNum } from "@/lib/format";
@@ -358,11 +358,13 @@ function SanadBlock({
   block,
   collapsed,
   onToggle,
+  onHadithClick,
   children,
 }: {
   block: PageBlock;
   collapsed: boolean;
   onToggle: (blockId: string) => void;
+  onHadithClick?: (block: PageBlock) => void;
   children: React.ReactNode;
 }) {
   const cps = Array.from(block.text);
@@ -395,12 +397,16 @@ function SanadBlock({
           </span>
         </button>
         {block.revayat_index ? (
-          <span
-            className="text-[10px] text-muted-foreground/80"
-            title={`شمارهٔ روایت در منبع: ${block.revayat_index}`}
+          <button
+            type="button"
+            onClick={() => onHadithClick?.(block)}
+            className="inline-flex min-h-11 items-center gap-1 rounded-full border border-primary/30 bg-primary/5 px-2 text-[11px] font-medium text-primary transition-colors hover:bg-primary/10 md:min-h-6"
+            aria-label={`اطلاعات روایت شمارهٔ ${faNum(block.revayat_index)} در پنل زمینه`}
+            title={`شمارهٔ روایت در این منبع: ${block.revayat_index} — نمایش جزئیات`}
           >
-            شمار روایت: {faNum(block.revayat_index)}
-          </span>
+            <ScrollText className="size-3" aria-hidden="true" />
+            روایت {faNum(block.revayat_index)}
+          </button>
         ) : null}
         {collapsed ? (
           <span className="sr-only">
@@ -465,6 +471,10 @@ interface BlockViewProps {
   onFootnoteClick: (refUid: string, anchorId: string) => void;
   onLinkClick: (link: BlockLink) => void;
   onToggleSanad: (blockId: string) => void;
+  /** QUR-01: بازکردن پنل آیه */
+  onVerseClick?: (block: PageBlock) => void;
+  /** HAD-08: بازکردن اطلاعات روایت */
+  onHadithClick?: (block: PageBlock) => void;
   /** READ-13: نمایش رنگ/نشان نقش‌های معنایی */
   semantic: boolean;
 }
@@ -478,6 +488,8 @@ function BlockView({
   onFootnoteClick,
   onLinkClick,
   onToggleSanad,
+  onVerseClick,
+  onHadithClick,
   semantic,
 }: BlockViewProps) {
   const isPersian = blockIsPersian(block);
@@ -499,6 +511,7 @@ function BlockView({
 
   switch (block.type) {
     case "heading":
+      // از BlockText می‌رود تا هایلایت نتیجهٔ جست‌وجو درون سرفصل هم دیده شود
       return (
         <h3
           className="mt-6 mb-2 border-b border-border/70 pb-1.5 text-xl font-bold text-foreground first:mt-0"
@@ -506,12 +519,17 @@ function BlockView({
           dir="rtl"
           style={{ fontFamily: isPersian ? "var(--font-ui)" : fontFamilyFor(prefs) }}
         >
-          {block.text}
+          {text}
         </h3>
       );
     case "sanad":
       return (
-        <SanadBlock block={block} collapsed={collapsed} onToggle={onToggleSanad}>
+        <SanadBlock
+          block={block}
+          collapsed={collapsed}
+          onToggle={onToggleSanad}
+          onHadithClick={onHadithClick}
+        >
           {text}
         </SanadBlock>
       );
@@ -525,11 +543,23 @@ function BlockView({
       );
     case "ayah_quote": {
       const addr = citationAddress(block);
+      const cit = block.citations?.[0];
       return (
         <figure className="rounded-xl border border-ayah/30 bg-ayah-soft px-4 py-3">
           <figcaption className="mb-1.5 flex flex-wrap items-center gap-2">
             <RoleBadge tone="green">آیه</RoleBadge>
-            {addr ? (
+            {cit ? (
+              <button
+                type="button"
+                onClick={() => onVerseClick?.(block)}
+                className="inline-flex min-h-11 items-center gap-1 rounded-full border border-ayah/40 bg-surface px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-accent md:min-h-7"
+                aria-label="نمایش جزئیات آیه در پنل زمینه"
+                title="نمایش جزئیات آیه در پنل زمینه"
+              >
+                <Landmark className="size-3.5 text-primary" aria-hidden="true" />
+                {addr || "استناد قرآنی"}
+              </button>
+            ) : addr ? (
               <span className="text-xs text-muted-foreground">نشانی: {addr}</span>
             ) : null}
           </figcaption>
@@ -579,12 +609,32 @@ function BlockView({
           {block.text}
         </p>
       );
-    default:
+    default: {
+      // p با استناد آیه (ayahAddress مستقل — QUR-02): بعد از متن، چیپ نشانی کلیک‌پذیر
+      const cit = block.citations?.[0];
+      if (cit) {
+        return (
+          <p lang={isPersian ? "fa" : "ar"} dir="rtl" style={style}>
+            {text}{" "}
+            <button
+              type="button"
+              onClick={() => onVerseClick?.(block)}
+              className="inline-flex min-h-11 translate-y-0.5 items-center gap-1 rounded-full border border-ayah/40 bg-ayah-soft px-2.5 align-middle text-xs font-medium text-foreground transition-colors hover:bg-accent md:min-h-7"
+              aria-label="نمایش جزئیات نشانی آیه در پنل زمینه"
+              title="نمایش جزئیات نشانی آیه در پنل زمینه"
+            >
+              <Landmark className="size-3.5 text-primary" aria-hidden="true" />
+              {citationAddress(block) || "استناد قرآنی"}
+            </button>
+          </p>
+        );
+      }
       return (
         <p lang={isPersian ? "fa" : "ar"} dir="rtl" style={style}>
           {text}
         </p>
       );
+    }
   }
 }
 
@@ -604,6 +654,10 @@ export interface PageRendererProps {
   onFootnoteClick: (refUid: string, anchorId: string) => void;
   onLinkClick: (link: BlockLink) => void;
   onSelection: (sel: ReaderSelection | null) => void;
+  /** QUR-01: بازکردن پنل آیه */
+  onVerseClick?: (block: PageBlock) => void;
+  /** HAD-08: بازکردن اطلاعات روایت */
+  onHadithClick?: (block: PageBlock) => void;
 }
 
 export function PageRenderer({
@@ -617,10 +671,27 @@ export function PageRenderer({
   onFootnoteClick,
   onLinkClick,
   onSelection,
+  onVerseClick,
+  onHadithClick,
 }: PageRendererProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [selRect, setSelRect] = useState<{ top: number; left: number } | null>(null);
   const [sel, setSel] = useState<ReaderSelection | null>(null);
+
+  /* هایلایت نتیجهٔ جست‌وجو: پس از رندر، به آن اسکرول می‌شود (یک بار برای هر بازه) */
+  const hlKey = highlight ? `${highlight.start}:${highlight.end}:${highlight.blockId ?? ""}` : "";
+  const lastScrolled = useRef<string>("");
+  useEffect(() => {
+    if (!hlKey || lastScrolled.current === hlKey) return;
+    lastScrolled.current = hlKey;
+    const t = window.setTimeout(() => {
+      document.getElementById("reader-hl-anchor")?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    }, 250);
+    return () => window.clearTimeout(t);
+  }, [hlKey]);
 
   const clearSelection = useCallback(() => {
     setSel(null);
@@ -751,6 +822,8 @@ export function PageRenderer({
                   onFootnoteClick={onFootnoteClick}
                   onLinkClick={onLinkClick}
                   onToggleSanad={onToggleSanad}
+                  onVerseClick={onVerseClick}
+                  onHadithClick={onHadithClick}
                   semantic={prefs.semantic_colors === true}
                 />
               </div>
