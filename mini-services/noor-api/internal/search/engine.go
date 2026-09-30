@@ -496,11 +496,15 @@ func (e *LocalEngine) run(ctx context.Context, db *sql.DB, req *Request, release
                         SELECT DISTINCT p.passage_uid FROM postings p JOIN tokens t ON t.token_id=p.token_id WHERE t.token IN (`+ph+`) LIMIT 20000)
                         ORDER BY s.work_uid, s.document_uid, s.block_start`, append([]any{releaseUID}, toStrs(toks)...)...)
         } else {
-                ph := placeholders(len(toks))
+                // پیش‌فیلتر «همهٔ واژه‌ها باید در passage باشند»: شمار مقایسه‌ای =
+                // شمار واژه‌های متمایزِ پرس‌وجو (نه توکن‌ها با تکرار) — وگرنه هر عبارت
+                // دارای واژهٔ تکراری (مثل «الرسول ما الرسول») بی‌کاندید می‌ماند.
+                uniq := dedupStrings(toks)
+                ph := placeholders(len(uniq))
                 rows, err = db.Query(`SELECT s.* FROM passages s WHERE s.release_uid=? AND s.passage_uid IN (
                         SELECT p.passage_uid FROM postings p JOIN tokens t ON t.token_id=p.token_id WHERE t.token IN (`+ph+`)
                         GROUP BY p.passage_uid HAVING COUNT(DISTINCT t.token)=? LIMIT 20000)
-                        ORDER BY s.work_uid, s.document_uid, s.block_start`, append([]any{releaseUID}, append(toStrs(toks), len(toks))...)...)
+                        ORDER BY s.work_uid, s.document_uid, s.block_start`, append([]any{releaseUID}, append(toStrs(uniq), len(uniq))...)...)
         }
         if err != nil {
                 return nil, false, err

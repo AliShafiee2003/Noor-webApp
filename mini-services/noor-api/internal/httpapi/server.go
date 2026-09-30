@@ -73,6 +73,7 @@ func (s *Server) Router() http.Handler {
                         r.Get("/documents/{uid}/toc", s.handleTOC)
                         r.Get("/documents/{uid}/pages", s.handlePagesByLabel)
                         r.Get("/documents/{uid}/pages/{pageUID}", s.handlePage)
+                        r.Get("/documents/{uid}/hadiths/{localUID}/locations", s.handleHadithLocations)
                         r.Get("/anchors/{uid}", s.handleAnchor)
 
                         r.Post("/search", s.handleSearch)

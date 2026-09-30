@@ -15,9 +15,12 @@ import {
   BookOpenText,
   Check,
   FileText,
+  LibraryBig,
   ListTree,
   Loader2,
+  PanelRightOpen,
   Plus,
+  Quote,
   TriangleAlert,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -42,6 +45,7 @@ import type {
   SearchResultItem,
 } from "@/lib/types";
 import { useToast } from "@/hooks/use-toast";
+import { HadithLocationsDialog } from "@/components/search/hadith-locations-dialog";
 
 /* ---------- برچسب نقش‌های تطبیق ---------- */
 
@@ -338,12 +342,19 @@ export function ResultCard({
   result,
   releaseUid,
   defaultOpenClip = false,
+  onOpenSplit,
+  splitActive = false,
 }: {
   result: SearchResultItem;
   releaseUid: string | null;
   defaultOpenClip?: boolean;
+  /** SEARCH-11: بازکردن متن نتیجه کنار نتایج (اگر داده نشود، دکمه نمایش نمی‌یابد) */
+  onOpenSplit?: (result: SearchResultItem) => void;
+  /** آیا این نتیجه اکنون در پنل کنار نتایج باز است؟ */
+  splitActive?: boolean;
 }) {
   const [clipOpen, setClipOpen] = useState(defaultOpenClip);
+  const [hadithLookupOpen, setHadithLookupOpen] = useState(false);
 
   const docLabel = result.document?.label ?? null;
   const pageLabel = result.page?.label ?? null;
@@ -367,7 +378,14 @@ export function ResultCard({
     : null;
 
   return (
-    <article className="quiet-card anim-rise rounded-xl border border-border bg-surface p-4 transition-all duration-200 hover:-translate-y-px hover:border-control-border/60 hover:shadow-[0_2px_12px_-4px_rgb(0_0_0/0.08)]">
+    <article
+      className={`quiet-card anim-rise rounded-xl border bg-surface p-4 transition-all duration-200 hover:-translate-y-px hover:shadow-[0_2px_12px_-4px_rgb(0_0_0/0.08)] ${
+        splitActive
+          ? "border-primary/50 ring-1 ring-primary/30"
+          : "border-border hover:border-control-border/60"
+      }`}
+      aria-current={splitActive ? "true" : undefined}
+    >
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <h3 className="font-semibold text-foreground">
@@ -410,8 +428,20 @@ export function ResultCard({
         </p>
       </blockquote>
 
-      {roles.length > 0 ? (
+      {roles.length > 0 || result.local_hadith_uid ? (
         <div className="mt-2.5 flex flex-wrap gap-1.5" aria-label="نقش‌های تطبیق">
+          {result.local_hadith_uid ? (
+            /* روایت لینک‌پذیر (HAD-08) + پرس‌وجوی میان‌کتابی (§۴۷) */
+            <button
+              type="button"
+              onClick={() => setHadithLookupOpen(true)}
+              className="inline-flex min-h-7 items-center gap-1 rounded-full border border-ayah/50 bg-ayah-soft px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-ayah-soft/70"
+              title="این روایت در چه کتاب‌هایی آمده است؟"
+            >
+              <Quote className="size-3" aria-hidden="true" />
+              روایت
+            </button>
+          ) : null}
           {roles.map((role) => (
             <Badge
               key={role}
@@ -426,14 +456,29 @@ export function ResultCard({
 
       <div className="mt-3.5 flex flex-wrap items-center gap-2">
         {readHref ? (
-          <HashLink
-            to={readHref.to}
-            query={readHref.query}
-            className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground shadow-sm transition-all hover:bg-primary/90 hover:shadow"
-          >
-            <BookOpenText className="size-4" aria-hidden="true" />
-            بازکردن در متن
-          </HashLink>
+          <>
+            <HashLink
+              to={readHref.to}
+              query={readHref.query}
+              className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground shadow-sm transition-all hover:bg-primary/90 hover:shadow"
+            >
+              <BookOpenText className="size-4" aria-hidden="true" />
+              بازکردن در متن
+            </HashLink>
+            {onOpenSplit ? (
+              <Button
+                type="button"
+                variant={splitActive ? "secondary" : "outline"}
+                className={`min-h-11 gap-2 ${splitActive ? "border-primary/50 bg-primary/10 text-primary" : ""}`}
+                onClick={() => onOpenSplit(result)}
+                aria-pressed={splitActive}
+                title="متن نتیجه در کنار فهرست نتایج باز می‌شود؛ مواضع و فیلترها از دست نمی‌روند"
+              >
+                <PanelRightOpen className="size-4" aria-hidden="true" />
+                کنار نتایج
+              </Button>
+            ) : null}
+          </>
         ) : result.work?.uid ? (
           <HashLink
             to={`/book/${result.work.uid}`}
@@ -454,6 +499,18 @@ export function ResultCard({
           <Plus className="size-4" aria-hidden="true" />
           افزودن به فیش
         </Button>
+        {result.local_hadith_uid ? (
+          <Button
+            type="button"
+            variant="ghost"
+            className="min-h-11 gap-2 text-muted-foreground"
+            onClick={() => setHadithLookupOpen(true)}
+            aria-label="این روایت در چه کتاب‌هایی آمده است؟"
+          >
+            <LibraryBig className="size-4" aria-hidden="true" />
+            در کدام کتاب‌ها؟
+          </Button>
+        ) : null}
       </div>
 
       <AddToClipDialog
@@ -462,6 +519,14 @@ export function ResultCard({
         open={clipOpen}
         onOpenChange={setClipOpen}
       />
+      {result.local_hadith_uid && result.document?.uid ? (
+        <HadithLocationsDialog
+          documentUid={result.document.uid}
+          localHadithUid={result.local_hadith_uid}
+          open={hadithLookupOpen}
+          onOpenChange={setHadithLookupOpen}
+        />
+      ) : null}
     </article>
   );
 }

@@ -32,6 +32,11 @@ Mutationها باید هدر `X-Noor-CSRF` داشته باشند (token از `GE
 ## مطالعه
 - `GET /documents/{uid}/toc` → `{sections:[{uid,title,kind,page_label,children:[...]}]}` (کلیک → anchor همان گره)
 - `GET /documents/{uid}/pages?label=...` → `[{page_uid,label,serial,ambiguous:false}]` (تفکیک هم‌نام — READ-04)
+- `GET /documents/{uid}/hadiths/{localUID}/locations` → «این روایت در چه کتاب‌هایی آمده؟» (§۴۷):
+  `{hadith:{document_uid,local_uid,piece_index,revayat_index,body_excerpt,body_length,body_blocks,sanad_blocks}, query_truncated, pass_note, passes?:[{note,query_excerpt,works_found,works_added}], verified_occurrences, verified_books, groups:[BookGroup], note?, disclaimer}`
+  - `localUID` هر دو شکل را می‌پذیرد: محلی (`h-101`) و anchor (`docUID:h-101`، با یا بدون `%3A`).
+  - جست‌وجو پلکانی است: نخست متن کامل بدنه (سقف ۲۰۴۸ code point؛ بیشتر → برش در مرز واژه + `query_truncated`)، سپس در نبود نتیجه بخش آغازین (۱۶۰ و ۶۰ نویسه). کتاب‌های یافت‌شده از همهٔ گذرها **اجتماع** می‌شوند (بدون دوبارشماری؛ هر اثر از گذر کشفشده) — `passes` گزارش هر گذر است.
+  - `groups` همان ساختار BookGroup جست‌وجوی کتاب‌هاست (فقط تطبیق‌های تأییدشده). UI باید «منابع دارای این عبارت» بگوید و disclaimer را عیناً نمایش دهد (عدم ادعای یکسانی روایت).
 - `GET /documents/{uid}/pages/{page_uid}` → صفحه با بلوک‌های ساخت‌یافته:
 ```json
 { "page_uid":"p-0042","label":"۴۲","serial":42,"release_uid":"rel-...","overlay_revision_uid":"ovl-...|null",

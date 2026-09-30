@@ -60,6 +60,7 @@ import {
 } from "@/components/search/result-card";
 import { BooksGroupedView } from "@/components/search/books-grouped-view";
 import { GroupedPositions } from "@/components/search/grouped-positions";
+import { SplitReaderPanel, type SplitLocator } from "@/components/search/split-reader";
 
 /* ---------- ابزار hash ---------- */
 
@@ -501,8 +502,91 @@ export function SearchView() {
     );
   };
 
+  /* ---------- پنل «کنار نتایج» (SEARCH-11) — مختصات در hash (WORK-13) ---------- */
+  const splitLocator: SplitLocator | null = useMemo(() => {
+    const doc = route.query.spd;
+    if (!doc) return null;
+    const hlRaw = route.query.sph ?? "";
+    const [hs, he] = hlRaw.split(":").map((v) => Number.parseInt(v, 10));
+    const hl: [number, number] | null =
+      Number.isFinite(hs) && Number.isFinite(he) && he > hs ? [hs, he] : null;
+    return {
+      documentUid: doc,
+      documentLabel: route.query.spdl ?? "",
+      workUid: route.query.spw ?? "",
+      workTitle: route.query.spwt ?? "",
+      pageUid: route.query.spp || null,
+      hl,
+      key: route.query.spk ?? `${doc}:${route.query.spp ?? ""}`,
+    };
+  }, [route.query]);
+
+  const openSplit = useCallback(
+    (result: SearchResultItem) => {
+      if (!result.document?.uid) return;
+      const offsets =
+        (result.match_offsets?.[0] !== undefined ? { start: result.match_offsets[0], end: result.match_offsets[1] } : null) ??
+        (result.source_offsets && typeof result.source_offsets === "object"
+          ? Array.isArray(result.source_offsets)
+            ? { start: result.source_offsets[0], end: result.source_offsets[1] }
+            : { start: result.source_offsets.start, end: result.source_offsets.end }
+          : null);
+      const pageUid = result.page?.uid ?? "";
+      navigate(
+        "/search",
+        {
+          ...route.query,
+          view: undefined,
+          spd: result.document.uid,
+          spdl: result.document.label ?? "",
+          spw: result.work?.uid ?? "",
+          spwt: result.work?.title ?? "",
+          spp: pageUid,
+          sph: offsets ? `${offsets.start}:${offsets.end}` : undefined,
+          spk: `${result.passage_uid}:${pageUid}`,
+        },
+        { replace: false },
+      );
+    },
+    [navigate, route.query],
+  );
+
+  const closeSplit = useCallback(() => {
+    navigate(
+      "/search",
+      {
+        ...route.query,
+        spd: undefined,
+        spdl: undefined,
+        spw: undefined,
+        spwt: undefined,
+        spp: undefined,
+        sph: undefined,
+        spk: undefined,
+      },
+      { replace: true },
+    );
+  }, [navigate, route.query]);
+
+  /** ناوبری درون پنل (صفحهٔ قبل/بعد) — نوشتن صفحهٔ تازه در hash */
+  const navigateSplit = useCallback(
+    (next: SplitLocator) => {
+      navigate(
+        "/search",
+        {
+          ...route.query,
+          spp: next.pageUid ?? undefined,
+          sph: next.hl ? `${next.hl[0]}:${next.hl[1]}` : undefined,
+          spk: next.key,
+        },
+        { replace: true },
+      );
+    },
+    [navigate, route.query],
+  );
+
   return (
-    <div className="mx-auto w-full max-w-6xl px-4 py-8">
+    <div className="mx-auto w-full max-w-[110rem] px-4 py-8">
       <header className="mb-6">
         <h1 className="text-xl font-bold">جست‌وجو در منابع</h1>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -510,7 +594,13 @@ export function SearchView() {
         </p>
       </header>
 
-      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_290px]">
+      <div
+        className={`grid items-start gap-6 ${
+          splitLocator
+            ? "xl:grid-cols-[minmax(0,1fr)_minmax(380px,44%)]"
+            : "lg:grid-cols-[minmax(0,1fr)_290px]"
+        }`}
+      >
         <div className="min-w-0 space-y-5">
           {/* فرم جست‌وجو */}
           <Card>
@@ -644,7 +734,12 @@ export function SearchView() {
                     </TabsTrigger>
                   </TabsList>
                   <TabsContent value="results" className="space-y-3">
-                    <GroupedPositions items={items} releaseUid={meta?.release_uid ?? null} />
+                    <GroupedPositions
+                      items={items}
+                      releaseUid={meta?.release_uid ?? null}
+                      onOpenSplit={openSplit}
+                      splitActiveUid={splitLocator ? splitLocator.key.split(":")[0] : null}
+                    />
                     {/* صفحه‌بندی مواضع: ادامهٔ بررسی */}
                     {meta?.continuation_available ? (
                       <div className="flex flex-col items-center gap-1 pt-2">
@@ -681,15 +776,24 @@ export function SearchView() {
           )}
         </div>
 
-        {/* ستون کناری: جست‌وجوهای ذخیره‌شده (SEARCH-16) */}
-        <aside aria-label="جست‌وجوهای ذخیره‌شده" className="min-w-0">
-          <SavedSearchesPanel
-            currentPayload={request}
-            saveEnabled={hasQuery}
-            saveOpen={saveOpen}
-            onSaveOpenChange={setSaveOpen}
-          />
-        </aside>
+        {/* ستون کناری: پنل متن کنار نتایج (SEARCH-11) یا جست‌وجوهای ذخیره‌شده */}
+        {splitLocator ? (
+          <div className="min-w-0 xl:sticky xl:top-[76px]">
+            <SplitReaderPanel locator={splitLocator} onClose={closeSplit} onNavigate={navigateSplit} />
+            <p className="mt-2 text-[11px] leading-5 text-muted-foreground">
+              متن نتیجه در کنار نتایج باز است؛ مواضع، فیلترها و عبارت جست‌وجو حفظ شده‌اند (§۴۱).
+            </p>
+          </div>
+        ) : (
+          <aside aria-label="جست‌وجوهای ذخیره‌شده" className="min-w-0">
+            <SavedSearchesPanel
+              currentPayload={request}
+              saveEnabled={hasQuery}
+              saveOpen={saveOpen}
+              onSaveOpenChange={setSaveOpen}
+            />
+          </aside>
+        )}
       </div>
     </div>
   );

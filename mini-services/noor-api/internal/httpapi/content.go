@@ -6,6 +6,7 @@ import (
 
         "encoding/json"
         "net/http"
+        "net/url"
         "strings"
 
         "github.com/go-chi/chi/v5"
@@ -384,6 +385,179 @@ func errorsAs(err error, target any) bool {
                 }
         }
         return false
+}
+
+// handleHadithLocations «این روایت در چه کتاب‌هایی آمده؟» (§۴۷، HAD).
+// متن بدنهٔ روایت از بلوک‌های ثبت‌شدهٔ مدل سند ساخته می‌شود (بدون سند — HAD-02/03)
+// و با حالت normalized_phrase روی کل کتابخانه جست‌وجو می‌شود؛ گروه‌بندی فقط
+// تطبیق‌های تأییدشده را نشان می‌دهد. خروجی صادقانه «منابع دارای این عبارت» است —
+// ادعای یکسانیِ کامل روایت بدون بررسی کارشناسی نمی‌شود (disclaimer در پاسخ).
+func (s *Server) handleHadithLocations(w http.ResponseWriter, r *http.Request) {
+        docUID := chi.URLParam(r, "uid")
+        localUID := chi.URLParam(r, "localUID")
+        // نتایج جست‌وجو شناسهٔ روایت را در شکل anchor (docUID:local) می‌دهند؛
+        // شکل محلی (h-101) و کدگذاری %3A نیز پذیرفته می‌شود — هر دو همان روایت‌اند.
+        if u, uerr := url.PathUnescape(localUID); uerr == nil {
+                localUID = u
+        }
+        localUID = strings.TrimPrefix(localUID, docUID+":")
+        m, err := s.Catalog.Model(docUID)
+        if err != nil {
+                s.fail(w, r, 404, "not_found", "این سند در دسترس نیست.", false)
+                return
+        }
+        var piece *xmlparse.HadithPiece
+        for i := range m.Hadiths {
+                if m.Hadiths[i].LocalUID == localUID {
+                        piece = &m.Hadiths[i] // نخستین قطعه با این شناسه محلی (قطعه‌های هم‌شناسه — HAD-01)
+                        break
+                }
+        }
+        if piece == nil {
+                s.fail(w, r, 404, "not_found", "این شناسهٔ روایت در سند ثبت نشده است.", false)
+                return
+        }
+        hadithInfo := map[string]any{
+                "document_uid":  docUID,
+                "local_uid":     localUID,
+                "piece_index":   piece.Index,
+                "revayat_index": piece.RevayatIndex,
+                "body_blocks":   len(piece.BodyBlocks),
+                "sanad_blocks":  len(piece.SanadBlocks),
+        }
+        blockByID := make(map[string]string, len(m.Blocks))
+        for _, b := range m.Blocks {
+                blockByID[b.ID] = b.Text
+        }
+        var parts []string
+        for _, id := range piece.BodyBlocks {
+                if t, ok := blockByID[id]; ok && strings.TrimSpace(t) != "" {
+                        parts = append(parts, t)
+                }
+        }
+        body := strings.Join(strings.Fields(strings.Join(parts, " ")), " ")
+        runes := []rune(body)
+        hadithInfo["body_length"] = len(runes)
+        if len(runes) == 0 {
+                s.ok(w, map[string]any{
+                        "hadith": hadithInfo, "groups": []any{}, "verified_occurrences": 0, "verified_books": 0,
+                        "query_truncated": false,
+                        "note":            "بدنهٔ متنی برای این روایت ثبت نشده است (فقط سند یا نشانه‌گذاری ناقص)؛ جست‌وجویی انجام نشد.",
+                        "disclaimer":      "این فهرست «منابع دارای این عبارت» است؛ یکسانیِ کامل روایت بدون بررسی کارشناسی ادعا نمی‌شود.",
+                })
+                return
+        }
+        // سقف قرارداد §۴۴: normalized_phrase تا ۲۰۴۸ code point.
+        // جست‌وجو پلکانی و صادقانه است: نخست بدنهٔ کامل (یا برش ۲۰۴۸ با پرچم)،
+        // اگر هیچ تطبیق تأییدشده‌ای نیامد، بخش آغازین متن (نقل‌قول‌های جزئی در
+        // کتاب‌های دیگر) — هر گذر با «query_excerpt» گزارش می‌شود تا UI صادق بماند.
+        runFull := body
+        truncated := false
+        if len([]rune(runFull)) > 2048 {
+                truncated = true
+                runFull = strings.TrimSpace(string([]rune(runFull)[:2048]))
+                if i := strings.LastIndex(runFull, " "); i > 512 {
+                        runFull = runFull[:i]
+                }
+        }
+        runesAll := []rune(body)
+        cutAt := func(n int) string {
+                if n > len(runesAll) {
+                        n = len(runesAll)
+                }
+                s := strings.TrimSpace(string(runesAll[:n]))
+                if i := strings.LastIndex(s, " "); i > n/3 {
+                        s = s[:i]
+                }
+                return s
+        }
+        type passT struct {
+                q    string
+                note string
+        }
+        passes := []passT{{q: runFull, note: "متن کامل بدنهٔ روایت"}}
+        if len([]rune(runesAll)) > 160 {
+                passes = append(passes, passT{q: cutAt(160), note: "بخش آغازین متن روایت (نخستین ۱۶۰ نویسه)"})
+        }
+        if len([]rune(runesAll)) > 60 {
+                passes = append(passes, passT{q: cutAt(60), note: "عبارت آغازین کوتاه (نخستین ۶۰ نویسه)"})
+        }
+        release, _ := s.DB.ActiveRelease()
+        var groups []search.BookGroup
+        // اجتماع کتاب‌ها روی همهٔ گذرها (§۴۶: کامل‌بودن پاسخ «در چه کتاب‌هایی»
+        // مقدم بر صرفه است): کتابی که فقط بخش آغازین روایت را نقل کرده هم باید بیاید.
+        // هر اثر فقط از نخستین گذری که پیدایش کرده، شمرده می‌شود (بدون دوبارشماری).
+        seenWorks := map[string]bool{}
+        type passMetaT struct {
+                Note       string `json:"note"`
+                Query      string `json:"query_excerpt"`
+                WorksFound int    `json:"works_found"`
+                WorksAdded int    `json:"works_added"`
+        }
+        passMeta := []passMetaT{}
+        for _, p := range passes {
+                if strings.TrimSpace(p.q) == "" {
+                        continue
+                }
+                req := &search.Request{
+                        Query:    p.q,
+                        Mode:     search.NormalizedPhrase,
+                        Scope:    search.Scope{Target: "library"},
+                        Sort:     "source",
+                        PageSize: 50,
+                }
+                r2, err := s.Engine.Search(r.Context(), req, release)
+                if err != nil {
+                        s.fail(w, r, 422, "invalid_query", err.Error(), true)
+                        return
+                }
+                g2, err := s.Engine.BooksGrouped(r.Context(), r2.SessionUID)
+                if err != nil {
+                        var gone *search.GoneError
+                        if errorsAs(err, &gone) {
+                                s.fail(w, r, 410, "gone_cursor", gone.Message, true)
+                                return
+                        }
+                        s.fail(w, r, 422, "invalid_query", err.Error(), true)
+                        return
+                }
+                meta := passMetaT{Note: p.note, Query: p.q, WorksFound: len(g2)}
+                for _, g := range g2 {
+                        if seenWorks[g.Work.UID] {
+                                continue
+                        }
+                        seenWorks[g.Work.UID] = true
+                        groups = append(groups, g)
+                        meta.WorksAdded++
+                }
+                passMeta = append(passMeta, meta)
+        }
+        // شمارش تجمیعی صادقانه: هر اثر/سند فقط از گذر کشفشده شمرده می‌شود
+        totalOcc := 0
+        for _, g := range groups {
+                for _, d := range g.Documents {
+                        totalOcc += d.VerifiedOccurrences
+                }
+        }
+        excerpt := body
+        if len([]rune(excerpt)) > 320 {
+                excerpt = string([]rune(excerpt)[:320]) + "…"
+        }
+        hadithInfo["body_excerpt"] = excerpt
+        out := map[string]any{
+                "hadith":               hadithInfo,
+                "query_truncated":      truncated,
+                "query_excerpt":        passes[0].q,
+                "pass_note":            passes[0].note,
+                "verified_occurrences": totalOcc,
+                "verified_books":       len(groups),
+                "groups":               groups,
+                "disclaimer":           "این فهرست «منابع دارای این عبارت» است؛ یکسانیِ کامل روایت بدون بررسی کارشناسی ادعا نمی‌شود.",
+        }
+        if len(passMeta) > 1 {
+                out["passes"] = passMeta
+        }
+        s.ok(w, out)
 }
 
 // ---- موضوعات (§۱۵) — از کاتالوگ (TOP با پوشش صریح) ----

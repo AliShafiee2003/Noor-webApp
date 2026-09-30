@@ -59,12 +59,27 @@ function buildGroups(items: SearchResultItem[]): WorkGroup[] {
   return groups;
 }
 
-function GroupBody({ items, releaseUid }: { items: SearchResultItem[]; releaseUid: string | null }) {
+function GroupBody({
+  items,
+  releaseUid,
+  onOpenSplit,
+  splitActiveUid,
+}: {
+  items: SearchResultItem[];
+  releaseUid: string | null;
+  onOpenSplit?: (r: SearchResultItem) => void;
+  splitActiveUid?: string | null;
+}) {
   return (
     <ul className="space-y-3">
       {items.map((item, idx) => (
         <li key={item.passage_uid + "-g-" + idx}>
-          <ResultCard result={item} releaseUid={releaseUid} />
+          <ResultCard
+            result={item}
+            releaseUid={releaseUid}
+            onOpenSplit={onOpenSplit}
+            splitActive={!!splitActiveUid && splitActiveUid === item.passage_uid}
+          />
         </li>
       ))}
     </ul>
@@ -74,16 +89,27 @@ function GroupBody({ items, releaseUid }: { items: SearchResultItem[]; releaseUi
 export function GroupedPositions({
   items,
   releaseUid,
+  onOpenSplit,
+  splitActiveUid,
 }: {
   items: SearchResultItem[];
   releaseUid: string | null;
+  onOpenSplit?: (r: SearchResultItem) => void;
+  splitActiveUid?: string | null;
 }) {
   const groups = buildGroups(items);
   const [closed, setClosed] = useState<Record<string, boolean>>({});
 
   if (groups.length <= 1) {
     // تک‌اثر یا خالی: گروه‌بندی معنا ندارد
-    return <GroupBody items={items} releaseUid={releaseUid} />;
+    return (
+      <GroupBody
+        items={items}
+        releaseUid={releaseUid}
+        onOpenSplit={onOpenSplit}
+        splitActiveUid={splitActiveUid}
+      />
+    );
   }
 
   return (
@@ -131,7 +157,12 @@ export function GroupedPositions({
                           {faNum(d.items.length)} موضع
                         </span>
                       </div>
-                      <GroupBody items={d.items} releaseUid={releaseUid} />
+                      <GroupBody
+                        items={d.items}
+                        releaseUid={releaseUid}
+                        onOpenSplit={onOpenSplit}
+                        splitActiveUid={splitActiveUid}
+                      />
                     </section>
                   ))}
                   {singleDoc ? null : null}

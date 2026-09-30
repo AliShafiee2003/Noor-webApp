@@ -384,6 +384,39 @@ export interface SearchBooksGroup {
   }>;
 }
 
+/* ---------- «این روایت در چه کتاب‌هایی آمده؟» (§۴۷) ---------- */
+
+export interface HadithLocationsInfo {
+  document_uid: string;
+  local_uid: string;
+  piece_index: number;
+  revayat_index?: string | null;
+  body_excerpt?: string | null;
+  body_length?: number | null;
+  body_blocks?: number;
+  sanad_blocks?: number;
+}
+
+export interface HadithLocationsPass {
+  note: string;
+  query_excerpt: string;
+  works_found: number;
+  works_added: number;
+}
+
+export interface HadithLocationsResponse {
+  hadith: HadithLocationsInfo;
+  query_truncated?: boolean;
+  query_excerpt?: string;
+  pass_note?: string;
+  passes?: HadithLocationsPass[];
+  verified_occurrences: number;
+  verified_books: number;
+  groups: SearchBooksGroup[];
+  note?: string | null;
+  disclaimer: string;
+}
+
 /* ---------- موضوعات ---------- */
 
 export interface Topic {
