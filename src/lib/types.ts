@@ -346,6 +346,8 @@ export interface SearchResultItem {
   highlight: SearchHighlight[];
   roles: string[];
   local_hadith_uid: string | null;
+  /** شمارهٔ درون‌منبع روایت (HAD-08) — شناسهٔ محلی است و تعمیم نمی‌یابد */
+  revayat_index?: string | null;
   fingerprint: string | null;
   source_offsets: SourceOffsets | null;
   /** بازهٔ دقیق تطبیق در مختصات سند — برای هایلایت کتاب‌خوان */

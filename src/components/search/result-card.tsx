@@ -14,6 +14,7 @@ import {
   BookMarked,
   BookOpenText,
   Check,
+  Copy,
   FileText,
   LibraryBig,
   ListTree,
@@ -355,6 +356,7 @@ export function ResultCard({
 }) {
   const [clipOpen, setClipOpen] = useState(defaultOpenClip);
   const [hadithLookupOpen, setHadithLookupOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const docLabel = result.document?.label ?? null;
   const pageLabel = result.page?.label ?? null;
@@ -376,6 +378,42 @@ export function ResultCard({
         },
       }
     : null;
+
+  /* RES-08: ارجاع متنی با نشانی عمیق — برای چسباندن در یادداشت/متن پژوهش */
+  const copyCitation = async () => {
+    // اگر برچسب جلد خودش با «ج» آغاز شده باشد (مثل «ج ۲») دوباره «جلد» اضافه نمی‌شود
+    const docPart = docLabel
+      ? /^ج\s|جلد/.test(docLabel)
+        ? docLabel
+        : `جلد ${docLabel}`
+      : "";
+    const citation = [
+      result.work?.title ?? "",
+      docPart,
+      pageLabel ? `صفحهٔ ${pageLabel}` : "",
+    ]
+      .filter(Boolean)
+      .join("، ");
+    const address = readHref
+      ? `#/read/${result.document.uid}${
+          readHref.query.pg || readHref.query.hl
+            ? `?${[
+                readHref.query.pg ? `pg=${readHref.query.pg}` : "",
+                readHref.query.hl ? `hl=${readHref.query.hl}` : "",
+              ]
+                .filter(Boolean)
+                .join("&")}`
+            : ""
+        }`
+      : "";
+    try {
+      await navigator.clipboard.writeText([citation, address].filter(Boolean).join("\n"));
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* کپی در دسترس نیست — بی‌صدا */
+    }
+  };
 
   return (
     <article
@@ -431,7 +469,8 @@ export function ResultCard({
       {roles.length > 0 || result.local_hadith_uid ? (
         <div className="mt-2.5 flex flex-wrap gap-1.5" aria-label="نقش‌های تطبیق">
           {result.local_hadith_uid ? (
-            /* روایت لینک‌پذیر (HAD-08) + پرس‌وجوی میان‌کتابی (§۴۷) */
+            /* روایت لینک‌پذیر (HAD-08) + پرس‌وجوی میان‌کتابی (§۴۷) —
+               شمارهٔ درون‌منبع روایت (RevayatIndex) اگر در نمایه ثبت باشد */
             <button
               type="button"
               onClick={() => setHadithLookupOpen(true)}
@@ -440,6 +479,9 @@ export function ResultCard({
             >
               <Quote className="size-3" aria-hidden="true" />
               روایت
+              {result.revayat_index ? (
+                <span className="text-primary">{faNum(result.revayat_index)}</span>
+              ) : null}
             </button>
           ) : null}
           {roles.map((role) => (
@@ -498,6 +540,21 @@ export function ResultCard({
         >
           <Plus className="size-4" aria-hidden="true" />
           افزودن به فیش
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          className="min-h-11 gap-2 text-muted-foreground"
+          onClick={() => void copyCitation()}
+          aria-label="کپی ارجاع متنی این نتیجه"
+          title="ارجاع متنی + نشانی عمیق برای یادداشت‌های شما"
+        >
+          {copied ? (
+            <Check className="size-4 text-primary" aria-hidden="true" />
+          ) : (
+            <Copy className="size-4" aria-hidden="true" />
+          )}
+          {copied ? "کپی شد" : "کپی ارجاع"}
         </Button>
         {result.local_hadith_uid ? (
           <Button

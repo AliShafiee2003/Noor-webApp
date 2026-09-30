@@ -6,7 +6,7 @@
  * - در دسکتاپ ستون چپ؛ در موبایل داخل Sheet.
  * - بستن با «بازگشت» — فوکوس به ارجاع برمی‌گردد (مدیریت فوکوس در والد).
  */
-import { ArrowRight, BookOpen, Footprints, Landmark, Link2Off, ScrollText } from "lucide-react";
+import { ArrowRight, BookOpen, Footprints, Landmark, LibraryBig, Link2Off, ScrollText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { faNum } from "@/lib/format";
 import type { AyahCitation } from "@/lib/types";
@@ -49,9 +49,12 @@ function citationTitle(cit: AyahCitation): string {
 export function FootnotePanel({
   data,
   onBack,
+  onHadithLookup,
 }: {
   data: FootnotePanelData | null;
   onBack: () => void;
+  /** §۴۷: پرس‌وجوی میان‌کتابی روایت — والد دیالوگ را با شناسهٔ محلی باز می‌کند */
+  onHadithLookup?: (localUid: string) => void;
 }) {
   if (!data) {
     return (
@@ -180,6 +183,16 @@ export function FootnotePanel({
                 </div>
               ) : null}
             </dl>
+            {onHadithLookup && h.localUid ? (
+              <Button
+                variant="outline"
+                className="min-h-11 w-full gap-2"
+                onClick={() => onHadithLookup(h.localUid)}
+              >
+                <LibraryBig className="size-4" aria-hidden="true" />
+                این روایت در کدام کتاب‌ها آمده است؟
+              </Button>
+            ) : null}
             <p className="rounded-xl border border-border bg-muted px-3 py-2.5 text-xs leading-6 text-muted-foreground">
               شمارهٔ روایت، شناسهٔ درون‌منبع است و فقط برای پیگیری در همین کتاب کاربرد دارد؛
               شناسهٔ محلی به هیچ کتاب دیگر تعمیم نمی‌یابد.

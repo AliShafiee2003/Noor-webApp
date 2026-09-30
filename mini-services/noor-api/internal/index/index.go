@@ -26,7 +26,10 @@ type Passage struct {
         PageLabel     string          `json:"page_label"`
         Language      string          `json:"language"`
         LocalHadith   string          `json:"local_hadith_uid,omitempty"`
-        TextOriginal  string          `json:"text_original"`
+        // RevayatIndex شمارهٔ درون‌منبع روایت (HAD-08) — برای نمایش در کارت نتیجه؛
+        // شناسهٔ محلی است و به هیچ کتاب دیگر تعمیم نمی‌یابد.
+        RevayatIndex string `json:"revayat_index,omitempty"`
+        TextOriginal string `json:"text_original"`
         TextN1        string          `json:"text_n1"`
         N1Map         []int           `json:"n1_map"`
         SourceStart   int             `json:"source_start"`
@@ -44,7 +47,7 @@ type Builder struct{}
 type roleRange struct {
         Role       string `json:"role"`
         Start int `json:"start"`
-	End   int `json:"end"`
+        End   int `json:"end"`
 }
 
 // BuildDoc passages یک سند را تولید می‌کند (هر صفحه یک passage؛ صفحات بزرگ تکه‌تکه در مرز بلوک).
@@ -132,6 +135,7 @@ func buildPassage(releaseUID, collectionUID, workUID, documentUID, language stri
         var roles []roleRange
         offInPassage := 0
         var localHadith string
+        var revayatIdx string
         secUID := ""
         var citations []xmlparse.Citation
         for i := from; i <= to; i++ {
@@ -143,6 +147,10 @@ func buildPassage(releaseUID, collectionUID, workUID, documentUID, language stri
                 }
                 if localHadith == "" && b.HadithUID != "" {
                         localHadith = b.HadithUID
+                        revayatIdx = b.RevayatIndex
+                        if revayatIdx == "" {
+                                revayatIdx = m.HadithRevayat(b.HadithUID)
+                        }
                 }
                 roleRangesForBlock(rolesForBlock(&b), offInPassage, &roles)
                 for _, c := range b.Citations {
@@ -172,6 +180,7 @@ func buildPassage(releaseUID, collectionUID, workUID, documentUID, language stri
                 PageLabel:    page.Label,
                 Language:     language,
                 LocalHadith:  hadithLocal,
+                RevayatIndex: revayatIdx,
                 TextOriginal: textOriginal,
                 TextN1:       textN1,
                 N1Map:        n1Map,
@@ -222,7 +231,7 @@ CREATE TABLE IF NOT EXISTS passages(
         passage_uid TEXT PRIMARY KEY, release_uid TEXT, collection_uid TEXT, work_uid TEXT, document_uid TEXT,
         section_uid TEXT, page_uid TEXT, page_label TEXT, language TEXT, local_hadith_uid TEXT,
         text_original TEXT, text_n1 TEXT, n1_map TEXT, source_start INTEGER, source_end INTEGER,
-        role_ranges TEXT, citations TEXT, fingerprint TEXT, block_start INTEGER, block_end INTEGER);
+        role_ranges TEXT, citations TEXT, fingerprint TEXT, block_start INTEGER, block_end INTEGER, revayat_index TEXT);
 CREATE INDEX IF NOT EXISTS idx_p_doc ON passages(document_uid);
 CREATE INDEX IF NOT EXISTS idx_p_work ON passages(work_uid);
 CREATE TABLE IF NOT EXISTS tokens(token_id INTEGER PRIMARY KEY AUTOINCREMENT, token TEXT NOT NULL UNIQUE);
@@ -289,6 +298,13 @@ func (w *IndexWriter) reset() error {
         if _, err := w.DB.Exec(schema); err != nil {
                 return err
         }
+        // مهاجرت افزاینده: پایگاه موجود ممکن است ستون revayat_index را نداشته باشد
+        // (SELECT * ترتیبی اسکن می‌شود؛ ستون تازه باید انتهای جدول باشد).
+        if !w.hasColumn("passages", "revayat_index") {
+                if _, err := w.DB.Exec(`ALTER TABLE passages ADD COLUMN revayat_index TEXT`); err != nil {
+                        return err
+                }
+        }
         for _, t := range []string{"postings", "tokens", "passages", "titles"} {
                 if _, err := w.DB.Exec(`DELETE FROM ` + t); err != nil {
                         return err
@@ -296,6 +312,25 @@ func (w *IndexWriter) reset() error {
         }
         return nil
 }
+// hasColumn بررسی وجود ستون در جدول (PRAGMA table_info).
+func (w *IndexWriter) hasColumn(table, col string) bool {
+        rows, err := w.DB.Query(`SELECT name FROM pragma_table_info(?)`, table)
+        if err != nil {
+                return false
+        }
+        defer rows.Close()
+        for rows.Next() {
+                var name string
+                if err := rows.Scan(&name); err != nil {
+                        return false
+                }
+                if name == col {
+                        return true
+                }
+        }
+        return false
+}
+
 func (w *IndexWriter) writePassages(ps []Passage) error {
         tx, err := w.DB.Begin()
         if err != nil {
@@ -306,10 +341,10 @@ func (w *IndexWriter) writePassages(ps []Passage) error {
         for i := range ps {
                 p := &ps[i]
                 nm, _ := json.Marshal(p.N1Map)
-                if _, err := tx.Exec(`INSERT INTO passages(passage_uid,release_uid,collection_uid,work_uid,document_uid,section_uid,page_uid,page_label,language,local_hadith_uid,text_original,text_n1,n1_map,source_start,source_end,role_ranges,citations,fingerprint,block_start,block_end)
-                        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+                if _, err := tx.Exec(`INSERT INTO passages(passage_uid,release_uid,collection_uid,work_uid,document_uid,section_uid,page_uid,page_label,language,local_hadith_uid,text_original,text_n1,n1_map,source_start,source_end,role_ranges,citations,fingerprint,block_start,block_end,revayat_index)
+                        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
                         p.PassageUID, p.ReleaseUID, p.CollectionUID, p.WorkUID, p.DocumentUID, p.SectionUID, p.PageUID, p.PageLabel, p.Language, p.LocalHadith,
-                        p.TextOriginal, p.TextN1, string(nm), p.SourceStart, p.SourceEnd, string(p.RoleRanges), string(p.Citations), p.Fingerprint, p.BlockStart, p.BlockEnd); err != nil {
+                        p.TextOriginal, p.TextN1, string(nm), p.SourceStart, p.SourceEnd, string(p.RoleRanges), string(p.Citations), p.Fingerprint, p.BlockStart, p.BlockEnd, p.RevayatIndex); err != nil {
                         return err
                 }
                 toks := norm.Tokenize(p.TextN1)

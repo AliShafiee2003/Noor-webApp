@@ -70,9 +70,10 @@ Mutationها باید هدر `X-Noor-CSRF` داشته باشند (token از `GE
     "work":{"uid":"w-...","title":"..."},"document":{"uid":"d-...","label":"ج ۲"},
     "page":{"uid":"p-42","label":"۴۲"},"section":{"uid":"sec-7","title":"..."},
     "snippet":"متن ... با ... متن","highlight":[{"start":40,"end":52,"unit":"codepoint"}],
-    "roles":["body"],"local_hadith_uid":"h-9","fingerprint":"fp-...","source_offsets":{"start":1200,"end":1600},
+    "roles":["body"],"local_hadith_uid":"h-9","revayat_index":"۱۱۲","fingerprint":"fp-...","source_offsets":{"start":1200,"end":1600},
     "match_offsets":{"start":1240,"end":1252}}] }
 ```
+- `revayat_index` (HAD-08): شمارهٔ درون‌منبع روایت (RevayatIndex) از نمایه؛ فقط برای نمایش در کارت نتیجه/پنل روایت است و **به هیچ کتاب دیگر تعمیم نمی‌یابد** — پرس‌وجوی میان‌کتابی (§۴۷) همیشه با متن بدنه انجام می‌شود، نه این شماره. اگر passage روایت نداشته باشد فیلد نمی‌آید (omitempty).
 - شمارش‌ها مخلوط نمی‌شوند (§۴۶/TECH-11): `verified_occurrences` = رخدادهای تأییدشده؛ `verified_passages` = قطعه‌های متمایز؛ `verified_hadiths` = روایت‌های متمایز (کلید یکتا = document_uid/local_hadith_uid)؛ `verified_books` = آثار متمایز.
 - `match_offsets`: بازهٔ دقیق تطبیق در مختصات سند (نه فقط بازهٔ passage) — مبنای هایلایت کتاب‌خوان. `source_offsets` بازهٔ passage است.
 - کتاب‌خوان با پارامتر `pg` صفحه را می‌گیرد (نه `page`) و `hl=start:end` را با نگاشت `source_offsets` بلوک‌ها به هایلایت درون‌بلوکی تبدیل می‌کند.

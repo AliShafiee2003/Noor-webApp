@@ -36,6 +36,7 @@ import { useWorkspaceStore } from "@/store/workspace";
 import { PageRenderer, type ReaderSelection } from "@/components/reader/page-renderer";
 import { FootnotePanel, type FootnotePanelData } from "@/components/reader/footnote-panel";
 import { FicheDialog } from "@/components/reader/fiche-dialog";
+import { HadithLocationsDialog } from "@/components/search/hadith-locations-dialog";
 
 /** مختصات پنل کنار نتایج — از نتیجهٔ انتخاب‌شده ساخته می‌شود */
 export interface SplitLocator {
@@ -137,6 +138,8 @@ export function SplitReaderPanel({ locator, onClose, onNavigate }: PanelProps) {
   const [selection, setSelection] = useState<ReaderSelection | null>(null);
   const [ficheOpen, setFicheOpen] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
+  /* §۴۷: پرس‌وجوی میان‌کتابی روایت از پنل زمینهٔ پنل کنار نتایج */
+  const [hadithLookupUid, setHadithLookupUid] = useState<string | null>(null);
 
   /* با تعویض صفحه درون پنل، پنل زمینه و انتخاب پاک می‌شود
      (الگوی مجاز React: تنظیم state حین رندر هنگام تغییر prop) */
@@ -319,7 +322,7 @@ export function SplitReaderPanel({ locator, onClose, onNavigate }: PanelProps) {
       {/* پنل زمینه (پاورقی/آیه/روایت) */}
       {ctx ? (
         <div className="max-h-56 overflow-y-auto border-t border-border">
-          <FootnotePanel data={ctx} onBack={() => setCtx(null)} />
+          <FootnotePanel data={ctx} onBack={() => setCtx(null)} onHadithLookup={setHadithLookupUid} />
         </div>
       ) : null}
 
@@ -365,6 +368,14 @@ export function SplitReaderPanel({ locator, onClose, onNavigate }: PanelProps) {
         page={pageQuery.data ?? null}
         sectionUid={null}
         work={{ uid: locator.workUid, title: locator.workTitle }}
+      />
+
+      {/* پرس‌وجوی میان‌کتابی روایت (§۴۷) — از پنل زمینهٔ پنل */}
+      <HadithLocationsDialog
+        documentUid={documentUid}
+        localHadithUid={hadithLookupUid ?? ""}
+        open={!!hadithLookupUid}
+        onOpenChange={(o) => !o && setHadithLookupUid(null)}
       />
     </section>
   );

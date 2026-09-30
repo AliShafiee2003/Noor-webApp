@@ -40,6 +40,7 @@ import { PageRenderer, type ReaderSelection } from "@/components/reader/page-ren
 import { TocPanel } from "@/components/reader/toc-panel";
 import { FootnotePanel, type FootnotePanelData } from "@/components/reader/footnote-panel";
 import { FicheDialog } from "@/components/reader/fiche-dialog";
+import { HadithLocationsDialog } from "@/components/search/hadith-locations-dialog";
 import { ReaderToolbar } from "@/components/reader/reader-toolbar";
 import { SettingsPopover } from "@/components/reader/settings-popover";
 
@@ -150,6 +151,8 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
   const [selection, setSelection] = useState<ReaderSelection | null>(null);
   const [ficheOpen, setFicheOpen] = useState(false);
   const [saveFlash, setSaveFlash] = useState<string | null>(null);
+  /* §۴۷: پرس‌وجوی میان‌کتابی روایت از پنل زمینه */
+  const [hadithLookupUid, setHadithLookupUid] = useState<string | null>(null);
 
   /* تغییر صفحهٔ مقصد → پنل زمینه بسته می‌شود (پنل مالِ همان صفحه است) */
   useEffect(() => {
@@ -524,7 +527,11 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
           </div>
           <div className="h-[calc(100%-2.6rem)] overflow-y-auto">
             {footnote ? (
-              <FootnotePanel data={footnote} onBack={() => setFootnote(null)} />
+              <FootnotePanel
+                data={footnote}
+                onBack={() => setFootnote(null)}
+                onHadithLookup={setHadithLookupUid}
+              />
             ) : (
               <p className="p-4 text-sm text-muted-foreground">
                 برای دیدن پاورقی یا ارجاع، روی نشان آن در متن کلیک کنید.
@@ -542,7 +549,11 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
               <SheetHeader>
                 <SheetTitle className="text-sm">پاورقی / ارجاع</SheetTitle>
               </SheetHeader>
-              <FootnotePanel data={footnote} onBack={() => setFootnote(null)} />
+              <FootnotePanel
+                data={footnote}
+                onBack={() => setFootnote(null)}
+                onHadithLookup={setHadithLookupUid}
+              />
             </SheetContent>
           </Sheet>
         </div>
@@ -560,6 +571,14 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
         page={pageQuery.data ?? null}
         sectionUid={activeSectionUid}
         work={work ? { uid: work.uid, title: work.title } : null}
+      />
+
+      {/* پرس‌وجوی میان‌کتابی روایت (§۴۷) — از پنل زمینه */}
+      <HadithLocationsDialog
+        documentUid={documentUid}
+        localHadithUid={hadithLookupUid ?? ""}
+        open={!!hadithLookupUid}
+        onOpenChange={(o) => !o && setHadithLookupUid(null)}
       />
 
       {/* دکمه‌های شناور برای موبایل */}

@@ -1,6 +1,6 @@
-# جدول رهگیری نیازمندی‌ها (RTM) — وضعیت واقعی (به‌روزرسانی دور سوم بازبینی دوره‌ای)
+# جدول رهگیری نیازمندی‌ها (RTM) — وضعیت واقعی (به‌روزرسانی دور چهارم بازبینی دوره‌ای)
 
-آخرین به‌روزرسانی: رفع **باگ پیش‌فیلتر واژهٔ تکراری در عبارت** (موتور جست‌وجو)؛ افزودن «این روایت در چه کتاب‌هایی آمده؟» (§۴۷ با جست‌وجوی پلکانی و اجتماع صادقانه کتاب‌ها) و **پنل متن کنار نتایج** (SEARCH-11) با فیش/پاورقی کامل — همه با E2E مرورگر + تست رگرسیون واحد.
+آخرین به‌روزرسانی: **revayat_index در نتیجهٔ جست‌وجو** (HAD-08 کامل — نمایش شمارهٔ روایت در کارت نتیجه)؛ دکمهٔ «این روایت در کدام کتاب‌ها آمده است؟» در **پنل روایت کتاب‌خوان و پنل کنار نتایج** (§۴۷ از همهٔ مسیرها)؛ دکمهٔ **«کپی ارجاع»** روی کارت نتیجه (RES-08)؛ رفع ریسک اسکن ترتیبی `SELECT *` با فهرست صریح ستون‌ها + ممنوعیت حذف خاموش کاندیدها (خطای اسکن = خطای صریح).
 جزئیات اجرا: worklog.md؛ راهنمای اجرا: docs/README.md
 
 وضعیت‌ها: ✅ پیاده+آزمون‌شده | 🟡 پیاده‌شده/آزمون محدود | 🔧 اسکلت/پیاده ولی در این محیط آزمون‌ناپذیر | ⬜ انجام‌نشده
@@ -25,11 +25,11 @@
 | SEARCH-10..13 | کارت نتیجه با شاهد/نوع تطبیق، highlight روی اصل، بازکردن در متن/**کنار نتایج** (SEARCH-11)، حفظ فیلتر و موضع | UI + API + SplitReaderPanel (hash-persisted، sticky، FicheDialog کامل) | E2E دسکتاپ/موبایل/تیره | ✅ (SEARCH-11 روی fixture) |
 | SEARCH-14..20 | گروه‌بندی کتاب، تفکیک قطعه/روایت، ذخیرهٔ جست‌وجو، ترتیب‌ها، صفحه‌بندی پایدار، چیپ فیلتر | /search/books + cursor + GroupedPositions + verified_passages/hadiths | golden+API+E2E | ✅ (SEARCH-14/20 روی fixture) |
 | SEARCH-21..22 | سه وضعیت خالی، سازگاری نسخه نمایه/خوان | UI states + release_uid | E2E | 🟡 |
-| HAD-01..12 | بازسازی قطعات، سند جدا، G/K/maasoom display، RevayatIndex نمایشی/لینک‌پذیر، بی‌نشانه برچسب، شمارش جدا، **پرس‌وجوی میان‌کتابی روایت (§۴۷)** | xmlparse+renderer+پنل زمینه+`GET /documents/{uid}/hadiths/{localUID}/locations` | unit+E2E (۲ اثر روی fixture) | ✅ |
+| HAD-01..12 | بازسازی قطعات، سند جدا، G/K/maasoom display، RevayatIndex نمایشی/لینک‌پذیر، بی‌نشانه برچسب، شمارش جدا، **پرس‌وجوی میان‌کتابی روایت (§۴۷)**، revayat_index در Result | xmlparse+renderer+پنل زمینه+`GET /documents/{uid}/hadiths/{localUID}/locations`+`revayat_index` در Result (کارت نتیجه + پنل کتاب‌خوان + پنل کنار نتایج) | unit (engine_revayat_test) + E2E (۲ اثر روی fixture) | ✅ |
 | QUR-01..09 | پنل آیه، نشانی مستقل ayahAddress، متن منبع جدا از معیار | content model + VersePanel در پنل زمینه | unit+E2E | ✅ (پنل آیه و چیپ نشانی E2E شد) |
 | TOP-01..08 | موضوع/کلیدواژه/برچسب شخصی، شمارش، از موضوع به موضع | topics API+UI | API | 🟡 |
 | REL-01..11 | روابط با نوع، وضعیت مقصد، بازکردن کنار متن، ارجاع حل‌نشده | compare + link blocks | E2E | 🟡 |
-| RES-01..14 | پرونده، فیش با نشانی، autosave وضعیت، تعارض 409، سطل، خروجی MD/CSV/چاپ، خصوصی، revisions | research pkg + UI | API+two-user test | 🟡 |
+| RES-01..14 | پرونده، فیش با نشانی، autosave وضعیت، تعارض 409، سطل، خروجی MD/CSV/چاپ، خصوصی، revisions، **کپی ارجاع روی کارت نتیجه** | research pkg + UI (ResultCard.copyCitation) | API+two-user test+E2E | 🟡 (کپی ارجاع ✅) |
 | WORK-01..10 | جریان پیوسته، بازگشت به نتایج، هشدار تغییر ذخیره‌نشده، بازیابی میزکار | SPA state | E2E | 🟡 |
 | DATA-01..16 | immutable منابع، registry/checksum، dictionary همان فایل، ترتیب ItemNo، گزارش بازگشایی، پوشش، quarantine | noordb+catalog+fixturegen | fixturegen report | 🟡 |
 | SEC-01..15 | RBAC سرور، IDOR tests، CSRF/Origin، XSS-safe render، محدود نرخ، audit | auth+httpapi middleware | two-user test | 🟡 |

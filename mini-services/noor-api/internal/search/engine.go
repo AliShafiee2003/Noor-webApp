@@ -75,7 +75,10 @@ type Result struct {
         Highlight   []Range         `json:"highlight"`
         Roles       []string        `json:"roles"`
         LocalHadith string          `json:"local_hadith_uid,omitempty"`
-        Fingerprint string          `json:"fingerprint,omitempty"`
+        // RevayatIndex شمارهٔ درون‌منبع روایت (HAD-08) — نمایش در کارت نتیجه؛
+        // تعمیم به کتاب‌های دیگر ندارد و در پرس‌وجوی میان‌کتابی (§۴۷) به‌کار نمی‌رود.
+        RevayatIndex string          `json:"revayat_index,omitempty"`
+        Fingerprint  string          `json:"fingerprint,omitempty"`
         SourceRange [2]int          `json:"source_offsets"`
         // بازهٔ دقیق تطبیق در مختصات سند (نه فقط passage) — برای هایلایت کتاب‌خوان
         MatchRange [2]int               `json:"match_offsets,omitempty"`
@@ -456,6 +459,7 @@ type candRow struct {
         PageLabel     sql.NullString
         Language      string
         LocalHadith   sql.NullString
+        RevayatIndex  sql.NullString
         TextOriginal  string
         TextN1        string
         N1Map         string
@@ -471,9 +475,16 @@ type candRow struct {
 func scanCand(rows *sql.Rows, r *candRow) error {
         return rows.Scan(&r.PassageUID, &r.ReleaseUID, &r.CollectionUID, &r.WorkUID, &r.DocumentUID,
                 &r.SectionUID, &r.PageUID, &r.PageLabel, &r.Language, &r.LocalHadith,
+                &r.RevayatIndex,
                 &r.TextOriginal, &r.TextN1, &r.N1Map, &r.SourceStart, &r.SourceEnd,
                 &r.RoleRanges, &r.Citations, &r.Fingerprint, &r.BlockStart, &r.BlockEnd)
 }
+
+// candCols فهرست صریح ستون‌ها — ترتیب اسکن هرگز به ترتیب فیزیکی جدول وابسته نیست
+// (اشتباهِ ترتیب = خطای اسکن = حذف خاموش همهٔ کاندیدها؛ رگرسیون واقعی این فایل).
+const candCols = `passage_uid,release_uid,collection_uid,work_uid,document_uid,` +
+        `section_uid,page_uid,page_label,language,local_hadith_uid,revayat_index,` +
+        `text_original,text_n1,n1_map,source_start,source_end,role_ranges,citations,fingerprint,block_start,block_end`
 
 func (e *LocalEngine) run(ctx context.Context, db *sql.DB, req *Request, releaseUID string) ([]Result, bool, error) {
         qN, _ := norm.Normalize(req.Query)
@@ -486,13 +497,13 @@ func (e *LocalEngine) run(ctx context.Context, db *sql.DB, req *Request, release
         var err error
         if citationOnly {
                 // جست‌وجوی استناد قرآنی (QUR-03): همهٔ passages دامنه، فیلتر در verifier
-                rows, err = db.Query(`SELECT * FROM passages WHERE release_uid=? ORDER BY work_uid, document_uid, block_start`, releaseUID)
+                rows, err = db.Query(`SELECT `+candCols+` FROM passages WHERE release_uid=? ORDER BY work_uid, document_uid, block_start`, releaseUID)
         } else if req.Mode == StrictPhrase {
                 // عبارت دقیق: اسکن متنی scope با مرز واژه روی متن اصلی (بدون stemming/fuzzy)
-                rows, err = db.Query(`SELECT * FROM passages WHERE release_uid=? ORDER BY work_uid, document_uid, block_start`, releaseUID)
+                rows, err = db.Query(`SELECT `+candCols+` FROM passages WHERE release_uid=? ORDER BY work_uid, document_uid, block_start`, releaseUID)
         } else if req.Mode == AnyWords || req.Mode == Linguistic {
                 ph := placeholders(len(toks))
-                rows, err = db.Query(`SELECT s.* FROM passages s WHERE s.release_uid=? AND s.passage_uid IN (
+                rows, err = db.Query(`SELECT s.`+strings.ReplaceAll(candCols, ",", ",s.")+` FROM passages s WHERE s.release_uid=? AND s.passage_uid IN (
                         SELECT DISTINCT p.passage_uid FROM postings p JOIN tokens t ON t.token_id=p.token_id WHERE t.token IN (`+ph+`) LIMIT 20000)
                         ORDER BY s.work_uid, s.document_uid, s.block_start`, append([]any{releaseUID}, toStrs(toks)...)...)
         } else {
@@ -501,7 +512,7 @@ func (e *LocalEngine) run(ctx context.Context, db *sql.DB, req *Request, release
                 // دارای واژهٔ تکراری (مثل «الرسول ما الرسول») بی‌کاندید می‌ماند.
                 uniq := dedupStrings(toks)
                 ph := placeholders(len(uniq))
-                rows, err = db.Query(`SELECT s.* FROM passages s WHERE s.release_uid=? AND s.passage_uid IN (
+                rows, err = db.Query(`SELECT s.`+strings.ReplaceAll(candCols, ",", ",s.")+` FROM passages s WHERE s.release_uid=? AND s.passage_uid IN (
                         SELECT p.passage_uid FROM postings p JOIN tokens t ON t.token_id=p.token_id WHERE t.token IN (`+ph+`)
                         GROUP BY p.passage_uid HAVING COUNT(DISTINCT t.token)=? LIMIT 20000)
                         ORDER BY s.work_uid, s.document_uid, s.block_start`, append([]any{releaseUID}, append(toStrs(uniq), len(uniq))...)...)
@@ -520,7 +531,9 @@ func (e *LocalEngine) run(ctx context.Context, db *sql.DB, req *Request, release
                 }
                 var r candRow
                 if err := scanCand(rows, &r); err != nil {
-                        continue
+                        // حذف خاموش ممنوع: خطای اسکن = کاندید نادیده = نتیجهٔ ناقص بی‌اعلام.
+                        // طبق فلسفهٔ خطای §۳۹، این وضعیت باید صریحاً خطا باشد.
+                        return nil, false, fmt.Errorf("scan candidate: %w", err)
                 }
                 // فیلتر دامنهٔ اثر/سند/زبان در verifier هم اعمال می‌شود (دفاع در عمق)
                 if req.Scope.Target == "work" && (req.Scope.WorkUID == nil || r.WorkUID != *req.Scope.WorkUID) {
@@ -839,6 +852,7 @@ func (e *LocalEngine) toResult(r *candRow, h hit, matchType string) Result {
                 Section: sec,
                 Snippet: sub, Highlight: []Range{hl},
                 Roles: roles, LocalHadith: r.LocalHadith.String,
+                RevayatIndex: r.RevayatIndex.String,
                 Fingerprint: r.Fingerprint.String,
                 SourceRange: [2]int{r.SourceStart, r.SourceEnd},
                 MatchRange:  [2]int{r.SourceStart + h.Range[0], r.SourceStart + h.Range[1]},
