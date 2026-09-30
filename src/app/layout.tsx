@@ -1,0 +1,31 @@
+import type { Metadata } from "next";
+import "@fontsource/vazirmatn/400.css";
+import "@fontsource/vazirmatn/500.css";
+import "@fontsource/vazirmatn/600.css";
+import "@fontsource/vazirmatn/700.css";
+import "@fontsource/amiri/400.css";
+import "@fontsource/amiri/700.css";
+import "./globals.css";
+import { Providers } from "@/components/providers";
+
+export const metadata: Metadata = {
+  title: "میزکار پژوهشی نور",
+  description:
+    "میزکار پژوهشی برای جست‌وجوی دقیق در منابع، مطالعهٔ ساخت‌یافته و تنظیم پژوهش‌های شخصی.",
+  applicationName: "میزکار پژوهشی نور",
+  robots: { index: false, follow: false },
+};
+
+export default function RootLayout({
+  children,
+}: Readonly<{
+  children: React.ReactNode;
+}>) {
+  return (
+    <html lang="fa" dir="rtl" suppressHydrationWarning>
+      <body className="min-h-screen bg-background font-sans text-foreground antialiased">
+        <Providers>{children}</Providers>
+      </body>
+    </html>
+  );
+}

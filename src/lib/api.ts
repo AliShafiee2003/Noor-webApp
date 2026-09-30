@@ -1,0 +1,195 @@
+/**
+ * کلاینت تایپ‌دار API v1 — میزکار پژوهشی نور
+ * همهٔ درخواست‌های شبکه از این ماژول عبور می‌کنند (fetch خام ممنوع).
+ * - Base: /api/v1 + پارامتر gateway ?XTransformPort=8080
+ * - credentials: include (کوکی نشست)
+ * - خطا همیشه به ApiError با {code,message,trace_id,retryable} نگاشت می‌شود.
+ * - توکن CSRF فقط در حافظهٔ ماژول نگه داشته می‌شود.
+ */
+import type { ApiErrorCode } from "@/lib/types";
+
+export const API_BASE = "/api/v1";
+export const GATEWAY_PORT = "8080";
+const CSRF_HEADER = "X-Noor-CSRF";
+
+export type QueryParams = Record<
+  string,
+  string | number | boolean | null | undefined
+>;
+
+export class ApiError extends Error {
+  readonly code: ApiErrorCode | string;
+  readonly traceId: string | null;
+  readonly retryable: boolean;
+  readonly status: number;
+
+  constructor(args: {
+    code: ApiErrorCode | string;
+    message: string;
+    traceId?: string | null;
+    retryable?: boolean;
+    status?: number;
+  }) {
+    super(args.message);
+    this.name = "ApiError";
+    this.code = args.code;
+    this.traceId = args.traceId ?? null;
+    this.retryable = args.retryable ?? false;
+    this.status = args.status ?? 0;
+  }
+}
+
+const NETWORK_ERROR_MESSAGE =
+  "ارتباط با سرور برقرار نشد؛ اتصال خود را بررسی کنید و دوباره تلاش کنید.";
+const BAD_RESPONSE_MESSAGE =
+  "پاسخ نامعتبری از سرور دریافت شد؛ دوباره تلاش کنید. اگر تکرار شد با مدیر سامانه در تماس باشید.";
+
+/* ---------- CSRF (فقط حافظه) ---------- */
+
+let csrfToken: string | null = null;
+
+export function setCsrfToken(token: string | null): void {
+  csrfToken = token;
+}
+
+export function getCsrfToken(): string | null {
+  return csrfToken;
+}
+
+/* ---------- ساخت نشانی ---------- */
+
+/** نشانی کامل API با پارامتر gateway؛ همهٔ درخواست‌ها مسیر نسبی دارند. */
+export function apiUrl(path: string, params?: QueryParams): string {
+  const qs = new URLSearchParams();
+  if (params) {
+    for (const [key, value] of Object.entries(params)) {
+      if (value === undefined || value === null || value === "") continue;
+      qs.set(key, String(value));
+    }
+  }
+  qs.set("XTransformPort", GATEWAY_PORT);
+  return `${API_BASE}${path}?${qs.toString()}`;
+}
+
+/* ---------- درخواست پایه ---------- */
+
+export interface RequestOptions {
+  path: string;
+  params?: QueryParams;
+  body?: unknown;
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  signal?: AbortSignal;
+}
+
+async function request<T>(options: RequestOptions): Promise<T> {
+  const { path, params, body, method = "GET", signal } = options;
+
+  const headers: Record<string, string> = { Accept: "application/json" };
+  if (body !== undefined) headers["Content-Type"] = "application/json";
+  const isMutation = method !== "GET";
+  if (isMutation && csrfToken) headers[CSRF_HEADER] = csrfToken;
+
+  let response: Response;
+  try {
+    response = await fetch(apiUrl(path, params), {
+      method,
+      headers,
+      credentials: "include",
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal,
+    });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") throw err;
+    throw new ApiError({
+      code: "unavailable",
+      message: NETWORK_ERROR_MESSAGE,
+      retryable: true,
+      status: 0,
+    });
+  }
+
+  if (!response.ok) {
+    throw (await toApiError(response));
+  }
+
+  if (response.status === 204) return undefined as T;
+
+  let data: unknown;
+  try {
+    data = await response.json();
+  } catch {
+    throw new ApiError({
+      code: "internal",
+      message: BAD_RESPONSE_MESSAGE,
+      retryable: true,
+      status: response.status,
+    });
+  }
+  return data as T;
+}
+
+async function toApiError(response: Response): Promise<ApiError> {
+  let payload: unknown = null;
+  try {
+    payload = await response.json();
+  } catch {
+    /* بدنهٔ غیر JSON */
+  }
+  const err =
+    payload && typeof payload === "object" && "error" in payload
+      ? (payload as { error: Record<string, unknown> }).error
+      : null;
+
+  if (err && typeof err.message === "string") {
+    return new ApiError({
+      code: typeof err.code === "string" ? err.code : "internal",
+      message: err.message,
+      traceId: typeof err.trace_id === "string" ? err.trace_id : null,
+      retryable: err.retryable === true,
+      status: response.status,
+    });
+  }
+
+  const fallbackByStatus: Record<number, string> = {
+    401: "نشست شما معتبر نیست؛ دوباره وارد شوید.",
+    403: "اجازهٔ انجام این کار را ندارید.",
+    404: "مورد درخواستی یافت نشد.",
+    429: "تعداد درخواست‌ها بیش از حد مجاز است؛ کمی بعد دوباره تلاش کنید.",
+    503: "سامانه موقتاً در دسترس نیست؛ کمی بعد دوباره تلاش کنید.",
+  };
+
+  return new ApiError({
+    code: "internal",
+    message:
+      fallbackByStatus[response.status] ??
+      "پاسخ نامعتبری از سرور دریافت شد؛ دوباره تلاش کنید.",
+    retryable: response.status >= 500 || response.status === 429,
+    status: response.status,
+  });
+}
+
+/* ---------- توابع عمومی ---------- */
+
+export const api = {
+  get<T>(path: string, params?: QueryParams, signal?: AbortSignal): Promise<T> {
+    return request<T>({ path, params, method: "GET", signal });
+  },
+  post<T>(path: string, body?: unknown, params?: QueryParams): Promise<T> {
+    return request<T>({ path, body, params, method: "POST" });
+  },
+  put<T>(path: string, body?: unknown, params?: QueryParams): Promise<T> {
+    return request<T>({ path, body, params, method: "PUT" });
+  },
+  patch<T>(path: string, body?: unknown, params?: QueryParams): Promise<T> {
+    return request<T>({ path, body, params, method: "PATCH" });
+  },
+  del<T>(path: string, params?: QueryParams): Promise<T> {
+    return request<T>({ path, params, method: "DELETE" });
+  },
+};
+
+/** پیام فارسی هر خطا — برای نمایش یکدست در رابط */
+export function errorMessage(err: unknown, fallback?: string): string {
+  if (err instanceof ApiError) return err.message;
+  return fallback ?? NETWORK_ERROR_MESSAGE;
+}

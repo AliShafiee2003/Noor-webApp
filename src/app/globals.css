@@ -1,0 +1,196 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * توکن‌های رنگی DESIGN.md §۴۱ — دقیقاً همین مقادیر.
+ * نگاشت به متغیرهای shadcn/ui:
+ *   --background = canvas، --card/--popover = surface، --foreground = text،
+ *   --muted-foreground = muted، --input = control-border، --border = border.
+ */
+
+@theme inline {
+  --color-background: var(--canvas);
+  --color-foreground: var(--text);
+  --color-card: var(--surface);
+  --color-card-foreground: var(--text);
+  --color-popover: var(--surface);
+  --color-popover-foreground: var(--text);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--on-primary);
+  --color-secondary: var(--paper-2);
+  --color-secondary-foreground: var(--text);
+  --color-muted: var(--muted-soft);
+  --color-muted-foreground: var(--muted);
+  --color-accent: var(--accent-soft);
+  --color-accent-foreground: var(--text);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: #ffffff;
+  --color-border: var(--border);
+  --color-input: var(--control-border);
+  --color-ring: var(--ring);
+
+  /* توکن‌های اختصاصی میزکار نور */
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-reader: var(--reader);
+  --color-link: var(--link);
+  --color-match: var(--match);
+  --color-ayah: var(--ayah);
+  --color-ayah-soft: var(--ayah-soft);
+  --color-sharh-soft: var(--sharh-soft);
+
+  --font-sans: var(--font-ui);
+  --font-reader: var(--font-arabic);
+
+  --color-sidebar: var(--surface);
+  --color-sidebar-foreground: var(--text);
+  --color-sidebar-primary: var(--primary);
+  --color-sidebar-primary-foreground: var(--on-primary);
+  --color-sidebar-accent: var(--accent-soft);
+  --color-sidebar-accent-foreground: var(--text);
+  --color-sidebar-border: var(--border);
+  --color-sidebar-ring: var(--ring);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+:root {
+  /* فونت‌های محلی */
+  --font-ui: "Vazirmatn", "Segoe UI", Tahoma, sans-serif;
+  --font-arabic: "Amiri", "Vazirmatn", serif;
+
+  /* توکن‌های دقیق DESIGN.md — حالت روشن */
+  --canvas: #f7f5ef;
+  --surface: #ffffff;
+  --reader: #fffcf5;
+  --text: #182a32;
+  --muted: #55646b;
+  --primary: #17665b;
+  --link: #145c9e;
+  --border: #d6dad7;
+  --control-border: #75807d;
+  --match: #ffe8a3;
+
+  /* توکن‌های مشتق برای shadcn */
+  --on-primary: #ffffff;
+  --muted-soft: #eceade;
+  --paper-2: #edeae0;
+  --accent-soft: #e9e8dd;
+  --ring: #17665b;
+  --destructive: #a93b32;
+
+  /* معنایی: آیه (سبز ملایم)، شرح (کادر ملایم) */
+  --ayah: #2f7d5c;
+  --ayah-soft: #e4efe7;
+  --sharh-soft: #f1eee1;
+
+  --radius: 0.625rem;
+}
+
+.dark {
+  /* توکن‌های دقیق DESIGN.md — حالت تیره */
+  --canvas: #111a1d;
+  --surface: #18252a;
+  --reader: #152127;
+  --text: #e7edeb;
+  --muted: #a8b8b3;
+  --primary: #8ed3bd;
+  --link: #8ac7f8;
+  --border: #364950;
+  --control-border: #697f77;
+  --match: #59481f;
+
+  /* توکن‌های مشتق برای shadcn */
+  --on-primary: #0e181b;
+  --muted-soft: #1a262b;
+  --paper-2: #1c2a30;
+  --accent-soft: #22323a;
+  --ring: #8ed3bd;
+  --destructive: #e0796f;
+
+  /* معنایی */
+  --ayah: #8cc9a8;
+  --ayah-soft: #1b2f28;
+  --sharh-soft: #1f2d33;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  html {
+    @apply bg-background;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-ui);
+    font-size: 15px;
+    line-height: 1.75;
+  }
+
+  ::selection {
+    background: var(--match);
+    color: var(--text);
+  }
+
+  a:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  /* اسکرول‌بار ظریف */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--control-border) 55%, transparent) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--control-border) 55%, transparent);
+    border-radius: 999px;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--control-border) 85%, transparent);
+  }
+
+  /* هدف لمسی ≥44px در موبایل برای کنترل‌های پایه */
+  @media (max-width: 767px) {
+    button:not([data-size="icon-sm"]),
+    [role="button"] {
+      min-height: 44px;
+    }
+  }
+}
+
+@layer components {
+  /* شناسه‌ها و آدرس‌ها: جداسازی دوسویه + چپ‌به‌راست */
+  .bidi-ltr {
+    direction: ltr;
+    unicode-bidi: isolate;
+  }
+
+  /* ظاهر دکمهٔ شبیه radio برای انتخاب‌های دوتایی */
+  .choice-chip {
+    @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border px-4 text-sm font-medium transition-colors;
+  }
+  .choice-chip[aria-pressed="true"] {
+    @apply border-primary bg-primary text-primary-foreground;
+  }
+  .choice-chip[aria-pressed="false"] {
+    @apply bg-surface text-foreground hover:bg-accent;
+  }
+}
+

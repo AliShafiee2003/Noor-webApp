@@ -1,0 +1,172 @@
+[
+  {
+    "uid": "w-bahar",
+    "title": "بحار الأنوار",
+    "short_title": "بحار",
+    "author": "الشيخ الطبرسي (مؤسسهٔ نمونه)",
+    "publisher": "مؤسسهٔ نمونه",
+    "year": "۱۳۶۲",
+    "language": "ar",
+    "topics": [
+      "حدیث",
+      "کلام",
+      "تفسیر روایی"
+    ],
+    "documents": [
+      {
+        "uid": "doc-bahar-2",
+        "file": "01407_011.db",
+        "label": "ج ۲",
+        "kind": "volume",
+        "checksum": "sha256:553c5e96e69854c656cf28a55f6c96a0c97d1dd15d8a06eafea3fe0584ad5d82",
+        "size_bytes": 20480,
+        "language": "ar"
+      },
+      {
+        "uid": "doc-bahar-3",
+        "file": "01407_012.db",
+        "label": "ج ۳",
+        "kind": "volume",
+        "checksum": "sha256:3074b32c1e2d9c4f4e3ddd2c5595aa0e4f36b9a06185b2d8b4995212919786f9",
+        "size_bytes": 20480,
+        "language": "ar"
+      }
+    ],
+    "related": [
+      {
+        "relation_type": "مأخذ",
+        "target_work_uid": "w-safina",
+        "note": "ارجاع متقابل"
+      }
+    ]
+  },
+  {
+    "uid": "w-aseman",
+    "title": "آسمان و جهان",
+    "short_title": "آسمان",
+    "author": "محمدتقی فلسفی",
+    "publisher": "نشر نمونه",
+    "year": null,
+    "language": "fa",
+    "topics": [
+      "قرآن",
+      "آفاق و انفس"
+    ],
+    "documents": [
+      {
+        "uid": "doc-aseman",
+        "file": "02566_001.db",
+        "label": "رسالهٔ اصلی",
+        "kind": "volume",
+        "checksum": "sha256:b978341ffbf2d4fee5506d16cd7d149b863fed40a2043fa53aa7449b29885067",
+        "size_bytes": 20480,
+        "language": "fa"
+      }
+    ],
+    "related": null
+  },
+  {
+    "uid": "w-safina",
+    "title": "سفینة البحار",
+    "short_title": "سفینة",
+    "author": "الشيخ النعمة",
+    "publisher": "مؤسسهٔ نمونه",
+    "year": null,
+    "language": "ar",
+    "topics": [
+      "حدیث",
+      "اصطلاحات"
+    ],
+    "documents": [
+      {
+        "uid": "doc-safina",
+        "file": "13608_001.db",
+        "label": "جلد ۱",
+        "kind": "volume",
+        "checksum": "sha256:dfd25728af39d47d79f8c101d7d1cdccbd451826aee31d618de090d18ebdd8e1",
+        "size_bytes": 20480,
+        "language": "ar"
+      }
+    ],
+    "related": [
+      {
+        "relation_type": "مأخذ",
+        "target_work_uid": "w-bahar",
+        "note": "بحار ج۲ ص۱۱۵"
+      }
+    ]
+  },
+  {
+    "uid": "w-ambig",
+    "title": "رسالهٔ مبهم‌صفحه",
+    "short_title": "مبهم",
+    "author": "نویسندهٔ نمونه",
+    "publisher": null,
+    "year": null,
+    "language": "fa",
+    "topics": [
+      "آزمون"
+    ],
+    "documents": [
+      {
+        "uid": "doc-ambig",
+        "file": "ambig_001.db",
+        "label": "جلد یکتا",
+        "kind": "volume",
+        "checksum": "sha256:430e871e1ee4a28d5689fefb3ce11b7b53768b1ed89debcc09232d424cf923c7",
+        "size_bytes": 20480,
+        "language": "fa"
+      }
+    ],
+    "related": null
+  },
+  {
+    "uid": "w-hajj",
+    "title": "کتاب الحج — تجربی",
+    "short_title": "الحج",
+    "author": "مؤلف تجربی",
+    "publisher": null,
+    "year": null,
+    "language": "ar",
+    "topics": [
+      "فقه",
+      "حج"
+    ],
+    "documents": [
+      {
+        "uid": "doc-hajj",
+        "file": "pagination_001.db",
+        "label": "جلد تجربی",
+        "kind": "volume",
+        "checksum": "sha256:38064a7b68dacb050e3c2e504ba6ced51e8ad0045f10f470c3c91f553e90b844",
+        "size_bytes": 69632,
+        "language": "ar"
+      }
+    ],
+    "related": null
+  },
+  {
+    "uid": "w-edge",
+    "title": "رسالهٔ واژه‌های مرزی",
+    "short_title": "مرزی",
+    "author": "مؤلف مرزی",
+    "publisher": null,
+    "year": null,
+    "language": "fa",
+    "topics": [
+      "آزمون"
+    ],
+    "documents": [
+      {
+        "uid": "doc-edge",
+        "file": "edge_001.db",
+        "label": "جلد مرزی",
+        "kind": "volume",
+        "checksum": "sha256:249f5c99ccebd8a85b5197078198d9ff61ecf5770269795e2b84e158aba3cf24",
+        "size_bytes": 20480,
+        "language": "fa"
+      }
+    ],
+    "related": null
+  }
+]

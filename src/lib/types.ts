@@ -1,0 +1,581 @@
+/**
+ * تایپ‌های قرارداد API v1 — میزکار پژوهشی نور
+ * منبع حقیقت: docs/API_CONTRACT.md
+ * توجه: بلوک‌های متن ساخت‌یافته‌اند؛ هرگز innerHTML استفاده نشود.
+ */
+
+/* ---------- خطا ---------- */
+
+export type ApiErrorCode =
+  | "invalid_credentials"
+  | "unauthenticated"
+  | "mfa_required"
+  | "forbidden"
+  | "not_found"
+  | "conflict_version"
+  | "gone_cursor"
+  | "payload_too_large"
+  | "invalid_query"
+  | "quota"
+  | "rate_limited"
+  | "unavailable"
+  | "internal";
+
+export interface ApiErrorPayload {
+  code: ApiErrorCode | string;
+  message: string;
+  trace_id: string | null;
+  retryable: boolean;
+}
+
+/* ---------- احراز هویت ---------- */
+
+export type UserRole = "admin" | "reader";
+
+export interface User {
+  uid: string;
+  username: string;
+  display_name: string;
+  role: UserRole;
+}
+
+export interface SessionInfo {
+  uid: string;
+  created_at: string;
+  last_seen: string;
+  ip: string | null;
+  user_agent: string | null;
+  current: boolean;
+}
+
+export interface SessionResponse {
+  user?: User | null;
+  csrf?: string;
+  sessions?: SessionInfo[];
+}
+
+export interface LoginResponse {
+  pending_mfa?: boolean;
+  user: User;
+  csrf?: string;
+}
+
+export interface MfaVerifyResponse {
+  user: User;
+  csrf?: string;
+}
+
+/* ---------- کتابخانه ---------- */
+
+export interface WorkFeatures {
+  hadith: boolean;
+  quran: boolean;
+  footnotes: boolean;
+  links: boolean;
+  topics: boolean;
+  media: boolean;
+  searchable_text: boolean;
+}
+
+export interface Work {
+  uid: string;
+  title: string;
+  short_title: string | null;
+  author: string | null;
+  publisher: string | null;
+  year: string | null;
+  language: string | null;
+  collection_uid: string | null;
+  volumes_count: number | null;
+  documents_count: number | null;
+  cover_uid: string | null;
+  topics: string[];
+  features: WorkFeatures;
+  published: boolean;
+}
+
+export interface WorkListResponse {
+  items: Work[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export type CoverageState = "supported" | "partial" | "absent" | "failed";
+
+export interface DocumentCoverage {
+  toc: CoverageState;
+  hadith: CoverageState;
+  quran: CoverageState;
+  footnotes: CoverageState;
+  links: CoverageState;
+  topics: CoverageState;
+  searchable_text: CoverageState;
+}
+
+export interface DocumentInfo {
+  uid: string;
+  label: string;
+  kind: string;
+  pages_count: number | null;
+  language: string | null;
+  coverage: DocumentCoverage;
+}
+
+export interface WorkDetail extends Work {
+  documents: DocumentInfo[];
+}
+
+export interface RelatedWork {
+  relation_type: string;
+  target_work_uid?: string | null;
+  target_title?: string | null;
+  resolved: boolean;
+  note?: string | null;
+}
+
+/* ---------- مطالعه ---------- */
+
+/**
+ * فهرست درختی سند.
+ * - قرارداد: uid/title/kind/page_label/children
+ * - پیاده‌سازی فعلی سرور: uid/title/level/block_id/children (block_id = مقصد پرش)
+ */
+export interface TocSection {
+  uid: string;
+  title: string;
+  kind?: string;
+  page_label?: string | null;
+  level?: number;
+  block_id?: string | null;
+  children: TocSection[];
+}
+
+export interface PageRef {
+  page_uid: string;
+  label: string;
+  serial: number | null;
+  ambiguous: boolean;
+  /** شمارهٔ چاپی خام (در صورت ارسال سرور) */
+  num?: string | null;
+}
+
+export type BlockType =
+  | "p"
+  | "heading"
+  | "sanad"
+  | "hadith_body"
+  | "ayah_quote"
+  | "b_note"
+  | "sharh"
+  | "maasoom"
+  /** سازگاری با قرارداد قدیمی */
+  | "hadith"
+  /** بلوک از تگ ناشناخته — هرگز تفسیر نمی‌شود */
+  | "unknown";
+
+export type SpanRole =
+  | "sanad"
+  | "G"
+  | "K"
+  | "maasoom"
+  | "ayah_text"
+  | "B"
+  | "sharh"
+  | "lfootnote_ref"
+  | "unknown";
+
+/** استناد آیه (§۱۴) — ayah و ayahAddress مستقل پردازش می‌شوند. */
+export interface AyahCitation {
+  sure?: string | null;
+  aya?: string | null;
+  aya_from?: string | null;
+  aya_to?: string | null;
+  address?: string | null;
+  block_id?: string | null;
+  in_hadith?: string | null;
+  has_parent?: boolean;
+}
+
+export interface BlockSpan {
+  role: SpanRole;
+  start: number;
+  end: number;
+  /** متن عربی داخل سند روایت */
+  G?: string | null;
+  masum_no?: string | null;
+  ref?: string | null;
+  hadith_uid?: string | null;
+  revayat_index?: string | null;
+  untagged?: boolean;
+}
+
+export interface LinkTarget {
+  book_code?: string | null;
+  volume?: string | null;
+  page?: string | null;
+  [key: string]: unknown;
+}
+
+export interface BlockLink {
+  kind: string;
+  start: number;
+  end: number;
+  original_address: string;
+  resolved: unknown | null;
+  target?: LinkTarget | null;
+}
+
+export interface FootnoteRef {
+  ref: string;
+  start: number;
+  end: number;
+}
+
+export interface SourceOffsets {
+  start: number;
+  end: number;
+  unit?: string;
+}
+
+export interface PageBlock {
+  id: string;
+  type: BlockType;
+  text: string;
+  /**
+   * بازهٔ بلوک در جریان متن نمایشی سند.
+   * قرارداد: {start,end}؛ پیاده‌سازی فعلی سرور: آرایهٔ [start,end] — هر دو پذیرفته می‌شود.
+   */
+  source_offsets: SourceOffsets | [number, number];
+  spans?: BlockSpan[];
+  links?: BlockLink[];
+  footnote_refs?: FootnoteRef[];
+  /** استناد آیه برای بلوک‌های ayah_quote/ayahAddress */
+  citations?: AyahCitation[];
+  /** شناسهٔ محلی روایت (در صورت تعلق بلوک به روایت) — HAD-08 */
+  hadith_uid?: string | null;
+  revayat_index?: string | null;
+  /** بخش بی‌نشانهٔ حدیث (HAD-09) */
+  untagged?: boolean;
+}
+
+export interface Footnote {
+  uid: string;
+  label: string;
+  text: string;
+  source_offsets?: SourceOffsets | null;
+}
+
+export interface PagePayload {
+  page_uid: string;
+  label: string;
+  serial: number | null;
+  release_uid: string | null;
+  overlay_revision_uid: string | null;
+  overlay_applied: boolean;
+  offset_unit: string;
+  blocks: PageBlock[];
+  footnotes: Footnote[];
+}
+
+/* ---------- جست‌وجو ---------- */
+
+export type SearchMode =
+  | "strict_phrase"
+  | "normalized_phrase"
+  | "all_words"
+  | "any_words"
+  | "near"
+  | "linguistic"
+  | "long_quote";
+
+export type SearchScopeTarget =
+  | "library"
+  | "collection"
+  | "work"
+  | "document"
+  | "section"
+  /** «نام کتاب» در سطح رابط؛ در hash استفاده می‌شود */
+  | "titles";
+
+export interface SearchScope {
+  target: SearchScopeTarget;
+  collection_uids?: string[];
+  work_uid?: string | null;
+  document_uids?: string[];
+  roles?: string[];
+  language?: string | null;
+}
+
+export interface SearchNear {
+  slop: number;
+  ordered: boolean;
+}
+
+export interface SearchRequest {
+  query: string;
+  mode: SearchMode;
+  scope: SearchScope;
+  near?: SearchNear;
+  sort?: "relevance" | "source";
+  page_size?: number;
+}
+
+export type MatchType = "exact" | "normalized" | "linguistic" | "fuzzy";
+
+export type CompletionState = "complete" | "in_progress" | "cancelled" | "failed";
+
+export interface SearchHighlight {
+  start: number;
+  end: number;
+  unit: string;
+}
+
+export interface SearchResultItem {
+  passage_uid: string;
+  match_type: MatchType;
+  work: { uid: string; title: string };
+  document: { uid: string; label: string };
+  page: { uid: string; label: string };
+  section: { uid: string; title: string } | null;
+  snippet: string;
+  highlight: SearchHighlight[];
+  roles: string[];
+  local_hadith_uid: string | null;
+  fingerprint: string | null;
+  source_offsets: SourceOffsets | null;
+}
+
+export interface SearchResponse {
+  session_uid: string;
+  release_uid: string | null;
+  completion_state: CompletionState;
+  verified_occurrences: number | null;
+  verified_books: number | null;
+  count_relation: "lower_bound" | "exact";
+  continuation_available: boolean;
+  next_cursor: string | null;
+  count_job_uid: string | null;
+  results: SearchResultItem[];
+}
+
+export interface SearchBooksEvidence {
+  snippet?: string;
+  highlight?: SearchHighlight[];
+  page?: { uid: string; label: string };
+  document?: { uid: string; label: string };
+}
+
+export interface SearchBooksGroup {
+  work: { uid: string; title: string };
+  documents: Array<{
+    document: { uid: string; label: string };
+    verified_occurrences: number | null;
+    evidence: SearchBooksEvidence[];
+  }>;
+}
+
+/* ---------- موضوعات ---------- */
+
+export interface Topic {
+  uid: string;
+  title: string;
+  count: number | null;
+  children: Topic[];
+  coverage_note?: string | null;
+}
+
+/* ---------- پژوهش ---------- */
+
+export interface Project {
+  uid: string;
+  name: string;
+  archived: boolean;
+  clip_count: number | null;
+  updated_at: string | null;
+  version: number;
+}
+
+export type ClipKind = "original" | "as_read" | "note";
+
+export interface ClipSource {
+  work_uid: string;
+  document_uid: string;
+  page_uid?: string | null;
+  page_label?: string | null;
+  section_uid?: string | null;
+  source_offsets: SourceOffsets;
+  /**
+   * بازهٔ تخت هم‌ارز source_offsets — پیاده‌سازی فعلی سرور این شکل را می‌خواند.
+   * هر دو شکل برای سازگاری با قرارداد ارسال می‌شود.
+   */
+  start?: number;
+  end?: number;
+  offset_unit?: string;
+  source_version_uid?: string | null;
+  release_uid?: string | null;
+  overlay_revision_uid?: string | null;
+  local_hadith_uid?: string | null;
+}
+
+export type ClipSaveState = "saving" | "saved" | "failed";
+
+export interface Clip {
+  uid: string;
+  project_uid: string;
+  kind: ClipKind;
+  quote_original: string;
+  quote_as_read?: string | null;
+  prefix_context?: string | null;
+  suffix_context?: string | null;
+  note?: string | null;
+  tags: string[];
+  source: ClipSource;
+  created_at?: string | null;
+  updated_at?: string | null;
+  version: number;
+  /** وضعیت ذخیره در سمت رابط */
+  save_state?: ClipSaveState;
+  trashed?: boolean;
+}
+
+export interface NoteTarget {
+  document_uid: string;
+  page_uid?: string | null;
+  section_uid?: string | null;
+  local_hadith_uid?: string | null;
+}
+
+export interface Note {
+  uid: string;
+  target: NoteTarget;
+  body: string;
+  version: number;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface Bookmark {
+  uid: string;
+  document_uid: string;
+  page_uid: string;
+  label: string | null;
+  created_at?: string | null;
+}
+
+export interface SavedSearch {
+  uid: string;
+  name: string;
+  payload: Record<string, unknown>;
+  created_at?: string | null;
+}
+
+/* ---------- میزکار (workspace) ---------- */
+
+export type ReaderDisplay = "paged" | "continuous";
+
+/** عرض ستون متن مطالعه — «متوسط» مطابق DESIGN حدود ۷۶۰px است. */
+export type ReaderTextWidth = "narrow" | "medium" | "wide";
+
+export interface ReaderPrefs {
+  /** اندازهٔ قلم متن مطالعه (px) — بازهٔ ۱۶ تا ۳۲ */
+  font_size: number;
+  /** "amiri" | "vazirmatn" */
+  font_family: string;
+  /** فاصلهٔ سطرها — بازهٔ ۱.۴ تا ۲.۴ */
+  line_height: number;
+  display: ReaderDisplay;
+  /** عرض متن مطالعه (اختیاری؛ پیش‌فرض medium) */
+  text_width?: ReaderTextWidth;
+}
+
+export interface WorkspacePrefs {
+  reader: ReaderPrefs;
+  theme?: string | null;
+}
+
+export interface RecentItem {
+  document_uid: string;
+  page_uid: string;
+  label: string | null;
+  work_title: string | null;
+  updated_at: string | null;
+  /** اگر سرور ارسال کند؛ در غیر این صورت نوار پیشرفت نمایش داده نمی‌شود */
+  progress?: number | null;
+}
+
+export interface WorkspaceState {
+  recent: RecentItem[];
+  prefs: WorkspacePrefs;
+}
+
+/** موضع مطالعهٔ یک سند (READ-12) */
+export interface ReaderPosition {
+  page_uid?: string | null;
+  progress?: number | null;
+  updated_at?: string | null;
+  [key: string]: unknown;
+}
+
+/**
+ * پاسخ واقعی GET /workspace:
+ * {positions: {document_uid: ReaderPosition}, prefs, bookmarks?}
+ * (قرارداد قدیمی {recent,prefs} نیز ممکن است؛ هر دو پشتیبانی می‌شود.)
+ */
+export interface WorkspacePositionsResponse {
+  positions?: Record<string, ReaderPosition>;
+  prefs?: WorkspacePrefs;
+  bookmarks?: Bookmark[];
+  recent?: RecentItem[];
+}
+
+/* ---------- مدیریت ---------- */
+
+export interface AdminOverview {
+  corpus?: {
+    works?: number | null;
+    documents?: number | null;
+    pages?: number | null;
+  } | null;
+  processing?: {
+    queued?: number | null;
+    running?: number | null;
+    failed?: number | null;
+  } | null;
+  active_release?: string | null;
+  errors?: {
+    extraction?: number | null;
+    parsing?: number | null;
+    indexing?: number | null;
+  } | null;
+  disk?: {
+    used_bytes?: number | null;
+    free_bytes?: number | null;
+  } | null;
+  last_backup?: string | null;
+}
+
+export interface AdminJob {
+  uid: string;
+  kind: string;
+  status: string;
+  progress?: number | null;
+  created_at?: string | null;
+}
+
+export interface AdminUserRow {
+  uid: string;
+  username: string;
+  display_name: string;
+  role: UserRole;
+  disabled?: boolean;
+  created_at?: string | null;
+}
+
+export interface AdminAuditRow {
+  uid: string;
+  actor_uid?: string | null;
+  action: string;
+  detail?: string | null;
+  created_at?: string | null;
+}
