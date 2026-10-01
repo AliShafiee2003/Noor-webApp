@@ -158,23 +158,21 @@ async function execute<T>(options: RequestOptions, csrf: string | null): Promise
     /* خودترمیمی CSRF: توکن فقط در حافظه است و در بازخوانی کامل صفحه/HMR
        ممکن است هنوز نیامده یا پاک شده باشد. در این حالت یک‌بار نشست را
        می‌پرسیم (تازه‌ترین توکن) و همان درخواست را تکرار می‌کنیم — بدون
-       حلقهٔ بی‌پایان و بدون از دست رفتن کاربر (§۴۱). */
+       حلقهٔ بی‌پایان و بدون از دست رفتن کاربر (§۴۱).
+       خطای تلاشِ دوباره عیناً برگردانده می‌شود نه پیام جایگزینِ 403 اولی
+       (رفع پیام گمراه‌کنندهٔ «پاسخ نامعتبری…» در موفقیتِ واقعی — دور ۱۴). */
     const parsed = await parseErrorBody(response);
     if (response.status === 403 && parsed?.code === "csrf" && isMutation && !csrf) {
-      try {
-        const session = await fetch(apiUrl("/auth/session"), {
-          headers: { Accept: "application/json" },
-          credentials: "include",
-        });
-        if (session.ok) {
-          const data = (await session.json()) as { csrf?: unknown };
-          if (typeof data.csrf === "string" && data.csrf) {
-            setCsrfToken(data.csrf);
-            return execute<T>(options, data.csrf);
-          }
+      const session = await fetch(apiUrl("/auth/session"), {
+        headers: { Accept: "application/json" },
+        credentials: "include",
+      }).catch(() => null);
+      if (session && session.ok) {
+        const data = (await session.json().catch(() => null)) as { csrf?: unknown } | null;
+        if (data && typeof data.csrf === "string" && data.csrf) {
+          setCsrfToken(data.csrf);
+          return execute<T>(options, data.csrf);
         }
-      } catch {
-        /* به خطای اصلی می‌رسیم */
       }
     }
     /* نشست باطل‌شده/منقضی: رویداد سراسری برای بازگشت لطیف به صفحهٔ ورود

@@ -48,7 +48,7 @@ func (s *Service) Create(documentUID, owner, changeType, reason, baseHash, oldVa
 	}
 	uid := uidOf("ovl")
 	_, err := s.db.Exec(`INSERT INTO overlay_revisions(uid, document_uid, owner_user, change_type, target_json, base_hash, reason, old_value, new_value, status)
-		VALUES(?,?,?,?,?,?,?,?,?, 'draft')`, uid, documentUID, owner, changeType, string(target), baseHash, reason, oldValue, newValue)
+		VALUES(?,?,?,?,?,?,?,?,?, 'draft')`, uid, documentUID, owner, changeType, orNullJSON(target), baseHash, reason, oldValue, newValue)
 	if err != nil {
 		return nil, err
 	}
@@ -65,7 +65,7 @@ func (s *Service) Get(uid string) (*Revision, error) {
 	if err != nil {
 		return nil, errors.New("اصلاح یافت نشد")
 	}
-	r.Target = json.RawMessage(target.String)
+	r.Target = orNullJSON(json.RawMessage(target.String))
 	r.ReleaseUID = release.String
 	return &r, nil
 }
@@ -90,7 +90,7 @@ func (s *Service) List(status string) ([]Revision, error) {
 		if err := rows.Scan(&r.UID, &r.DocumentUID, &r.Owner, &r.ChangeType, &target, &r.BaseHash, &r.Reason, &r.OldValue, &r.NewValue, &r.Status, &release, &r.CreatedAt); err != nil {
 			continue
 		}
-		r.Target = json.RawMessage(target.String)
+		r.Target = orNullJSON(json.RawMessage(target.String))
 		r.ReleaseUID = release.String
 		out = append(out, r)
 	}
@@ -193,6 +193,14 @@ func (s *Service) Releases() ([]map[string]any, error) {
 		out = append(out, map[string]any{"uid": uid.String, "created_by": by.String, "status": status.String, "notes": notes.String, "created_at": at.String})
 	}
 	return out, nil
+}
+
+// orNullJSON RawMessage خالی → «null» (JSON معتبر) تا Marshal پاسخ هرگز خالی نشود.
+func orNullJSON(raw json.RawMessage) json.RawMessage {
+        if len(raw) == 0 || string(raw) == "" {
+                return json.RawMessage("null")
+        }
+        return raw
 }
 
 // TextHashFor hash متن بلوک هدف (برای validate) — از محتوا محاسبه می‌شود.

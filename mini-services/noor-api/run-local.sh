@@ -6,6 +6,8 @@ export NOOR_DATA_DIR=./data
 export NOOR_SOURCES_DIR=./data/sources
 export NOOR_SERVICE_TOKEN="${NOOR_SERVICE_TOKEN:-dev-internal-token}"
 export NOOR_COOKIE_SECURE=false
+# محدودساز تلاش ورود در محیط توسعه/E2E بیشتر می‌شود (پیش‌فرض تولید ۵/دقیقه می‌ماند — SEC-09)
+export NOOR_LOGIN_RATE_MAX="${NOOR_LOGIN_RATE_MAX:-60}"
 pkill -f "bin/api" 2>/dev/null; pkill -f "bin/worker" 2>/dev/null
 sleep 0.5
 setsid nohup ./bin/api > api.log 2>&1 < /dev/null &

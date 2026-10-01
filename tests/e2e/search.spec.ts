@@ -74,3 +74,49 @@ test.describe("نمایش واکنش‌گرا", () => {
     });
   }
 });
+
+/* ---------- یافتهٔ UX دور ممیزی: فرم جست‌وجو در موبایل (فقط پروژهٔ mobile) ---------- */
+
+test.describe("فرم جست‌وجو در موبایل", () => {
+  test("فیلد عبارت و دکمهٔ اجرا در دسترس و با هدف لمسی ≥۴۴px", async ({ page }) => {
+    test.skip(test.info().project.name !== "mobile", "فقط نمای موبایل");
+    await login(page);
+    await page.goto("/#/search");
+    await page.waitForLoadState("networkidle");
+    const input = page.locator("#search-query");
+    await expect(input).toBeVisible();
+    const inputBox = await input.boundingBox();
+    expect(inputBox?.height ?? 0).toBeGreaterThanOrEqual(44);
+    const btn = page.getByRole("button", { name: "جست‌وجو" }).first();
+    await expect(btn).toBeVisible();
+    const btnBox = await btn.boundingBox();
+    expect(btnBox?.height ?? 0).toBeGreaterThanOrEqual(44);
+    // چیدمان موبایل: دکمه زیر فیلد است و هر دو در دید هستند
+    await expect(btn).toBeInViewport();
+    // تایپ و اجرا از همان فرم بدون نیاز به کیبورد فیزیکی
+    await input.fill(GOLDEN);
+    await btn.click();
+    await expect(page.getByText(/تأییدشده تا این لحظه/).first()).toBeVisible({ timeout: 45_000 });
+  });
+
+  test("انتخاب حالت و دامنهٔ جست‌وجو در موبایل کار می‌کند", async ({ page }) => {
+    test.skip(test.info().project.name !== "mobile", "فقط نمای موبایل");
+    await login(page);
+    await page.goto("/#/search");
+    await page.waitForLoadState("networkidle");
+    // حالت: عبارت دقیق
+    await page.locator("#search-mode").click();
+    await page.getByRole("option", { name: /عبارت دقیق/ }).first().click();
+    await expect(page.locator("#search-mode")).toContainText(/عبارت دقیق/);
+    // راهنمای حالت به‌روز می‌شود
+    await expect(page.getByText(/بدون هیچ تغییری در حروف/).first()).toBeVisible();
+    // دامنه: نام کتاب‌ها
+    await page.locator("#search-scope").click();
+    await page.getByRole("option", { name: "نام کتاب‌ها" }).first().click();
+    await expect(page.locator("#search-scope")).toContainText("نام کتاب‌ها");
+    // اجرای جست‌وجوی نام کتاب
+    await page.locator("#search-query").fill("الخصال");
+    await page.getByRole("button", { name: "جست‌وجو" }).first().click();
+    await expect(page.getByRole("main")).toContainText(/الخصال|نتیجه/, { timeout: 30_000 });
+  });
+});

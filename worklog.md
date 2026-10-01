@@ -560,3 +560,105 @@ Work Log:
 Stage Summary:
 - وضعیت نهایی: بند الف (۱–۴)، ب (۵–۶)، ج (۷–۸)، د (۹، ۱۱) و ه (۱۲، ۱۳، ۱۴) بسته؛ د-۱۰ با مانع دقیق مستند؛ ه-۱۲ دو یافتهٔ تازه (باگ گارد /admin و فرم جست‌وجوی موبایل) برای دور بعد باقی گذاشت.
 - شواهد نهایی: go vet ./... = 0 خطا؛ go test ./... = ۶ پکیج ok؛ پاریتی دو موتور ۱۲۶/۱۲۶؛ E2E desktop سبز؛ tsc src پاک؛ eslint بدون خطای جدید.
+
+---
+Task ID: user-round-14 (بستن بندهای باقی‌ماندهٔ ممیزی — checkpoint ۱)
+Agent: main (coordinator)
+Task: شش مورد باقی‌مانده از گزارش ممیزی: (۱) اعتبارسنجی compose، (۲) آزمون مقیاس، (۳) ایندکس citations در OpenSearch، (۴) سناریو reader + باگ گارد /admin + فرم موبایل، (۵) اتومات‌سازی step-up MFA، (۶) runbook پاریتی پیش‌زمینه‌ای
+
+Work Log (تا این لحظه):
+- **ریشه‌یابی باگ «گارد /admin» (مورد ۴)**: بازتولید تجربی با ۶ دور E2E (۴/۶ fail). ریشه واقعی باگِ «گاهی به /login برمی‌گردد» محدودساز نرخ ورود بود: RateLimiter(5/min) روی login:IP:username ورودهای پشت‌سرهمِ E2E را 401 می‌کرد و پیام «تلاش‌های بیش از حد…» با کد invalid_credentials (401) برگردانده می‌شد؛ گارد خودِ /admin سالم بود. اصلاح: (۱) NOOR_LOGIN_RATE_MAX / NOOR_LOGIN_RATE_WINDOW در config (پیش‌فرض تولید همان ۵/دقیقه می‌ماند)، (۲) خطای محدودسازی اکنون 429 با کد rate_limited است (تفکیک صادقانه از 401 اعتبارنامهٔ غلط — تغییر قرارداد اعلامی)، (۳) run-local.sh در dev مقدار ۶۰ می‌گذارد. پس از رفع: ۶/۶ سبز.
+- **RBAC دو نقش (مورد ۴)**: کاربر reader موجود (qa-reader) با مسیر §۵۰ (cmd/pwreset، ثبت audit + ابطال نشست‌ها) رمز معین گرفت: QaReader-2026-x9. هر دو تست skip شده باز شدند و سبزند: «admin به پنل مدیریت دسترسی دارد» + «reader منوی مدیریت ندارد و پنل برای او بسته است» (کارت «دسترسی فقط برای مدیر سامانه»).
+- **فرم جست‌وجوی موبایل (مورد ۴)**: دو تست UX واقعی جدید: هدف لمسی ≥۴۴px فیلد/دکمه + اجرای جست‌وجو از فرم موبایل؛ و کارکرد انتخاب حالت (عبارت دقیق + hint) و دامنه (نام کتاب‌ها) در ۳۹۰px. موبایل ۶/۶ سبز.
+- helper ورود E2E مقاوم شد: منتظر «موفقیت یا خطا» می‌ماند و خطای محدودسازی را با راهنمای صریح گزارش می‌کند؛ helper خروج از منوی کاربر (مستقل از تب فعال تنظیمات).
+- فایل‌ها: internal/auth/auth.go (ErrRateLimited + SetLoginLimiter)، internal/config/config.go (LoginRateMax/Window)، internal/httpapi/server.go (429 rate_limited)، cmd/api/main.go (سیم‌کشی limiter)، run-local.sh، tests/e2e/auth.spec.ts (بازنویسی)، tests/e2e/search.spec.ts (۲ تست موبایل).
+- بیلد Go: go build bin/api + bin/worker + bin/pwreset — سالم؛ API/worker ری‌استارت شدند.
+
+Stage Summary:
+- مورد ۴ کامل بسته شد (reader + گارد + موبایل)؛ تغییر قرارداد اعلامی: ورودِ محدودشده 429.
+- پیش رو: citations در mapping (مورد ۳)، runbook پاریتی (مورد ۶)، مقیاس (مورد ۲)، compose validator (مورد ۱)، step-up TOTP E2E (مورد ۵).
+
+---
+Task ID: round14-A
+Agent: compose-validator subagent
+Task: اعتبارسنجی ایستای عمیق استقرار (compose + Dockerfileها + Caddyfile + .env) — ابزار `deploy/validate-compose.py` و رفع همهٔ FAILهای واقعی؛ تنها نکتهٔ باقی‌مانده: اجرای واقعی container runtime (بند د-۱۰)
+
+Work Log:
+- ابزار اعتبارسنجی ایستا ساخته شد: `deploy/validate-compose.py` (~۱۰۰۰ خط، pyyaml، بدون وابستگی دیگر) — ۶۴ آزمون در ۱۰ دسته: (A) YAML/ساختار سرویس‌ها، (B) build.context/dockerfile، (C) هر مبدأ COPY/ADD هر Dockerfile نسبت به context (شامل فرم JSON، ‎--from=skip، glob با حداقل یک تطبیق، باینری‌های /out، فونت‌های woff2، .dockerignore و پوشش مسیرهای حساس)، (D) volumeهای نام‌دار/bind-mount/پرچم‌ها، (E) متغیرهای الزامی ‎${VAR:?…} در برابر .env.example + اوستن‌بودن secret، (F) depends_on/قالب پورت‌ها/SEC-07، (G) healthcheck/read_only/tmpfs، (H) تطبیق upstreamهای Caddyfile.prod با سرویس‌ها و پورت‌های EXPOSE، (I) هم‌خوانی هر env سرویس‌های خودی با مصرف‌کنندهٔ واقعی در کد Go/Next + کمبودهای بدیهی، (J) معناشناسی اسکیما (mem_limit/ulimits/tmpfs/restart) + مالکیت volume نوشتنی برای کاربر غیرریشه + باینریِ مؤثر هر سرویس. خروجی: خط PASS/FAIL/WARN/DEFER برای هر آزمون + جدول جمع‌بندی + کد خروج 0/1.
+- نخستین اجرا: ۶۸ آزمون = ۵۴ PASS / ۶ FAIL — هر ۶ FAIL واقعی و اثبات‌شده بود (نه نقص validator) و همگی رفع شدند:
+  1. **C4 — نبود .dockerignore**: هر دو بیلد `context: ..` دارند و Dockerfile.web `COPY . .` دارد؛ بدون .dockerignore کل مخزن (از جمله `.env` میزبان و `mini-services/noor-api/data` با app.sqlite!) وارد stage بیلد می‌شد (نشت داده/secret، نقض DATA-01) → `/home/z/my-project/.dockerignore` ساخته شد (کامنت فارسی؛ حساس‌ها: .env، .git، node_modules، .next، data، mini-services/noor-api/data؛ ورودی‌های لازم بیلد دست‌نخورده — آزمون C6 گذشت).
+  2. **E2 — نبود .env.example** → `deploy/.env.example` ساخته شد: ۴ متغیر الزامی فعال (NOOR_SERVICE_TOKEN، NOOR_OS_PASSWORD، NOOR_OS_ADMIN_PASSWORD، NOOR_SOURCES_HOST) با placeholder «changeit-…» + ۸ متغیر اختیاری کامنت‌شده (NOOR_DOMAIN، NOOR_MAX_RESULTS، NOOR_SEARCH_SESSION_TTL، NOOR_OS_INDEX، …) با کامنت فارسی و یادداشت عملیاتی (ایجاد کاربر noor_api با securityadmin؛ محدودیت ‎.env*‎ در .gitignore هم تأیید شد).
+  3. **I5 — هم‌ترازی موتور api/worker**: compose فقط به api هم NOOR_ENGINE=opensearch می‌داد؛ worker (تنها نویسندهٔ نسل نمایه) پیش‌فرض local می‌گرفت و bulk در OpenSearch هرگز اجرا نمی‌شد → envهای NOOR_ENGINE/NOOR_OPENSEARCH_URL/USER/PASSWORD (با همان ‎:?‎) به worker اضافه شد.
+  4. **I6 — دسترس‌ناپذیری api از کانتینر worker**: cmd/worker نشانی api را هاردکد `http://127.0.0.1:8080` می‌گرفت که در شبکهٔ compose به خود worker می‌رسد و صف هرگز claim نمی‌شود → `NOOR_API_INTERNAL_URL` (هم‌نام متغیر سمت Next، بند د-۹) در worker خوانده می‌شود (پیش‌فرض 127.0.0.1 برای توسعهٔ تک‌میزبان دست‌نخورده) و compose مقدار `http://api:8080` می‌دهد. `go vet ./...` کل پروژه سبز؛ باینری‌ها بازساخته و worker محلی ری‌استارت شد (log: «worker polling http://127.0.0.1:8080» در dev و «http://api:8080» با env — هر دو دودآزمون شد).
+  5. **J5 — مالکیت volume نوشتنی برای کاربر غیرریشه**: volume نام‌دار تازه root-owned ساخته می‌شود؛ کاربر noor (10001) نمی‌توانست app.sqlite (/data) یا PDFها (/data/pdf-exports) را بنویسد → در Dockerfile.api قبل از USER: `mkdir -p /data /derived && chown`؛ در Dockerfile.web: `mkdir -p /data/pdf-exports && chown` (docker مالکیت مسیر داخل image را به volume خالی منتقل می‌کند).
+  6. **J6 — worker عملاً api اجرا می‌کرد**: Dockerfile.api `ENTRYPOINT ["api"]` داشت و compose فقط `command: ["worker"]` می‌داد → آرگومان بی‌اثر و دو نمونهٔ api روی یک app_data! → ENTRYPOINT به `CMD ["api"]` تغییر کرد تا `command: ["worker"]` واقعاً باینری worker را جایگزین کند؛ worker همچنین `healthcheck: {disable: true}` گرفت (باینری worker سرور HTTP ندارد و healthcheck تصویر به‌خودکار unhealthy می‌شد) و `depends_on: [api, opensearch]` شد.
+- اجرای پایانی: **۶۴ آزمون = ۶۱ PASS / ۰ FAIL / ۲ WARN / ۱ DEFER — نتیجهٔ کل: PASS** (خروجی کامل در گزارش پایانی ثبت می‌شود). WARNها (عمدی و مستند، نه نقص validator): (D5) مقصد `/derived` در env/کد ارجاع نمی‌گیرد — mount احتمالاً زائد است و حذفش نیازمند تصمیم مالک； (I9) کاربر `noor_api` در تصویر پیش‌فرض OS وجود ندارد و باید روی میزبان با securityadmin ساخته شود وگرنه api در استارت شکست می‌خورد. DEFER (D4): مسیر میزبان `${NOOR_SOURCES_HOST}` فقط در زمان اجرا قابل‌راستی‌آزمایی است (با ‎:?‎ سخت‌گیری شده).
+- قواعد رعایت شد: هیچ تغییر در mini-services/noor-api/data/ و data/sources؛ docker نصب/اجرا نشد؛ src/ دست نخورد (تغییر Go فقط cmd/worker/main.go: تابع envOr + خط ۲۷)؛ همهٔ کامنت‌های افزوده به فایل‌های استقرار فارسی است.
+
+Stage Summary:
+- «اعتبارسنجی: YAML + وجود فایل‌های ارجاع‌شده» فراتر رفت و به اعتبارسنجی ایستای تمام‌عیار استقرار رسید: ۶۴ آزمون خودکار تکرارشدنی (`python3 deploy/validate-compose.py`؛ کد خروج معنادار) که YAML، همهٔ مسیرهای ارجاع‌شده در Dockerfileها، volumeها، env↔کد، Caddyfile↔compose، SEC-07، سخت‌سازی (read_only/tmpfs/healthcheck) و حتی مالکیت volume و باینریِ مؤثر سرویس‌ها را می‌سنجد.
+- ۶ باگ واقعی استقرار در همین دور کشف و رفع شد (فایل‌ها: `deploy/validate-compose.py` جدید، `deploy/.env.example` جدید، `/.dockerignore` جدید، `deploy/docker-compose.yml`، `deploy/Dockerfile.api`، `deploy/Dockerfile.web`، `mini-services/noor-api/cmd/worker/main.go`) — بدون این‌ها `docker compose up` در ۶ نقطه شکست می‌خورد یا داده می‌نشت.
+- جمع‌بندی نهایی: ۶۱ PASS / ۰ FAIL / ۲ WARN (مستند) / ۱ DEFER (زمان‌اجرا)؛ تنها مجهول باقی‌مانده همان اجرای واقعی کانتینر است که در سندباکس ممکن نیست (د-۱۰).
+
+---
+Task ID: round14-B
+Agent: scale-test subagent
+Task: آزمون مقیاس مصنوعی صادقانهٔ موتور جست‌وجو (بند ۲ باقی‌ماندهٔ ممیزی) — تکرار fixture به ≈۲۰هزار passage، بنچمارک p50/p95، پایش پیش‌فیلتر trigram، اسکریپت ارکستراسیون با پاریتی شرطی OpenSearch
+
+Work Log:
+- `cmd/scalefixture/main.go` (جدید): فلگ‌های -src/-out/-factor (پیش‌فرض 280). schema از `sqlite_master` منبع کپی شد (IndexWriter.Rebuild برای کپی خام fit نبود — DocModel می‌خواهد؛ همان مسیر جایگزین مصوب دستور کار)؛ ATTACH فقط‌خواندنی منبع + `INSERT…SELECT` برای postings/trigrams و کپی tokens با همان token_id؛ ایندکس‌ها پس از درج ساخته می‌شوند (سریع‌تر). شناسه‌ها orig+«-s{k}»، همهٔ نسخه‌ها در release واحد «rel-scale»، local_hadith بخش سندش پسوند گرفت، متن‌ها/n1_map/role_ranges/citations/fingerprint عیناً. titles ×۲۸۰ با « - نسخهٔ {k}» و title_n1=Fold. محافظ: out==src → fatal.
+- اعداد واقعی ساخت fixture: 71 passage/6 title با factor 280 → **19,880 passage / 1,680 title / 1,567,440 trigram / 1,192,240 posting / 498 token / 6 ایندکس / 287,186,944 بایت (273.9MB)**؛ ساخت ≈۲۶ثانیه (time مستقل: 26.08s)؛ اجرای دوبارهٔ اسکریپت idempotent (اجرای دوم با همان اعداد بازتولید شد).
+- `cmd/scalebench/main.go` (جدید): باتری ۸ پرس‌وجو طبق دستور (strict/normalized «الكعبة بيت الله»، all «الكعبة بيت»، near slop=5، any «الكعبة»، long_quote ۱۴واژه‌ایِ استخراج‌شده از بلندترین passage کورپوس، citationOnly «البقرة ۲۱۳» دقیقاً مطابق golden.go، titles «الخصال»)؛ گرم‌کردن ۱ دور + ۳ دور اندازه‌گیری، p50/p95 نزدیک‌ترین‌رتبه + نمونه‌های خام، MemStats، شمار کاندید و گزینش‌پذیری، count_relation، JSON خروجی برای پاریتی. موتور مطابق cmd/api: `search.NewLocal(db, secret, meta, WithLimits(10000, 30m))` با کاتالوگ از خود DB مقیاس (titles + نقشهٔ سند→اثر). تفاوت اعلامی: SessionStoreٔ SQLite حذف شد چون app.sqlite محافظت‌شده است → مسیر fallback حافظهٔ خود موتور (رفتار Search/Continue یکسان).
+- شمارندهٔ حداقلی در `internal/search/engine.go`: فیلدهای atomic ‏statCands/statScans + دسترسی‌دهنده‌های صادراتی `LastCandidateCount()`/`FullScanCount()`؛ فقط شمارش در مسیرهای موجود (پایان run و fallback اسکن کامل) — هیچ تصمیمی از روی آن‌ها گرفته نمی‌شود. `go test ./internal/search -run TestGoldenSetLocal -count=1` ✓ و `go test ./... -count=1` ✓ (همهٔ پکیج‌ها ok) و `go vet ./...` ✓.
+- **جدول گذر سقف‌دار (max_results=10000 مطابق تولید، ۳ دور، موتور محلی، 19,880 passage)**:
+  | پرس‌وجو | کاندید | گزینش‌پذیری | مواضع تأیید | p50 | p95 |
+  |---|---|---|---|---|---|
+  | q1 strict «الكعبة بيت الله» | 2000 (تا سقف) | 10.1% | 10000 (lower_bound) | 463.0ms | 464.8ms |
+  | q2 normalized همان | 2000 (تا سقف) | 10.1% | 10000 (lower_bound) | 461.8ms | 467.5ms |
+  | q3 all_words «الكعبة بيت» | 10000 (تا سقف) | 50.3% | 10000 (lower_bound) | 986.7ms | 1026.8ms |
+  | q4 near slop=5 | 2000 (تا سقف) | 10.1% | 10000 (lower_bound) | 445.3ms | 446.8ms |
+  | q5 any «الكعبة» | 2000 (تا سقف) | 10.1% | 10000 (lower_bound) | 301.0ms | 301.8ms |
+  | q6 long_quote ۱۴واژه | 280 | 1.4% | 280 | 156.4ms | 157.2ms |
+  | q7 citationOnly البقرة ۲۱۳ | 19880 | 100% | 280 | 275.6ms | 281.1ms |
+  | q8 titles «الخصال» | — | — | 0 | 6.9ms | 7.0ms |
+- **گذر بدون‌سقف (max_results=1000000 — هزینهٔ کامل تأیید)**: q1 strict: کاندید 16,800 (84.5%) → 84,000 موضع در p50 1633.4ms؛ q2: 1541.4ms؛ q3: 16,800 موضع، 1489.0ms؛ q4 near: 1794.8ms؛ q5: 1356.2ms؛ q6: 152.1ms؛ q7: 269.3ms؛ q8: 6.9ms. یعنی ~۱۸µs به‌ازای هر موضع تأییدشده.
+- خطی‌بودن صحت در مقیاس: اجرای همان باتری روی fixture اصلی (فقط‌خواندنی) → 300/300/60/300/300/1/1/0؛ در مقیاس دقیقاً ×280.0 برای هر هشت پرس‌وجو — verifier همان نتایج را در مقیاس می‌دهد.
+- پیش‌فیلتر trigram: **اسکن کامل strict در کل باتری = ۰ بار** (هر دو گذر) — مسیر fallback هرگز تحریک نشد؛ بازیابی strict با پیش‌فیلتر در مقیاس ۲۰هزار passage زیر نیم‌ثانیه (تا سقف) است. q7 (استناد صرف) طبق طراحی فعلی همهٔ release را پویش می‌کند (کاندید 100%) — هم در محلی (SELECT بدون prefilter) و هم در OS (match_all)؛ عدد واقعی p50 ~276ms در این مقیاس.
+- حافظه: گذر سقف‌دار HeapSys=39.6MB؛ گذر بدون‌سقف HeapSys=215.6MB (نگهداری ۸۴هزار Result همزمان) و پس از GC اجباری HeapAlloc=0.2MB — نشتی نیست.
+- `scripts/scale-test.sh` (جدید): ساخت باینری‌ها → بازسازی تازهٔ DB مقیاس → بنچمارک محلی سقف‌دار (+ گذر بدون‌سقف با NOOR_SCALE_UNCAPPED=1) → اگر NOOR_OS_URL تنظیم و reachable بود: DELETE index noor-scale، ایندکس با cmd/osindex، بنچمارک OS، و پاریتی به‌تفکیک پرس‌وجو با python؛ وگرنه skip صادقانه. در اجرای واقعی سندباکس OpenSearch در دسترس نبود → پیام skip چاپ شد (نصب/اجرای OS طبق قاعدهٔ تسک انجام نشد)؛ مسیر خطای `-engine opensearch` با URL مرده هم آزمون شد: «سرویس OpenSearch در http://127.0.0.1:9200 پاسخ نمی‌دهد» — فهمیدنی.
+- محافظت داده: sha256 مقایسهٔ قبل/بعد برای data/index.sqlite، data/app.sqlite و کل data/sources/** **بیت‌به‌بیت یکسان**؛ خروجی جدید فقط data/index-scale.sqlite (274MB) و bin/scalefixture,bin/scalebench. (اتصال‌های فقط‌خواندنی فقط mtime فایل‌های جانبی -shm را به‌روز می‌کنند؛ فایل اصلی دست‌نخورده است.)
+
+Stage Summary:
+- پیش‌فیلتر trigram در مقیاس ۱۹,۸۸۰ passage (×۲۸۰ fixture) پابرجاست: صفر fallback، گزینش‌پذیری strict ۱۰–۸۵٪ بسته به عبارت، و هزینهٔ غالب «تأیید روی متن» است نه بازیابی (~۱۸µs/موضع؛ ۸۴هزار موضع ≈ ۱٫۶ثانیه). سقف ۱۰٬۰۰۰ نتایج تولید همان‌طور که طراحی شده بود پاسخ می‌دهد (lower_bound + notice).
+- نقطهٔ ضعف شناخته‌شدهٔ معماری با عدد تأیید شد: citationOnly بدون prefilter است (۱۰۰٪ کاندید) — ایندکس‌شدن citations در OpenSearch/محلی (مورد ۳ checkpoint جاری) این را هم می‌بندد.
+- q8 «الخصال» صادقانه ۰ است: در fixture هیچ عنوانی «الخصال» ندارد (الخصال فقط نقش استنادی K در متن بحار است)؛ همان پرس‌وجوی دستور حفظ شد و هزینهٔ پویش خطی ۱,۶۸۰ عنوان (~۷ms) اندازه‌گیری شد.
+- محدودیت‌های صادقانه: (۱) کورپوس = تکرار دقیق fixture است و تنوع واژگانی واقعی ندارد؛ گزینش‌پذیری trigram روی کورپوس حقیقی (حجم عربی بیشتر، سه‌گانه‌های مشترکِ فراوان) احتمالاً بدتر از این اعداد خواهد بود — آزمون مقیاسِ محتوا منتفی است و همین اعلام می‌شود؛ (۲) پاریتی محلی↔OS در این سندباکس اجرا نشد (اجرای OpenSearch مجاز نبود)؛ مسیر کد، JSON سنجه‌ها و مقایسه‌گر پاریتی آماده است؛ (۳) p95 با ۳ نمونه عملاً max است؛ (۴) نشست‌های bench حافظه‌ای‌اند نه SQLite.
+- پیشنهاد برای دور بعد: اجرای `NOOR_OS_URL=… scripts/scale-test.sh` روی سرویس واقعی برای پاریتی مقیاس؛ بعد از ایندکس‌شدن citations، افزودن prefilter استنادی تا q7 هم کاندید محدود بگیرد.
+
+---
+Task ID: user-round-14 (نهایی — بستن شش مورد باقی‌ماندهٔ ممیزی)
+Agent: main (coordinator) + 2 subagents (round14-A compose-validator، round14-B scale-test)
+Task: (۱) اعتبارسنجی compose، (۲) آزمون مقیاس، (۳) ایندکس citations در OpenSearch، (۴) reader/گارد /admin/موبایل، (۵) step-up MFA در E2E، (۶) runbook پاریتی پیش‌زمینه‌ای
+
+Work Log (بستن هر مورد با شواهد):
+- **مورد ۱ — compose**: زیرعامل A اسکریپت `deploy/validate-compose.py` (۶۴ آزمون ایستا) ساخت و اجرا کرد: 61 PASS / 0 FAIL / 2 WARN / 1 DEFER. ۶ نقص واقعی استقرار کشف و رفع شد: (۱) نبود .dockerignore → نشت .env و app.sqlite به context بیلد web؛ (۲) نبود .env.example؛ (۳) worker بدون NOOR_ENGINE=opensearch (bulk OS هرگز اجرا نمی‌شد)؛ (۴) worker هاردکد 127.0.0.1:8080 (در compose خودش را poll می‌کرد → NOOR_API_INTERNAL_URL)؛ (۵) volumeهای تازه root-owned بودند و کاربر غیرریشه نمی‌توانست بنویسد؛ (۶) ENTRYPOINT ["api"] + command:[worker] → worker در واقع باینری api را اجرا می‌کرد (CMD-based dispatch + healthcheck disable).
+- **مورد ۲ — مقیاس**: زیرعامل B: `cmd/scalefixture` (×۲۸۰ → ۱۹٬۸۸۰ passage / ۱٬۶۸۰ عنوان / ۱٫۵۶۷M trigram / ۲۷۴MB؛ ساخت ~۲۶s) + `cmd/scalebench` (۸ پرس‌وجو، p50/p95، MemStats، شمارندهٔ prefilter) + `scripts/scale-test.sh`. اعداد: پیش‌فیلتر trigram در مقیاس صفر fallback؛ strict تا سقف ۴۶۳ms؛ بدون سقف ۸۴٬۰۰۰ موضع در ~۱٫۶s (~۱۸µs/موضع)؛ q7 citationOnly بدون prefilter ۱۰۰٪ کاندید (۲۷۶ms) → با مورد ۳ در OS به ۶۵ms رسید. محافظت داده: sha256 قبل/بعد index.sqlite/app.sqlite/sources بیت‌به‌بیت یکسان. محدودیت صادقانه: کورپوس مصنوعی = تکرار دقیق fixture (تنوع واژگانی واقعی ندارد).
+- **مورد ۳ — citations**: `internal/search/citations.go` (CitationKeys/QuranScopeKeys؛ کلیدهای s{sure} و s{sure}:a{aya}، بازه باز می‌شود، شکل خام+نرمال رقم — superset برای recall، دقت نهایی همان citationAllows) + فیلد keyword در ۳ mapping (opensearch.go، worker ensureMapping، osindex mapping.json) + ایندکس در ۲ مسیر bulk + query terms به‌جای match_all. آزمون: citations_test.go (۶ آزمون)؛ پاریتی طلایی پس از تغییر ۱۲۶/۱۲۶؛ در مقیاس q7: ۲۸۰/۲۸۰ p50=65ms.
+- **مورد ۶ — runbook**: `scripts/run-parity-foreground.sh` — بالا آوردن OS درون نشست → نمایه‌سازی تازه (mapping جدید) → نمایش اثر فیلتر استنادی (۷۱ سند vs ۱ دارای البقرة:۲۱۳) → TestGoldenSetLocal + TestGoldenSetOpenSearchParity → اختیاری --with-scale → teardown. اجرای واقعی کامل: fixture ۱۲۶/۱۲۶ + مقیاس ۸/۸ در یک اجرا.
+- **مورد ۴ — reader/گارد/موبایل** (در checkpoint ۱): qa-reader با pwreset §۵۰؛ هر دو تست RBAC باز و سبز؛ ۲ تست فرم موبایل سبز؛ ریشهٔ «گارد /admin» = محدودساز ورود (NOOR_LOGIN_RATE_MAX + 429).
+- **مورد ۵ — step-up MFA**: `tests/e2e/helpers/mfa.ts` — خواندن فقط‌خواندنی totp_secret ادمین از app.sqlite (bun:sqlite) + TOTP RFC6238 با node:crypto؛ تطبیق کد با internal/auth.TOTPCode در همان لحظه (هر دو 453581). `admin-stepup.spec.ts`: اصلاح جدید (auto base_hash) → اعتبارسنجی → انتشار با کد زنده → وضعیت «منتشر شد» → بازگشت نسل با کد زنده → ساخت مجدد نمایه برای سازگاری pointer↔file → جست‌وجوی طلایی ۳۰۰. صحت DB: overlay status=published + release_uid + audit کامل.
+- **باگ‌های واقعی جدید که حین E2E کشف و رفع شد**:
+  ۱. ثبت اصلاح از UI هرگز کار نمی‌کرد: UI «new_text» می‌فرستاد، قرارداد Go «new_value» است → «متن جدید خالی است». (admin-view.tsx)
+  ۲. 201 با بدنهٔ خالی: `w.WriteHeader(201)` + `s.ok` → خطای json.Marshal روی target_json خالی نادیده گرفته می‌شد → مرورگر BAD_RESPONSE می‌دید. رفع: okStatus (هدر قبل از WriteHeader + خطای encode صادقانه) + orNullJSON در overlay (Create/Get/List) + همهٔ ۸ نقطهٔ 201.
+  ۳. overlay برای همیشه «building»: هیچ‌کس وضعیت را بعد از worker به‌روز نمی‌کرد → internal endpoint `POST /internal/overlays/{uid}/status` + worker آن را published/failed می‌کند.
+  ۴. ادمین راهی برای دانستن base_hash نداشت (validate با TextHash مقایسه می‌کند) → endpoint `GET /admin/documents/{uid}/revision-info` + auto-fill و دکمهٔ به‌روزرسانی در فرم.
+  ۵. پل BFF: پاسخ 204 با بدنهٔ غیر null در Response constructor می‌شکست → 500 روی همهٔ DELETEهای 204؛ + بدنهٔ استریم بالا-دست در dev شکننده → arrayBuffer کامل. (api/v1/[...path]/route.ts)
+  ۶. پاسخ login csrf برنمی‌گرداند → نخستین mutation پس از ورود مسیر خودترمیمی شکننده می‌رفت → csrf در پاسخ login/mfa-verify + بازساخت خودترمیمی api.ts (خطای تلاش دوباره عیناً برگردد).
+  ۷. رقابت ذخیرهٔ کوکی مرورگر بلافاصله پس از login (در ms اول fetch بدون کوکی) → در E2E poll تا آماده‌شدن نشست.
+- **وضعیت پس از دور**: search طلایی ۳۰۰/exact روی نسل سازگار؛ go vet/test سبز؛ lint 0؛ tsc (src+tests) پاک؛ E2E: ۲۶ تست دو پروژه → 24 passed + 2 skip (موبایل‌فرم فقط mobile) — همهٔ موارد قبلاً fail/skip اکنون سبز.
+- تغییرات قراردادی اعلامی: (۱) خطای محدودسازی ورود 401→429 rate_limited؛ (۲) endpointهای additive: GET /admin/documents/{uid}/revision-info، POST /internal/overlays/{uid}/status؛ (۳) csrf در پاسخ login/mfa-verify؛ (۴) 201ها اکنون بدنهٔ واقعی دارند.
+
+Stage Summary:
+- هر شش مورد کاربر بسته شد؛ RTM با ردیف‌های دور۱۴-* به‌روز شد (هیچ ردیفی بهتر از شاهد آزمون خودش نیست).
+- دستور بازاجرا: پاریتی = `cd mini-services/noor-api && ./scripts/run-parity-foreground.sh [--with-scale]`؛ E2E = `bunx playwright test` (روی dev server جاری)؛ compose = `python3 deploy/validate-compose.py`.
+- محدودیت‌های صادقانه: اجرای واقعی docker compose (بدون runtime)؛ کورپوس واقعی (fixture×۲۸۰ مصنوعی)؛ بازگشت چندنسلی نمایه (worker فقط یک نسل پیشین را نگه می‌دارد — بازگشت به نسلِ مفقودفایل → جست‌وجو صادقانه ۰ و نیازمند rebuild؛ در RTM ثبت شد).

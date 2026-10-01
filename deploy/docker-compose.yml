@@ -66,12 +66,21 @@ services:
       dockerfile: deploy/Dockerfile.api
     restart: unless-stopped
     mem_limit: 1536m
+    # جایگزین CMD پیش‌فرض تصویر («api») — واقعاً باینری worker اجرا می‌شود
     command: ["worker"]
     environment:
       - NOOR_HTTP_PORT=8080
       - NOOR_DATA_DIR=/data
       - NOOR_SOURCES_DIR=/sources
-      - NOOR_SERVICE_TOKEN=${NOOR_SERVICE_TOKEN}
+      - NOOR_SERVICE_TOKEN=${NOOR_SERVICE_TOKEN:?service token الزامی است}
+      # هم‌ترازی موتور با api — worker تنها نویسندهٔ نسل نمایه است؛ بدون این،
+      # bulk در OpenSearch هرگز اجرا نمی‌شود و نمایهٔ OS هرگز به‌روز نمی‌شود
+      - NOOR_ENGINE=opensearch
+      - NOOR_OPENSEARCH_URL=https://opensearch:9200
+      - NOOR_OPENSEARCH_USER=noor_api
+      - NOOR_OPENSEARCH_PASSWORD=${NOOR_OS_PASSWORD:?opensearch password الزامی است}
+      # worker در کانتینر جدا است؛ نشانی api داخلی (در توسعهٔ تک‌میزبان پیش‌فرض 127.0.0.1 می‌ماند)
+      - NOOR_API_INTERNAL_URL=http://api:8080
     volumes:
       - ${NOOR_SOURCES_HOST}:/sources:ro
       - app_data:/data
@@ -79,7 +88,10 @@ services:
       - derived_data:/derived
     read_only: true
     tmpfs: ["/tmp:size=256m"]
-    depends_on: [api]
+    depends_on: [api, opensearch]
+    # باینری worker سرور HTTP ندارد → healthcheck تصویر (wget به 8080) باید خاموش شود
+    healthcheck:
+      disable: true
     # یک کار سنگین فعال — §۳۸
 
   opensearch:

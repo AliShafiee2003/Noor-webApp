@@ -1,0 +1,43 @@
+# .dockerignore — پاک‌سازی context بیلد (repo root) برای deploy/Dockerfile.web و Dockerfile.api
+# دلیل وجود این فایل:
+#  (۱) جلوگیری از نشت داده و secret (DATA-01/SEC): ‎.env و mini-services/noor-api/data
+#      (app.sqlite، نمایه‌ها و خروجی‌های PDF) هرگز نباید وارد stage بیلد شوند.
+#  (۲) node_modules میزبان مخصوص لینوکس سندباکس است؛ در بیلد alpine همان را bun install
+#      با bun.lock بازسازی می‌کند (قبل از COPY . .) — کپی‌شدن نسخهٔ میزبان صحت بیلد را می‌شکند.
+#  (۳) کوچک‌ماندن context = بیلد سریع‌تر و image تمیزتر.
+# ورودی‌های لازم بیلد (package.json، bun.lock، src، public، next.config.ts، …) حذف نمی‌شوند.
+
+# git و اسناد و داده‌های محیط توسعه
+.git
+.gitignore
+worklog.md
+docs
+agent-ctx
+tool-results
+examples
+skills
+.zscripts
+download
+upload
+
+# secretهای میزبان — هرگز وارد image نشوید
+.env
+.env.*
+
+# وابستگی‌ها و خروجی‌های بیلد محلی
+node_modules
+.next
+tsconfig.tsbuildinfo
+dev.log
+*.log
+
+# دادهٔ برنامه و منابع — فقط با volume mount می‌شوند، هرگز با COPY (DATA-01)
+data
+mini-services/noor-api/data
+mini-services/noor-api/bin
+mini-services/noor-api/*.log
+
+# آزمون‌ها و ابزارهای محیط سندباکس (لازم بیلد تولید نیستند)
+tests
+test-results
+playwright-report

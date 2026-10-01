@@ -30,6 +30,9 @@ COPY --from=build --chown=noor:noor /app/fonts-pdf /app/fonts-pdf
 ENV NOOR_CHROME_PATH=/usr/bin/chromium-browser \
     NOOR_FONT_DIR=/app/fonts-pdf \
     NOOR_PDF_EXPORT_DIR=/data/pdf-exports
+# volume نام‌دار pdf_out روی /data/pdf-exports — مالکیت باید از پیش برای کاربر noor
+# تعیین شود (docker مالکیت مسیر image را به volume خالی منتقل می‌کند)
+RUN mkdir -p /data/pdf-exports && chown -R noor:noor /data
 USER noor
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=3s CMD wget -qO- http://127.0.0.1:3000/ || exit 1

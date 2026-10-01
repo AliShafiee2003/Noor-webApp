@@ -95,7 +95,15 @@ async function proxy(req: NextRequest): Promise<Response> {
     respHeaders.append("set-cookie", cookie);
   }
 
-  return new Response(upstream.body, {
+  /* بدنه کامل خوانده می‌شود (نه استریم) — استریم پاسخ بالا-دست در dev/پشت پراکسی
+     ممکن است نیمه‌کته قطع شود و سمت مرورگر json() را بشکند (یافتهٔ دور ۱۴) */
+  const buf = await upstream.arrayBuffer();
+  /* 204/304 در constructor پاسخ با بدنهٔ غیر null مجاز نیست — بدون بدنه برمی‌گردیم
+     (رفع 500 روی DELETEهای بدون محتوا — یافتهٔ دور ۱۴) */
+  if (upstream.status === 204 || upstream.status === 304) {
+    return new Response(null, { status: upstream.status, headers: respHeaders });
+  }
+  return new Response(buf, {
     status: upstream.status,
     headers: respHeaders,
   });

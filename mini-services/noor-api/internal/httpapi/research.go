@@ -41,8 +41,7 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, 422, "invalid_query", err.Error(), false)
 		return
 	}
-	w.WriteHeader(201)
-	s.ok(w, p)
+	s.okStatus(w, 201, p)
 }
 
 func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
@@ -187,8 +186,7 @@ func (s *Server) handleCreateClip(w http.ResponseWriter, r *http.Request) {
 		handleResearchErr(s, w, r, err)
 		return
 	}
-	w.WriteHeader(201)
-	s.ok(w, c)
+	s.okStatus(w, 201, c)
 }
 
 func (s *Server) handleGetClip(w http.ResponseWriter, r *http.Request) {
@@ -288,8 +286,7 @@ func (s *Server) handleCreateNote(w http.ResponseWriter, r *http.Request) {
 		handleResearchErr(s, w, r, err)
 		return
 	}
-	w.WriteHeader(201)
-	s.ok(w, created)
+	s.okStatus(w, 201, created)
 }
 
 func (s *Server) handleUpdateNote(w http.ResponseWriter, r *http.Request) {
@@ -344,8 +341,7 @@ func (s *Server) handleAddBookmark(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, 422, "invalid_query", err.Error(), false)
 		return
 	}
-	w.WriteHeader(201)
-	s.ok(w, b)
+	s.okStatus(w, 201, b)
 }
 
 func (s *Server) handleDeleteBookmark(w http.ResponseWriter, r *http.Request) {
@@ -383,8 +379,7 @@ func (s *Server) handleSaveSearch(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, 422, "invalid_query", err.Error(), false)
 		return
 	}
-	w.WriteHeader(201)
-	s.ok(w, sv)
+	s.okStatus(w, 201, sv)
 }
 
 func (s *Server) handleDeleteSavedSearch(w http.ResponseWriter, r *http.Request) {

@@ -247,8 +247,7 @@ func (s *Server) handleCreateAnnotation(w http.ResponseWriter, r *http.Request) 
 	h := &ugcHighlightRow{UID: uid, UserUID: u.UID, DocumentUID: documentUID, PageUID: pageUID,
 		BlockID: blockID, StartCP: int(start), EndCP: int(end), Text: storedText,
 		Color: color, CreatedAt: now, UpdatedAt: now}
-	w.WriteHeader(201)
-	s.ok(w, highlightJSON(h))
+	s.okStatus(w, 201, highlightJSON(h))
 }
 
 // handleUpdateAnnotation PATCH /annotations/{uid} — فقط مالک (نبودِ مالک/ردیف → 404).
@@ -461,8 +460,7 @@ func (s *Server) handleCreateShare(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, 500, "internal", "ثبت اشتراک ممکن نشد؛ دوباره تلاش کنید.", true)
 		return
 	}
-	w.WriteHeader(201)
-	s.ok(w, map[string]any{"uid": uid, "url_path": shareURLPath(documentUID, pageUID, uid)})
+	s.okStatus(w, 201, map[string]any{"uid": uid, "url_path": shareURLPath(documentUID, pageUID, uid)})
 }
 
 // parseShareMeta خواندن امن meta ذخیره‌شده — خرابی JSON هرگز مسیر را نمی‌شکند.

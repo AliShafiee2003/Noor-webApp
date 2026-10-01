@@ -3,49 +3,76 @@ import { expect, test, type Page } from "@playwright/test";
 /**
  * سناریو ۱ — ورود/خروج (ه-۱۲-۱) و سناریو ۷ — RBAC دو نقش (ه-۱۲-۷).
  * رابط کاملاً فارسی است؛ selectorها بر پایهٔ متن/placeholder فارسی.
+ *
+ * درس دور ممیزی: محدودساز نرخ ورود (SEC-09) در تولید ۵/دقیقه است؛ در محیط E2E
+ * با NOOR_LOGIN_RATE_MAX بالا می‌رود و خطای محدودسازی اکنون 429 صادقانه است.
+ * helper ورود منتظر «موفقیت یا خطا» می‌ماند و خطای محدودسازی را صریح گزارش می‌کند.
  */
 
 export async function login(page: Page, username: string, password: string) {
   await page.goto("/#/login");
   await page.waitForLoadState("networkidle");
-  const userField = page
-    .locator('#username')
-    .first();
+  const userField = page.locator("#username").first();
   await userField.fill(username, { timeout: 20_000 });
-  await page
-    .locator('#password')
-    .first()
-    .fill(password);
+  await page.locator("#password").first().fill(password);
   await page.getByRole("button", { name: /ورود/ }).first().click();
-  // انتظار برای نتیجهٔ ورود: نام کاربر (موفق) یا پیام خطا — جلوگیری از رقابت
-  await Promise.race([
-    page.getByText("مدیر سامانه").first().waitFor({ timeout: 25_000 }),
-    page.locator(".text-destructive").first().waitFor({ timeout: 25_000 }),
-  ]).catch(() => {});
+  // انتظار برای نتیجهٔ ورود: منوی کاربر (موفق) یا پیام خطا — جلوگیری از رقابت
+  // دکمهٔ منوی کاربر در دسکتاپ و موبایل هر دو نمایان است
+  const outcome = await Promise.race([
+    page
+      .getByRole("button", { name: /منوی کاربر/ })
+      .first()
+      .waitFor({ timeout: 25_000 })
+      .then(() => "ok" as const),
+    page
+      .locator(".text-destructive")
+      .first()
+      .waitFor({ timeout: 25_000 })
+      .then(async () => {
+        const msg = await page.locator(".text-destructive").first().textContent();
+        return ("error:" + (msg ?? "")) as string;
+      }),
+  ]).catch(() => "timeout" as const);
+  if (outcome !== "ok") {
+    throw new Error(
+      `ورود ${username} ناموفق — نتیجه: ${outcome} (اگر «بیش از حد» است، محدودساز نرخ فعال شده: NOOR_LOGIN_RATE_MAX را بررسی کنید)`,
+    );
+  }
   await page.waitForLoadState("networkidle");
 }
 
 export async function logout(page: Page) {
-  await page.goto("/#/settings");
-  await page.waitForLoadState("networkidle");
-  const btn = page.getByRole("button", { name: /خروج/ }).first();
-  if (await btn.isVisible({ timeout: 5_000 }).catch(() => false)) {
-    await btn.click();
-    await page.waitForLoadState("networkidle");
-  }
+  // خروج از منوی کاربر (همیشه در دسترس، مستقل از تب فعال تنظیمات)
+  await page.getByRole("button", { name: /منوی کاربر/ }).first().click();
+  await page.getByRole("menuitem", { name: /خروج از حساب/ }).first().click();
+  await page.locator("#username").first().waitFor({ timeout: 15_000 });
 }
 
 test.describe("ورود و خروج", () => {
   test("ورود موفق admin و مشاهدهٔ نام کاربر", async ({ page }) => {
     await login(page, "admin", "zaB3v-XPngB-fXcYw");
     await page.goto("/");
-    await expect(page.getByText("مدیر سامانه").first()).toBeVisible({ timeout: 20_000 });
+    // نام کاربر در برچسب دسترس‌پذیری دکمهٔ منوی کاربر است — در دسکتاپ و موبایل
+    await expect(
+      page.getByRole("button", { name: /منوی کاربر: مدیر سامانه/ }).first(),
+    ).toBeVisible({ timeout: 20_000 });
+    // در دسکتاپ نام متنِ نمایان هم هست
+    if (test.info().project.name === "desktop") {
+      await expect(page.getByText("مدیر سامانه").first()).toBeVisible({ timeout: 10_000 });
+    }
   });
 
   test("رمز غلط رد می‌شود", async ({ page }) => {
-    await login(page, "admin", "wrong-password-123");
+    await page.goto("/#/login");
+    await page.locator("#username").first().fill("admin");
+    await page.locator("#password").first().fill("wrong-password-123");
+    await page.getByRole("button", { name: /ورود/ }).first().click();
     await expect(
-      page.locator("text=رمز").or(page.locator("[role=alert]")).or(page.locator(".text-destructive")).first(),
+      page
+        .locator("text=رمز")
+        .or(page.locator("[role=alert]"))
+        .or(page.locator(".text-destructive"))
+        .first(),
     ).toBeVisible({ timeout: 15_000 });
   });
 
@@ -60,15 +87,29 @@ test.describe("ورود و خروج", () => {
 
 test.describe("RBAC دو نقش", () => {
   test("admin به پنل مدیریت دسترسی دارد", async ({ page }) => {
-    test.skip(true, "کشف باگ واقعی: گارد مسیر /admin در پیمایش هم‌سند (hash change) گاهی به /login برمی‌گردد — نیازمند بررسی سمت app (AuthProvider hydration)؛ ثبت در گزارش ممیزی");
     await login(page, "admin", "zaB3v-XPngB-fXcYw");
     await page.goto("/#/admin");
     await page.waitForLoadState("networkidle");
-    const stillLogin = await page.locator('#username').count();
-    expect(stillLogin).toBe(0);
+    // پنل مدیریت رندر می‌شود (نه فرم ورود، نه پیام منع دسترسی)
+    await expect(page.locator("#username")).toHaveCount(0);
+    await expect(page.getByText("مدیریت سامانه").first()).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("دسترسی فقط برای مدیر سامانه")).toHaveCount(0);
   });
 
-  test("reader منوی مدیریت ندارد", async ({ page }) => {
-    test.skip(true, "نیاز به کاربر reader — سناریوی کامل اشتراک در share.spec با setup کاربر دوم اجرا می‌شود");
+  test("reader منوی مدیریت ندارد و پنل مدیریت برای او بسته است", async ({ page }) => {
+    await login(page, "qa-reader", "QaReader-2026-x9");
+    // دکمهٔ منوی کاربر در دسکتاپ و موبایل نمایان است (نام در موبایل hidden است)
+    await expect(page.getByRole("button", { name: /منوی کاربر/ }).first()).toBeVisible({
+      timeout: 15_000,
+    });
+    // آیتم «مدیریت» در ناوبری نیست (دسکتاپ) و در منوی موبایل هم نیست
+    await expect(page.getByRole("link", { name: "مدیریت" })).toHaveCount(0);
+    // تلاش مستقیم برای /#/admin → کارت منع دسترسی، نه پنل
+    await page.goto("/#/admin");
+    await page.waitForLoadState("networkidle");
+    await expect(page.getByText("دسترسی فقط برای مدیر سامانه").first()).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(page.getByText("مدیریت سامانه", { exact: true })).toHaveCount(0);
   });
 });

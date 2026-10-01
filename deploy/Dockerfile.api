@@ -12,7 +12,12 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o /out/api 
 FROM alpine:3.20
 RUN adduser -D -u 10001 noor && apk add --no-cache ca-certificates
 COPY --from=build /out/ /usr/local/bin/
+# volumeهای نام‌دار نوشتنی (/data برای api و worker، /derived برای worker) باید پیش از
+# اولین mount متعلق به کاربر noor باشند — docker مالکیت مسیر داخل image را به volume
+# خالی منتقل می‌کند؛ وگرنه volume تازه root-owned است و نوشتن app.sqlite شکست می‌خورد
+RUN mkdir -p /data /derived && chown -R noor:noor /data /derived
 USER noor
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s CMD wget -qO- http://127.0.0.1:8080/healthz || exit 1
-ENTRYPOINT ["api"]
+# CMD نه ENTRYPOINT — تا سرویس worker در compose بتواند command: ["worker"] را جایگزین کند
+CMD ["api"]

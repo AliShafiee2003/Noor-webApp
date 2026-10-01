@@ -666,6 +666,22 @@ function AdminOverlaysTab() {
   const [formNewText, setFormNewText] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
 
+  // نشانهٔ متن مبنی سند (دور ۱۴): قبلاً ادمین راهی برای دانستن base_hash نداشت و
+  // ثبت پیش‌نویسِ قابل اعتبارسنجی عملاً ناممکن بود. با انتخاب سند، نشانهٔ فعلی
+  // واکشی و خودکار پر می‌شود؛ دکمهٔ به‌روزرسانی هم در کنار فیلد هست.
+  const revisionInfoQuery = useQuery({
+    queryKey: ["admin-doc-revision-info", formDoc],
+    queryFn: () => api.get<{ document_uid: string; base_hash: string }>(`/admin/documents/${formDoc}/revision-info`),
+    enabled: !!formDoc,
+    staleTime: 30_000,
+  });
+  const [hashAutoDoc, setHashAutoDoc] = useState<string | null>(null);
+  if (revisionInfoQuery.data && formDoc && hashAutoDoc !== formDoc) {
+    // الگوی مجاز: تنظیم state در زمان رندر برای واکنش به دادهٔ تازه
+    setHashAutoDoc(formDoc);
+    setFormBaseHash(revisionInfoQuery.data.base_hash);
+  }
+
   const createMutation = useMutation({
     mutationFn: () =>
       api.post<OverlayRow>("/admin/overlays", {
@@ -673,7 +689,9 @@ function AdminOverlaysTab() {
         change_type: formType,
         reason: formReason.trim(),
         base_hash: formBaseHash.trim(),
-        new_text: formNewText,
+        // قرارداد Go: new_value (رفع باگ دور ۱۴ — قبلاً new_text فرستاده می‌شد و
+        // سرور «متن جدید خالی است» می‌داد؛ ثبت اصلاح از رابط کاربری عملاً شکسته بود)
+        new_value: formNewText,
       }),
     onSuccess: () => {
       setCreateOpen(false);
@@ -947,7 +965,23 @@ function AdminOverlaysTab() {
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="overlay-base-hash">نشانهٔ متن مبنا</Label>
+              <div className="flex items-center justify-between gap-2">
+                <Label htmlFor="overlay-base-hash">نشانهٔ متن مبنا</Label>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="min-h-9 gap-1 text-xs"
+                  disabled={!formDoc || revisionInfoQuery.isFetching}
+                  onClick={() => {
+                    setHashAutoDoc(null); // اجازهٔ پرکردن مجدد خودکار
+                    void revisionInfoQuery.refetch();
+                  }}
+                >
+                  <Loader2 className={revisionInfoQuery.isFetching ? "size-3 animate-spin" : "hidden size-3"} aria-hidden="true" />
+                  به‌روزرسانی نشانهٔ فعلی
+                </Button>
+              </div>
               <Input
                 id="overlay-base-hash"
                 value={formBaseHash}
@@ -957,7 +991,11 @@ function AdminOverlaysTab() {
                 placeholder="sha256:…"
               />
               <p className="text-xs text-muted-foreground">
-                برای سازگاری هم‌زمانی ویرایش‌ها؛ متن مبنا در زمان انتشار با این نشانه کنترل می‌شود.
+                {formDoc
+                  ? revisionInfoQuery.isPending
+                    ? "در حال خواندن نشانهٔ فعلی سند…"
+                    : "با انتخاب سند پر شد؛ برای سازگاری هم‌زمانی ویرایش‌ها در زمان انتشار کنترل می‌شود."
+                  : "نخست اثر و سند را انتخاب کنید تا نشانهٔ متن مبنی خودکار پر شود."}
               </p>
             </div>
             <div className="space-y-1.5">
