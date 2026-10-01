@@ -6,10 +6,27 @@
  * - در دسکتاپ ستون چپ؛ در موبایل داخل Sheet.
  * - بستن با «بازگشت» — فوکوس به ارجاع برمی‌گردد (مدیریت فوکوس در والد).
  */
-import { ArrowRight, BookOpen, Footprints, Landmark, LibraryBig, Link2Off, ScrollText, StickyNote } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import {
+  ArrowRight,
+  BookOpen,
+  ClipboardList,
+  Footprints,
+  FolderOpen,
+  Landmark,
+  LibraryBig,
+  Link2Off,
+  RotateCcw,
+  ScrollText,
+  StickyNote,
+  TriangleAlert,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { faNum } from "@/lib/format";
-import type { AyahCitation } from "@/lib/types";
+import { Skeleton } from "@/components/ui/skeleton";
+import { HashLink } from "@/lib/hash-router";
+import { api, errorMessage } from "@/lib/api";
+import { faDate, faNum } from "@/lib/format";
+import type { AyahCitation, HadithClipSummary } from "@/lib/types";
 
 export interface FootnotePanelData {
   kind: "footnote" | "link" | "verse" | "hadith";
@@ -46,11 +63,142 @@ function citationTitle(cit: AyahCitation): string {
   return cit.address || "استناد قرآنی";
 }
 
+/** برچسب و رنگ نوع فیش — هم‌واژگان پروژه (project-view) */
+const KIND_META: Record<HadithClipSummary["kind"], { label: string; className: string }> = {
+  original: { label: "نقل‌قول اصل", className: "bg-primary/10 text-primary" },
+  as_read: { label: "متن خوانده‌شده", className: "bg-ayah/20 text-foreground" },
+  note: { label: "یادداشت", className: "bg-muted text-foreground" },
+};
+
+/** فیش‌های این روایت از همهٔ پرونده‌های کاربر — GET /my/clips */
+function HadithClipsSection({
+  documentUid,
+  localUid,
+}: {
+  documentUid: string;
+  localUid: string;
+}) {
+  const query = useQuery({
+    queryKey: ["hadith-clips", documentUid, localUid],
+    queryFn: ({ signal }) =>
+      api.get<{ items: HadithClipSummary[] }>(
+        "/my/clips",
+        { document_uid: documentUid, local_hadith_uid: localUid },
+        signal,
+      ),
+    staleTime: 15_000,
+    retry: false,
+  });
+
+  const clips = query.data?.items ?? [];
+
+  return (
+    <section aria-label="فیش‌های این روایت" className="space-y-2">
+      <div className="flex items-center gap-2">
+        <ClipboardList className="size-4 text-primary" aria-hidden="true" />
+        <h3 className="text-sm font-semibold">فیش‌های این روایت</h3>
+        {!query.isPending && !query.isError ? (
+          <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+            {faNum(clips.length)} فیش
+          </span>
+        ) : null}
+      </div>
+
+      {query.isPending ? (
+        <div className="space-y-2" aria-busy="true">
+          <Skeleton className="h-16 w-full" />
+          <Skeleton className="h-16 w-full" />
+          <span className="sr-only">در حال بارگیری فیش‌های این روایت…</span>
+        </div>
+      ) : query.isError ? (
+        <div className="space-y-2 rounded-xl border border-destructive/40 bg-destructive/5 p-3">
+          <p className="flex items-start gap-1.5 text-xs text-destructive">
+            <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+            {errorMessage(query.error, "فهرست فیش‌های این روایت در دسترس نیست.")}
+          </p>
+          <Button
+            variant="outline"
+            size="sm"
+            className="min-h-9 gap-1.5"
+            onClick={() => void query.refetch()}
+          >
+            <RotateCcw className="size-3.5" aria-hidden="true" /> تلاش دوباره
+          </Button>
+        </div>
+      ) : clips.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-border p-3 text-center">
+          <p className="text-xs font-medium">از این روایت هنوز فیشی ثبت نکرده‌اید</p>
+          <p className="mt-1 text-[11px] leading-5 text-muted-foreground">
+            فیش یادداشت مطالعهٔ شماست؛ با انتخاب متن روایت می‌توانید آن را به یک پرونده بیفزایید.
+          </p>
+        </div>
+      ) : (
+        <ul className="space-y-2">
+          {clips.map((c) => {
+            const meta = KIND_META[c.kind] ?? KIND_META.original;
+            return (
+              <li
+                key={c.uid}
+                className="anim-rise quiet-card rounded-xl border border-border bg-surface p-2.5"
+              >
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span
+                    className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${meta.className}`}
+                  >
+                    {meta.label}
+                  </span>
+                  <span className="inline-flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground">
+                    <FolderOpen className="size-3 shrink-0" aria-hidden="true" />
+                    <span className="truncate">{c.project_name || "پرونده"}</span>
+                  </span>
+                  {c.page_label ? (
+                    <span className="text-[11px] text-muted-foreground/80">
+                      ص {faNum(c.page_label)}
+                    </span>
+                  ) : null}
+                  {c.updated_at ? (
+                    <span className="ms-auto text-[10px] text-muted-foreground/70">
+                      {faDate(c.updated_at)}
+                    </span>
+                  ) : null}
+                </div>
+                <p
+                  lang="ar"
+                  dir="rtl"
+                  className="mt-1.5 line-clamp-3 font-reader text-[13px] leading-7 text-foreground"
+                >
+                  {c.quote_original}
+                </p>
+                {c.note ? (
+                  <p className="mt-1 whitespace-pre-wrap border-t border-border/60 pt-1.5 text-[12px] leading-6 text-muted-foreground">
+                    {c.note}
+                  </p>
+                ) : null}
+                <div className="mt-1.5">
+                  <HashLink
+                    to={`/project/${c.project_uid}`}
+                    className="inline-flex min-h-8 items-center gap-1 rounded-md border border-border px-2 text-[11px] font-medium text-foreground transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-primary"
+                  >
+                    <FolderOpen className="size-3" aria-hidden="true" />
+                    گشودن پرونده
+                  </HashLink>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 export function FootnotePanel({
   data,
   onBack,
   onHadithLookup,
   onHadithNote,
+  /** برای «فیش‌های این روایت» — بدون آن بخش فیش‌ها نمایش داده نمی‌شود */
+  documentUid,
 }: {
   data: FootnotePanelData | null;
   onBack: () => void;
@@ -58,6 +206,7 @@ export function FootnotePanel({
   onHadithLookup?: (localUid: string) => void;
   /** RES: ثبت یادداشت روی همین روایت — والد به تب یادداشت‌ها با دامنهٔ روایت می‌رود */
   onHadithNote?: (localUid: string, revayatIndex?: string | null) => void;
+  documentUid?: string;
 }) {
   if (!data) {
     return (
@@ -205,6 +354,9 @@ export function FootnotePanel({
                 <StickyNote className="size-4" aria-hidden="true" />
                 ثبت یادداشت روی این روایت
               </Button>
+            ) : null}
+            {documentUid && h.localUid ? (
+              <HadithClipsSection documentUid={documentUid} localUid={h.localUid} />
             ) : null}
             <p className="rounded-xl border border-border bg-muted px-3 py-2.5 text-xs leading-6 text-muted-foreground">
               شمارهٔ روایت، شناسهٔ درون‌منبع است و فقط برای پیگیری در همین کتاب کاربرد دارد؛

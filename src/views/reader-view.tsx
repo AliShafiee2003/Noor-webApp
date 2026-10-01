@@ -38,6 +38,7 @@ import type {
   WorkDetail,
 } from "@/lib/types";
 import { useWorkspaceStore } from "@/store/workspace";
+import { useIsCompact } from "@/hooks/use-mobile";
 import { PageRenderer, type ReaderSelection } from "@/components/reader/page-renderer";
 import { TocPanel } from "@/components/reader/toc-panel";
 import { FootnotePanel, type FootnotePanelData } from "@/components/reader/footnote-panel";
@@ -50,6 +51,7 @@ import { NotesPanel } from "@/components/reader/notes-panel";
 export function ReaderView({ documentUid }: { documentUid: string }) {
   const queryClient = useQueryClient();
   const prefs = useWorkspaceStore((s) => s.prefs);
+  const isCompact = useIsCompact();
 
   /* ---------- پارامترهای hash: صفحهٔ فعلی و highlight نتیجه ---------- */
   const [params, setParams] = useState(() => readHashParams());
@@ -586,12 +588,14 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
                 pageLabel={pageQuery.data?.label ?? null}
                 hadithScope={hadithNoteScope}
                 onClearHadithScope={() => setHadithNoteScope(null)}
+                onJumpToPage={(pg) => goToPage(pg)}
               />
             ) : footnote ? (
               <FootnotePanel
                 data={footnote}
                 onBack={() => setFootnote(null)}
                 onHadithLookup={setHadithLookupUid}
+                documentUid={documentUid}
                 onHadithNote={(localUid, revayatIndex) => {
                   setHadithNoteScope({ localUid, revayatIndex });
                   setCtxTab("notes");
@@ -606,28 +610,29 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
         </aside>
       </div>
 
-      {/* پاورقی — موبایل: sheet پایین */}
-      {footnote && (
-        <div className="border-t border-border bg-surface p-0 xl:hidden">
-          <Sheet open={!!footnote} onOpenChange={(o) => !o && setFootnote(null)}>
-            <SheetContent side="bottom" className="max-h-[60vh] overflow-y-auto">
-              <SheetHeader>
-                <SheetTitle className="text-sm">پاورقی / ارجاع</SheetTitle>
-              </SheetHeader>
-              <FootnotePanel
-                data={footnote}
-                onBack={() => setFootnote(null)}
-                onHadithLookup={setHadithLookupUid}
-                onHadithNote={(localUid, revayatIndex) => {
-                  setHadithNoteScope({ localUid, revayatIndex });
-                  setFootnote(null);
-                  setNotesSheetOpen(true);
-                }}
-              />
-            </SheetContent>
-          </Sheet>
-        </div>
-      )}
+      {/* پاورقی — فقط زیر xl: sheet پایین.
+          نکته: محتوای Sheet در body پرتال می‌شود؛ xl:hidden روی والدِ آن
+          اثری ندارد — پس رندر شیت باید صریحاً به isCompact مقید باشد. */}
+      {footnote && isCompact ? (
+        <Sheet open={!!footnote} onOpenChange={(o) => !o && setFootnote(null)}>
+          <SheetContent side="bottom" className="max-h-[60vh] overflow-y-auto">
+            <SheetHeader>
+              <SheetTitle className="text-sm">پاورقی / ارجاع</SheetTitle>
+            </SheetHeader>
+            <FootnotePanel
+              data={footnote}
+              onBack={() => setFootnote(null)}
+              onHadithLookup={setHadithLookupUid}
+              documentUid={documentUid}
+              onHadithNote={(localUid, revayatIndex) => {
+                setHadithNoteScope({ localUid, revayatIndex });
+                setFootnote(null);
+                setNotesSheetOpen(true);
+              }}
+            />
+          </SheetContent>
+        </Sheet>
+      ) : null}
 
       {/* یادداشت‌ها — موبایل/تبلت: شیت پایین */}
       <Sheet open={notesSheetOpen} onOpenChange={setNotesSheetOpen}>
@@ -646,6 +651,10 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
               hadithScope={hadithNoteScope}
               onClearHadithScope={() => {
                 setHadithNoteScope(null);
+              }}
+              onJumpToPage={(pg) => {
+                setNotesSheetOpen(false);
+                goToPage(pg);
               }}
             />
           </div>
@@ -672,6 +681,15 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
         localHadithUid={hadithLookupUid ?? ""}
         open={!!hadithLookupUid}
         onOpenChange={(o) => !o && setHadithLookupUid(null)}
+        onNoteRequest={(localUid, revayatIndex) => {
+          setHadithLookupUid(null);
+          setHadithNoteScope({ localUid, revayatIndex });
+          if (isCompact) {
+            setNotesSheetOpen(true);
+          } else {
+            setCtxTab("notes");
+          }
+        }}
       />
 
       {/* دکمه‌های شناور برای موبایل */}

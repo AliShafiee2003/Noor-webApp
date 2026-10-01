@@ -255,6 +255,58 @@ func (s *Service) ListClips(owner, projectUID, state, q, tag string) ([]Clip, er
                 _ = json.Unmarshal([]byte(tags), &c.Tags)
                 out = append(out, c)
         }
+        /* §۳۹: پایان اسکن هم باید صریح کنترل شود — خطای اسکن خاموش نمی‌ماند */
+        if err := rows.Err(); err != nil {
+                return nil, err
+        }
+        return out, nil
+}
+
+// ---- فیش‌های یک روایت (نمای پنل روایت) ----
+
+/* HadithClip خلاصهٔ فیش برای «فیش‌های این روایت» در پنل روایت است؛
+   مالکیت سرور کنترل می‌شود و نام پرونده برای جهت‌گیری می‌آید. */
+type HadithClip struct {
+        UID           string   `json:"uid"`
+        ProjectUID    string   `json:"project_uid"`
+        ProjectName   string   `json:"project_name"`
+        Kind          string   `json:"kind"`
+        QuoteOriginal string   `json:"quote_original"`
+        Note          *string  `json:"note"`
+        Tags          []string `json:"tags"`
+        PageUID       string   `json:"page_uid,omitempty"`
+        PageLabel     string   `json:"page_label,omitempty"`
+        UpdatedAt     string   `json:"updated_at"`
+}
+
+/* ListHadithClips فیش‌های فعالِ همین کاربر را که به یک روایت مشخص
+   (جفت document_uid + local_hadith_uid؛ شناسهٔ محلی جهانی نیست) متصل‌اند،
+   از همهٔ پرونده‌های او برمی‌گرداند. */
+func (s *Service) ListHadithClips(owner, documentUID, localHadithUID string) ([]HadithClip, error) {
+        rows, err := s.db.Query(`SELECT c.uid, c.project_uid, p.name, c.kind, c.quote_original, c.note, c.tags,
+                c.page_uid, c.page_label, c.updated_at
+                FROM clips c JOIN projects p ON p.uid = c.project_uid
+                WHERE c.owner_user_id=? AND c.deleted_at IS NULL AND p.deleted_at IS NULL
+                  AND c.document_uid=? AND c.local_hadith_uid=?
+                ORDER BY c.updated_at DESC LIMIT 50`, owner, documentUID, localHadithUID)
+        if err != nil {
+                return nil, err
+        }
+        defer rows.Close()
+        var out []HadithClip
+        for rows.Next() {
+                var h HadithClip
+                var tags string
+                if err := rows.Scan(&h.UID, &h.ProjectUID, &h.ProjectName, &h.Kind, &h.QuoteOriginal, &h.Note, &tags,
+                        &h.PageUID, &h.PageLabel, &h.UpdatedAt); err != nil {
+                        return nil, err
+                }
+                _ = json.Unmarshal([]byte(tags), &h.Tags)
+                out = append(out, h)
+        }
+        if err := rows.Err(); err != nil {
+                return nil, err
+        }
         return out, nil
 }
 

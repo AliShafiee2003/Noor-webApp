@@ -198,7 +198,7 @@ export function ResearchView() {
             value={filter}
             onValueChange={(v) => setFilter(v as ProjectFilter)}
           >
-            <TabsList className="h-11">
+            <TabsList aria-label="پالایش وضعیت پرونده‌ها" className="h-11">
               <TabsTrigger value="all" className="min-h-9 gap-2">
                 همه
                 <Badge variant="secondary" className="px-1.5">

@@ -16,6 +16,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  ArrowLeft,
   Check,
   Loader2,
   Pencil,
@@ -54,6 +55,8 @@ interface NotesPanelProps {
   hadithScope?: { localUid: string; revayatIndex?: string | null } | null;
   /** پایان دامنهٔ روایت — بازگشت به دامنهٔ صفحه/سند */
   onClearHadithScope?: () => void;
+  /** نشانی عمیق یادداشت‌ها: پرش به صفحهٔ مقصد یادداشت‌های صفحهٔ دیگر */
+  onJumpToPage?: (pageUid: string) => void;
 }
 
 type Tab = "page" | "document" | "hadith";
@@ -64,6 +67,7 @@ export function NotesPanel({
   pageLabel,
   hadithScope = null,
   onClearHadithScope,
+  onJumpToPage,
 }: NotesPanelProps) {
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<Tab>("page");
@@ -386,7 +390,11 @@ export function NotesPanel({
             shownSorted.map((n) => (
               <article
                 key={n.uid}
-                className="anim-rise quiet-card rounded-xl border border-border bg-surface p-3"
+                className={`anim-rise quiet-card rounded-xl border bg-surface p-3 ${
+                  n.local_hadith_uid
+                    ? "border-s-[3px] border-s-primary/60 border-border"
+                    : "border-border"
+                }`}
               >
                 {editing?.uid === n.uid ? (
                   <div className="space-y-2">
@@ -447,10 +455,22 @@ export function NotesPanel({
                           {n.page_uid
                             ? n.page_uid === currentPageUid
                               ? "همین صفحه"
-                              : `صفحهٔ دیگر`
+                              : "صفحهٔ دیگر"
                             : "کل سند"}
                         </span>
                         {n.updated_at ? <span>{faDateTime(n.updated_at)}</span> : null}
+                        {/* نشانی عمیق: پرش به صفحهٔ مقصد یادداشت */}
+                        {n.page_uid && n.page_uid !== currentPageUid && onJumpToPage ? (
+                          <button
+                            type="button"
+                            className="inline-flex min-h-6 items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary transition-colors hover:bg-primary/15 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-primary"
+                            onClick={() => onJumpToPage(n.page_uid as string)}
+                            title="رفتن به صفحهٔ این یادداشت"
+                          >
+                            پرش به این صفحه
+                            <ArrowLeft className="size-3" aria-hidden="true" />
+                          </button>
+                        ) : null}
                       </div>
                       <div className="flex items-center gap-0.5">
                         <Button

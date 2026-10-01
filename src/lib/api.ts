@@ -81,13 +81,56 @@ export interface RequestOptions {
   signal?: AbortSignal;
 }
 
-async function request<T>(options: RequestOptions): Promise<T> {
+async function parseErrorBody(
+  response: Response,
+): Promise<{ code: string; message: string; traceId: string | null; retryable: boolean } | null> {
+  let payload: unknown = null;
+  try {
+    payload = await response.json();
+  } catch {
+    /* بدنهٔ غیر JSON */
+  }
+  const err =
+    payload && typeof payload === "object" && "error" in payload
+      ? (payload as { error: Record<string, unknown> }).error
+      : null;
+  if (err && typeof err.message === "string") {
+    return {
+      code: typeof err.code === "string" ? err.code : "internal",
+      message: err.message,
+      traceId: typeof err.trace_id === "string" ? err.trace_id : null,
+      retryable: err.retryable === true,
+    };
+  }
+  return null;
+}
+
+function fallbackError(response: Response): ApiError {
+  const fallbackByStatus: Record<number, string> = {
+    401: "نشست شما معتبر نیست؛ دوباره وارد شوید.",
+    403: "اجازهٔ انجام این کار را ندارید.",
+    404: "مورد درخواستی یافت نشد.",
+    429: "تعداد درخواست‌ها بیش از حد مجاز است؛ کمی بعد دوباره تلاش کنید.",
+    503: "سامانه موقتاً در دسترس نیست؛ کمی بعد دوباره تلاش کنید.",
+  };
+
+  return new ApiError({
+    code: "internal",
+    message:
+      fallbackByStatus[response.status] ??
+      "پاسخ نامعتبری از سرور دریافت شد؛ دوباره تلاش کنید.",
+    retryable: response.status >= 500 || response.status === 429,
+    status: response.status,
+  });
+}
+
+async function execute<T>(options: RequestOptions, csrf: string | null): Promise<T> {
   const { path, params, body, method = "GET", signal } = options;
 
   const headers: Record<string, string> = { Accept: "application/json" };
   if (body !== undefined) headers["Content-Type"] = "application/json";
   const isMutation = method !== "GET";
-  if (isMutation && csrfToken) headers[CSRF_HEADER] = csrfToken;
+  if (isMutation && csrf) headers[CSRF_HEADER] = csrf;
 
   let response: Response;
   try {
@@ -109,7 +152,32 @@ async function request<T>(options: RequestOptions): Promise<T> {
   }
 
   if (!response.ok) {
-    throw (await toApiError(response));
+    /* خودترمیمی CSRF: توکن فقط در حافظه است و در بازخوانی کامل صفحه/HMR
+       ممکن است هنوز نیامده یا پاک شده باشد. در این حالت یک‌بار نشست را
+       می‌پرسیم (تازه‌ترین توکن) و همان درخواست را تکرار می‌کنیم — بدون
+       حلقهٔ بی‌پایان و بدون از دست رفتن کاربر (§۴۱). */
+    const parsed = await parseErrorBody(response);
+    if (response.status === 403 && parsed?.code === "csrf" && isMutation && !csrf) {
+      try {
+        const session = await fetch(apiUrl("/auth/session"), {
+          headers: { Accept: "application/json" },
+          credentials: "include",
+        });
+        if (session.ok) {
+          const data = (await session.json()) as { csrf?: unknown };
+          if (typeof data.csrf === "string" && data.csrf) {
+            setCsrfToken(data.csrf);
+            return execute<T>(options, data.csrf);
+          }
+        }
+      } catch {
+        /* به خطای اصلی می‌رسیم */
+      }
+    }
+    if (parsed) {
+      throw new ApiError({ ...parsed, status: response.status });
+    }
+    throw fallbackError(response);
   }
 
   if (response.status === 204) return undefined as T;
@@ -128,44 +196,9 @@ async function request<T>(options: RequestOptions): Promise<T> {
   return data as T;
 }
 
-async function toApiError(response: Response): Promise<ApiError> {
-  let payload: unknown = null;
-  try {
-    payload = await response.json();
-  } catch {
-    /* بدنهٔ غیر JSON */
-  }
-  const err =
-    payload && typeof payload === "object" && "error" in payload
-      ? (payload as { error: Record<string, unknown> }).error
-      : null;
-
-  if (err && typeof err.message === "string") {
-    return new ApiError({
-      code: typeof err.code === "string" ? err.code : "internal",
-      message: err.message,
-      traceId: typeof err.trace_id === "string" ? err.trace_id : null,
-      retryable: err.retryable === true,
-      status: response.status,
-    });
-  }
-
-  const fallbackByStatus: Record<number, string> = {
-    401: "نشست شما معتبر نیست؛ دوباره وارد شوید.",
-    403: "اجازهٔ انجام این کار را ندارید.",
-    404: "مورد درخواستی یافت نشد.",
-    429: "تعداد درخواست‌ها بیش از حد مجاز است؛ کمی بعد دوباره تلاش کنید.",
-    503: "سامانه موقتاً در دسترس نیست؛ کمی بعد دوباره تلاش کنید.",
-  };
-
-  return new ApiError({
-    code: "internal",
-    message:
-      fallbackByStatus[response.status] ??
-      "پاسخ نامعتبری از سرور دریافت شد؛ دوباره تلاش کنید.",
-    retryable: response.status >= 500 || response.status === 429,
-    status: response.status,
-  });
+async function request<T>(options: RequestOptions): Promise<T> {
+  const { method = "GET" } = options;
+  return execute<T>(options, method === "GET" ? null : csrfToken);
 }
 
 /* ---------- توابع عمومی ---------- */

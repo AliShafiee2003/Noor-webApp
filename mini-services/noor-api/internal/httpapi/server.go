@@ -95,6 +95,7 @@ func (s *Server) Router() http.Handler {
                         r.Delete("/clips/{uid}", s.mutation(s.handleTrashClip))
                         r.Post("/clips/{uid}/restore", s.mutation(s.handleRestoreClip))
                         r.Get("/clips/{uid}/revisions", s.handleClipRevisions)
+                        r.Get("/my/clips", s.handleMyClips)
                         r.Get("/notes", s.handleListNotes)
                         r.Post("/notes", s.mutation(s.handleCreateNote))
                         r.Patch("/notes/{uid}", s.mutation(s.handleUpdateNote))

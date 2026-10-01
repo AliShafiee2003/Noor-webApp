@@ -110,6 +110,28 @@ func (s *Server) handleListClips(w http.ResponseWriter, r *http.Request) {
         s.ok(w, map[string]any{"items": items})
 }
 
+/* handleMyClips — فیش‌های یک روایت از همهٔ پرونده‌های کاربر:
+   GET /my/clips?document_uid=&local_hadith_uid= (هر دو الزامی؛ شناسهٔ
+   روایت محلی است و بدون سند بی‌معنا — IDH-04). فقط مالک خود کاربر. */
+func (s *Server) handleMyClips(w http.ResponseWriter, r *http.Request) {
+        q := r.URL.Query()
+        docUID := q.Get("document_uid")
+        hUID := q.Get("local_hadith_uid")
+        if docUID == "" || hUID == "" {
+                s.fail(w, r, 400, "invalid_request", "هم document_uid و هم local_hadith_uid لازم است.", false)
+                return
+        }
+        items, err := s.Research.ListHadithClips(userOf(r).UID, docUID, hUID)
+        if err != nil {
+                s.fail(w, r, 500, "internal", "فهرست فیش‌های این روایت در دسترس نیست.", true)
+                return
+        }
+        if items == nil {
+                items = []research.HadithClip{}
+        }
+        s.ok(w, map[string]any{"items": items})
+}
+
 func (s *Server) handleCreateClip(w http.ResponseWriter, r *http.Request) {
         var in research.ClipInput
         if !decodeBody(w, r, &in) {

@@ -412,6 +412,7 @@ export function SplitReaderPanel({ locator, onClose, onNavigate }: PanelProps) {
             data={ctx}
             onBack={() => setCtx(null)}
             onHadithLookup={setHadithLookupUid}
+            documentUid={documentUid}
             onHadithNote={(localUid, revayatIndex) => {
               setHadithNoteScope({ localUid, revayatIndex });
               setCtx(null);
@@ -481,6 +482,21 @@ export function SplitReaderPanel({ locator, onClose, onNavigate }: PanelProps) {
               pageLabel={pageQuery.data?.label ?? null}
               hadithScope={hadithNoteScope}
               onClearHadithScope={() => setHadithNoteScope(null)}
+              onJumpToPage={(pg) => {
+                /* پرش عمیق یادداشت: تعویض صفحهٔ درون پنلی + بستن شیت */
+                setNotesOpen(false);
+                const ref = pageRefs.find((p) => p.page_uid === pg);
+                if (ref) {
+                  jumpPage(ref);
+                } else {
+                  onNavigate({
+                    ...locator,
+                    pageUid: pg,
+                    hl: null,
+                    key: `${documentUid}:${pg}`,
+                  });
+                }
+              }}
             />
           </div>
         </SheetContent>
@@ -492,6 +508,11 @@ export function SplitReaderPanel({ locator, onClose, onNavigate }: PanelProps) {
         localHadithUid={hadithLookupUid ?? ""}
         open={!!hadithLookupUid}
         onOpenChange={(o) => !o && setHadithLookupUid(null)}
+        onNoteRequest={(localUid, revayatIndex) => {
+          setHadithLookupUid(null);
+          setHadithNoteScope({ localUid, revayatIndex });
+          setNotesOpen(true);
+        }}
       />
     </section>
   );

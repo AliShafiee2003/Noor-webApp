@@ -92,6 +92,7 @@ Mutationها باید هدر `X-Noor-CSRF` داشته باشند (token از `GE
 - `GET /projects` → `[{"uid","name","archived","clip_count","updated_at","version"}]`
 - `POST /projects {name}` / `PATCH /projects/{uid} {name?,archived?,version}` (409 conflict) / `DELETE /projects/{uid}` (soft)
 - `GET /projects/{uid}/clips?state=active|trashed&q=&tag=&page=`
+- `GET /my/clips?document_uid=&local_hadith_uid=` → فیش‌های فعالِ همین کاربر متصل به یک روایت مشخص، از همهٔ پرونده‌هایش (هر دو پارامتر الزامی؛ شناسهٔ روایت محلی است و فقط همراه سند معنا دارد — IDH-04) → `{items:[{uid,project_uid,project_name,kind,quote_original,note,tags,page_uid,page_label,updated_at}]}`
 - `POST /clips {project_uid,kind:"original|as_read|note",quote_original,quote_as_read?,prefix_context?,suffix_context?,note?,tags?[],source:{work_uid,document_uid,page_uid?,page_label?,section_uid?,source_offsets:{start,end,unit:"codepoint"},source_version_uid,release_uid,overlay_revision_uid?,local_hadith_uid?}}` → snapshot کامل ذخیره می‌شود (TECH-08)
 - `GET /clips/{uid}` / `PATCH /clips/{uid} {version,...}` (409 + مسیر حل تعارض) / `DELETE /clips/{uid}` → سطل / `POST /clips/{uid}/restore` / `GET /clips/{uid}/revisions`
 - `GET /notes?document_uid=&page_uid=` / `POST /notes {target:{document_uid,page_uid?,section_uid?,local_hadith_uid?},body}` / PATCH با version

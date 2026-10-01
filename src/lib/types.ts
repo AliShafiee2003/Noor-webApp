@@ -500,6 +500,23 @@ export interface Note {
   updated_at?: string | null;
 }
 
+/**
+ * خلاصهٔ فیش متصل به یک روایت — GET /my/clips?document_uid=&local_hadith_uid=
+ * فقط فیش‌های فعالِ خود کاربر از همهٔ پرونده‌هایش (نمای «فیش‌های این روایت»).
+ */
+export interface HadithClipSummary {
+  uid: string;
+  project_uid: string;
+  project_name: string;
+  kind: ClipKind;
+  quote_original: string;
+  note?: string | null;
+  tags: string[];
+  page_uid?: string | null;
+  page_label?: string | null;
+  updated_at?: string | null;
+}
+
 export interface Bookmark {
   uid: string;
   document_uid: string;

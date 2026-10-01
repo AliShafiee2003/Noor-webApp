@@ -18,6 +18,7 @@ import {
   Loader2,
   RotateCcw,
   Search,
+  StickyNote,
   TriangleAlert,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -40,6 +41,8 @@ interface DialogProps {
   localHadithUid: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** RES: ثبت یادداشت روی همین روایت — والد به تب یادداشت‌ها با دامنهٔ روایت می‌رود */
+  onNoteRequest?: (localUid: string, revayatIndex: string | null) => void;
 }
 
 export function HadithLocationsDialog({
@@ -47,6 +50,7 @@ export function HadithLocationsDialog({
   localHadithUid,
   open,
   onOpenChange,
+  onNoteRequest,
 }: DialogProps) {
   const query = useQuery({
     queryKey: ["hadith-locations", documentUid, localHadithUid],
@@ -127,6 +131,19 @@ export function HadithLocationsDialog({
                     {faNum(data.hadith.body_length)} نویسه
                   </span>
                 ) : null}
+                {onNoteRequest ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="ms-auto min-h-8 gap-1.5 px-2.5 text-xs"
+                    onClick={() =>
+                      onNoteRequest(data.hadith.local_uid, data.hadith.revayat_index ?? null)
+                    }
+                  >
+                    <StickyNote className="size-3.5" aria-hidden="true" />
+                    ثبت یادداشت روی این روایت
+                  </Button>
+                ) : null}
               </div>
               {data.query_truncated ? (
                 <p className="mt-2 flex items-start gap-1.5 text-xs text-muted-foreground">
@@ -164,11 +181,16 @@ export function HadithLocationsDialog({
                   return (
                     <li
                       key={g.work.uid + "-loc-" + gi}
-                      className="anim-rise quiet-card rounded-xl border border-border bg-surface p-3.5"
+                      className="anim-rise quiet-card rounded-xl border border-border bg-surface p-3.5 transition-shadow hover:shadow-sm"
                     >
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <h4 className="flex items-center gap-2 text-sm font-semibold">
-                          <LibraryBig className="size-4 text-primary" aria-hidden="true" />
+                          <span
+                            aria-hidden="true"
+                            className="flex size-7 items-center justify-center rounded-lg bg-primary/10"
+                          >
+                            <LibraryBig className="size-4 text-primary" />
+                          </span>
                           {g.work.title}
                         </h4>
                         <Badge variant="secondary" className="font-normal">
