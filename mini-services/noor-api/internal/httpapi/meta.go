@@ -16,15 +16,18 @@ func (m metaAdapter) WorkTitle(uid string) (string, string, string, bool) {
 	return w.Title, w.ShortTitle, w.Author, true
 }
 
+// DocumentMeta با نقشهٔ کاتالوگ O(1) است — اسکن خطی works×docs به‌ازای هر نتیجه
+// (دو بار در هر نتیجه: buildResponse و toResult) حذف شد (ممیزی: N+1 کاتالوگ).
 func (m metaAdapter) DocumentMeta(uid string) (string, string, bool) {
-	for _, w := range m.c.Works() {
-		for _, d := range w.Documents {
-			if d.UID == uid {
-				return w.UID, d.Label, true
-			}
-		}
+	wu, ok := m.c.WorkUIDOfDocument(uid)
+	if !ok {
+		return "", "", false
 	}
-	return "", "", false
+	d, ok := m.c.Document(uid)
+	if !ok {
+		return "", "", false
+	}
+	return wu, d.Label, true
 }
 
 func (m metaAdapter) SectionTitle(docUID, secUID string) (string, bool) {

@@ -1,28 +1,35 @@
 # Caddyfile.prod — پراکسی تولید (همراه docker-compose.yml؛ PRD §۵۲)
 # دامنه با env؛ TLS خودکار Caddy. وب و API در شبکهٔ داخلی compose هستند.
 {$NOOR_DOMAIN:localhost} {
-	encode zstd gzip
+        encode zstd gzip
 
-	# API — همان قرارداد /api/v1 با حفظ کوکی و هدرها
-	handle /api/v1/* {
-		reverse_proxy api:8080 {
-			header_up Host {host}
-			header_up X-Forwarded-For {remote_host}
-			header_up X-Forwarded-Proto {scheme}
-		}
-	}
+        # endpointهای داخلی (worker↔api با X-Noor-Service) هرگز از لبهٔ عمومی
+        # سرویس نمی‌شوند (ممیزی: عبور endpointهای internal از Caddy عمومی) —
+        # worker در شبکهٔ compose مستقیماً api:8080 را صدا می‌زند؛ این مسیر ۴۰۴ است.
+        handle /api/v1/internal/* {
+                respond 404
+        }
 
-	# سلامت داخلی
-	handle /healthz {
-		reverse_proxy api:8080
-	}
+        # API — همان قرارداد /api/v1 با حفظ کوکی و هدرها
+        handle /api/v1/* {
+                reverse_proxy api:8080 {
+                        header_up Host {host}
+                        header_up X-Forwarded-For {remote_host}
+                        header_up X-Forwarded-Proto {scheme}
+                }
+        }
 
-	# بقیه — Next.js
-	handle {
-		reverse_proxy web:3000 {
-			header_up Host {host}
-			header_up X-Forwarded-For {remote_host}
-			header_up X-Forwarded-Proto {scheme}
-		}
-	}
+        # سلامت داخلی
+        handle /healthz {
+                reverse_proxy api:8080
+        }
+
+        # بقیه — Next.js
+        handle {
+                reverse_proxy web:3000 {
+                        header_up Host {host}
+                        header_up X-Forwarded-For {remote_host}
+                        header_up X-Forwarded-Proto {scheme}
+                }
+        }
 }

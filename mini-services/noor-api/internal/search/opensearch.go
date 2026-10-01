@@ -35,12 +35,28 @@ type OpenSearchEngine struct {
 	index  string
 }
 
+// OSOption گزینهٔ ساخت آداپتور OpenSearch.
+type OSOption func(*osClient)
+
+// WithHTTPClient کلاینت HTTP سفارشی (TLS/CA مطابق پیکربندی — ممیزی DEP-01)؛
+// nil یا عدمِ استفاده = کلاینت پیش‌فرض با Timeout ۳۰ ثانیه.
+func WithHTTPClient(hc *http.Client) OSOption {
+	return func(c *osClient) {
+		if hc != nil {
+			c.http = hc
+		}
+	}
+}
+
 // NewOpenSearch ساخت آداپتور؛ با ping سرویس — در نبود سرویس خطای فهمیدنی می‌دهد (الف-۲).
-func NewOpenSearch(baseURL, user, pass, indexName string, base *LocalEngine) (*OpenSearchEngine, error) {
+func NewOpenSearch(baseURL, user, pass, indexName string, base *LocalEngine, opts ...OSOption) (*OpenSearchEngine, error) {
 	if strings.TrimSpace(baseURL) == "" {
 		return nil, errors.New("آدرس OpenSearch خالی است؛ NOOR_OPENSEARCH_URL را تنظیم کنید")
 	}
 	c := &osClient{baseURL: strings.TrimRight(baseURL, "/"), user: user, pass: pass, http: &http.Client{Timeout: 30 * time.Second}}
+	for _, o := range opts {
+		o(c)
+	}
 	if err := c.ping(); err != nil {
 		return nil, fmt.Errorf("سرویس OpenSearch در %s پاسخ نمی‌دهد: %w", baseURL, err)
 	}
@@ -166,6 +182,7 @@ func (e *OpenSearchEngine) runVerified(ctx context.Context, req *Request, releas
 		cap = defaultMaxResults
 	}
 	seen := map[string]bool{}
+	vs := &verifyStats{}
 	const batch = 200
 	for start := 0; start < len(hits); start += batch {
 		if ctx.Err() != nil {
@@ -187,7 +204,7 @@ func (e *OpenSearchEngine) runVerified(ctx context.Context, req *Request, releas
 			if !citationAllows(req, r) {
 				continue // استناد باید واقعاً در همین passage باشد
 			}
-			hitsV, matchType := verifyInText(req, r)
+			hitsV, matchType := verifyInText(req, r, vs)
 			if req.Scope.Quran != nil && len([]rune(req.Query)) == 0 && len(hitsV) == 0 {
 				n1r := []rune(r.TextOriginal)
 				hi := clampInt(160, 0, len(n1r))
@@ -205,13 +222,13 @@ func (e *OpenSearchEngine) runVerified(ctx context.Context, req *Request, releas
 				}
 				out = append(out, e.base.toResult(r, h, matchType))
 				if len(out) >= cap {
-					return out, runState{capped: true}, nil
+					return out, runState{capped: true, hitTruncated: vs.truncatedPassages > 0}, nil
 				}
 			}
 		}
 	}
 	// SEARCH-01/16: اشباع پیمایش OS یا پاسخ ناقص (timed_out/shard) = اعلام partial.
-	return out, runState{candSaturated: candSat}, nil
+	return out, runState{candSaturated: candSat, hitTruncated: vs.truncatedPassages > 0}, nil
 }
 
 // collectCandidates پرس‌وجوی recall-محور per-mode با فیلتر scope؛ همهٔ کاندیدها

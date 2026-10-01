@@ -86,7 +86,7 @@ func TestStrictPhraseTrigramPrefilterParity(t *testing.T) {
                 if err := scanCand(rows, &r); err != nil {
                         t.Fatal(err)
                 }
-                hits, matchType := verifyInText(req, &r)
+                hits, matchType := verifyInText(req, &r, &verifyStats{})
                 for _, h := range hits {
                         key := fmt.Sprint(r.SourceStart+h.Range[0]) + ":" + fmt.Sprint(r.SourceStart+h.Range[1])
                         if seen[key] {

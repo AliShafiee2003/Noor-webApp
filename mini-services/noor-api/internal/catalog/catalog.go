@@ -53,8 +53,10 @@ type Service struct {
 	works       []Work
 	byUID       map[string]*Work
 	docByUID    map[string]DocumentMeta
+	docWork     map[string]string // docUID ← workUID (رفع N+1 کاتالوگ)
 	sourcesDir  string
 	modelCache  map[string]*cacheEntry
+	featCache   map[string]*Features // کش پوشش اثر — کاتالوگ در زمان اجرا تغییرنکردنی است
 	modelOrder  []string
 	dbOpenCount map[string]*dbEntry
 	modelSem    chan struct{} // §۳۸ decode تعاملی هم‌زمان ≤۲
@@ -85,7 +87,9 @@ func Load(sourcesDir string) (*Service, error) {
 		sourcesDir:  sourcesDir,
 		byUID:       map[string]*Work{},
 		docByUID:    map[string]DocumentMeta{},
+		docWork:     map[string]string{},
 		modelCache:  map[string]*cacheEntry{},
+		featCache:   map[string]*Features{},
 		dbOpenCount: map[string]*dbEntry{},
 		modelSem:    make(chan struct{}, 2),
 	}
@@ -94,6 +98,7 @@ func Load(sourcesDir string) (*Service, error) {
 		s.byUID[w.UID] = w
 		for _, d := range w.Documents {
 			s.docByUID[d.UID] = d
+			s.docWork[d.UID] = w.UID
 		}
 	}
 	s.works = works
@@ -113,15 +118,18 @@ func (s *Service) Document(uid string) (DocumentMeta, bool) {
 }
 
 // WorkOfDocument اثرِ سند را برمی‌گرداند (بدون fallback — §۴۲).
+// با نقشهٔ docWork برابر O(1) است؛ اسکن خطی works×docs حذف شد (ممیزی: N+1 کاتالوگ).
 func (s *Service) WorkOfDocument(docUID string) (*Work, bool) {
-	for _, w := range s.works {
-		for _, d := range w.Documents {
-			if d.UID == docUID {
-				return s.byUID[w.UID], true
-			}
-		}
+	if wu, ok := s.docWork[docUID]; ok {
+		return s.byUID[wu], true
 	}
 	return nil, false
+}
+
+// WorkUIDOfDocument شناسهٔ اثرِ سند با جست‌وجوی O(1) (ممیزی: N+1 کاتالوگ).
+func (s *Service) WorkUIDOfDocument(docUID string) (string, bool) {
+	wu, ok := s.docWork[docUID]
+	return wu, ok
 }
 
 func (s *Service) docPath(docUID string) (string, error) {
@@ -252,8 +260,25 @@ func statusOf(docs []string) string {
 	return "supported"
 }
 
-// WorkFeatures پوشش در سطح اثر.
+// WorkFeatures پوشش در سطح اثر — با کش (کاتالوگ تغییرنکردنی است؛ محاسبهٔ هر اثر
+// حداکثر یک‌بار انجام می‌شود و فراخوانی‌های بعدی O(1) هستند — ممیزی: /works کل کتابخانه).
 func (s *Service) WorkFeatures(w *Work) Features {
+	s.mu.RLock()
+	if f, ok := s.featCache[w.UID]; ok {
+		s.mu.RUnlock()
+		return *f
+	}
+	s.mu.RUnlock()
+	f := s.computeWorkFeatures(w)
+	s.mu.Lock()
+	if _, ok := s.featCache[w.UID]; !ok { // برندهٔ مسابقهٔ هم‌زمانی حفظ می‌شود
+		s.featCache[w.UID] = &f
+	}
+	s.mu.Unlock()
+	return f
+}
+
+func (s *Service) computeWorkFeatures(w *Work) Features {
 	f := Features{}
 	for _, d := range w.Documents {
 		m, err := s.openDoc(d.UID)

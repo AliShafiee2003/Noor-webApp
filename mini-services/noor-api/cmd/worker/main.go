@@ -68,14 +68,24 @@ func claim(api string) map[string]any {
 	return nil
 }
 
-func progress(api, uid string, p int, note string) {
+// progress پیشرفت را ثبت و وضعیت فعلی کار را برمی‌گرداند (برای توقف همیارِ «cancelled»).
+// «cancelled» فقط زمانی برمی‌گردد که ادمین کار را لغو کرده باشد؛ worker باید پیش از
+// هر مرحلهٔ انتشار (bulk OpenSearch / جابه‌جایی نسل / publish) آن را ببیند و بدون
+// انتشار خارج شود — لغو دیگر بی‌اثر نیست.
+func progress(api, uid string, p int, note string) string {
 	b, _ := json.Marshal(map[string]any{"progress": p, "note": note})
 	req, _ := http.NewRequest("POST", api+"/api/v1/internal/jobs/"+uid+"/progress", bytes.NewReader(b))
 	req.Header.Set("X-Noor-Service", os.Getenv("NOOR_SERVICE_TOKEN"))
 	resp, err := http.DefaultClient.Do(req)
 	if err == nil {
+		var out struct {
+			Status string `json:"status"`
+		}
+		_ = json.NewDecoder(resp.Body).Decode(&out)
 		resp.Body.Close()
+		return out.Status
 	}
+	return ""
 }
 
 func complete(api, uid string, result map[string]any) {
@@ -162,6 +172,7 @@ func runIndexRebuildBody(cfg *config.Config, api, uid string, payload struct {
 	pos := 0
 	skipped := 0
 	parseErrDocs := 0
+	cancelled := false
 	next := func() (*index.DocInput, error) {
 		for {
 			if pos >= len(refs) {
@@ -170,7 +181,10 @@ func runIndexRebuildBody(cfg *config.Config, api, uid string, payload struct {
 			r := refs[pos]
 			pos++
 			if len(refs) > 0 {
-				progress(api, uid, (pos-1)*100/len(refs), "در حال نمایه‌سازی "+r.docUID)
+				if st := progress(api, uid, (pos-1)*100/len(refs), "در حال نمایه‌سازی "+r.docUID); st == "cancelled" {
+					cancelled = true // لغو ادمین: جریان ساخت بدون انتشار پایان می‌یابد
+					return nil, io.EOF
+				}
 			}
 			// ModelUncached (بدون LRU): مدل پس از نوشتنِ همین سند رها می‌شود (DB-01)
 			m, err := cat.ModelUncached(r.docUID)
@@ -196,12 +210,25 @@ func runIndexRebuildBody(cfg *config.Config, api, uid string, payload struct {
 		return err
 	}
 	idxDB.Close()
+	if cancelled {
+		// لغو در حین ساخت (ممیزی: لغو job بی‌اثر نباید بماند): نمایهٔ نیم‌ساخت حذف و
+		// بدون انتشار/انتشار-نسل خارج می‌شویم؛ وضعیت «cancelled» دست‌نخورده می‌ماند.
+		_ = os.Remove(tmp)
+		log.Println("index rebuild cancelled by admin; nothing published:", uid)
+		return nil
+	}
 	if skipped > 0 || parseErrDocs > 0 {
 		log.Printf("جمع‌بندی پوشش نسل: %d سند سالم، %d سند ردشده، %d سند ناقص (خطاها در ParseErrors سند ثبت شده است)", len(refs)-skipped, skipped, parseErrDocs)
 	}
 
 	// نمایه‌سازی OpenSearch (الف-۱): وقتی NOOR_ENGINE=opensearch است، سندها با bulk
 	// کنترل‌نرخ‌شده به OpenSearch نیز منتقل می‌شوند؛ شکست = شکست کار (نسل نیم‌بنا منتشر نمی‌شود).
+	// لغو پیش از مرحلهٔ سنگین bulk (ممیزی: لغو باید پیش از هر انتشار دیده شود)
+	if progress(api, uid, 35, "پیش از نمایه‌سازی OpenSearch") == "cancelled" {
+		_ = os.Remove(tmp)
+		log.Println("index rebuild cancelled by admin; nothing published:", uid)
+		return nil
+	}
 	if cfg.Engine == "opensearch" {
 		if err := bulkIndexOpenSearch(cfg, tmp, releaseUID, titles, func(p int, note string) { progress(api, uid, p, note) }); err != nil {
 			failJob("نمایه‌سازی OpenSearch ناموفق بود: " + err.Error())
@@ -209,6 +236,12 @@ func runIndexRebuildBody(cfg *config.Config, api, uid string, payload struct {
 		}
 	}
 
+	// لغو پیش از انتشار: هیچ نسل نیم‌کارِ لغوشده منتشر نمی‌شود
+	if progress(api, uid, 70, "پیش از انتشار نسل") == "cancelled" {
+		_ = os.Remove(tmp)
+		log.Println("index rebuild cancelled by admin; nothing published:", uid)
+		return nil
+	}
 	active, _ := indexFile(cfg.DataDir)
 	// جابه‌سازی اتمیک
 	if active != "" {
@@ -357,7 +390,8 @@ type osWorkerClient struct {
 }
 
 func newOSWorkerClient(cfg *config.Config) *osWorkerClient {
-	return &osWorkerClient{base: cfg.OpenSearchURL, user: cfg.OpenSearchUser, pass: cfg.OpenSearchPass, http: &http.Client{Timeout: 60 * time.Second}}
+	// DEP-01: همان TLS پیکربندی api (CA سفارشی/INSECURE صریح) — سازگار با compose مبتنی بر HTTPS
+	return &osWorkerClient{base: cfg.OpenSearchURL, user: cfg.OpenSearchUser, pass: cfg.OpenSearchPass, http: cfg.OSHTTPClient(60 * time.Second)}
 }
 
 func (c *osWorkerClient) do(ctx context.Context, method, path string, body []byte) ([]byte, int, error) {

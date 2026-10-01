@@ -405,11 +405,13 @@ func (s *Server) handleInternalProgress(w http.ResponseWriter, r *http.Request) 
 	if !decodeBody(w, r, &body) {
 		return
 	}
-	if err := s.Jobs.Heartbeat(chi.URLParam(r, "uid"), body.Progress, body.Note); err != nil {
+	uid := chi.URLParam(r, "uid")
+	if err := s.Jobs.Heartbeat(uid, body.Progress, body.Note); err != nil {
 		s.fail(w, r, 422, "invalid_query", "ثبت پیشرفت ممکن نشد.", false)
 		return
 	}
-	s.ok(w, map[string]any{"ok": true})
+	// وضعیت در پاسخ: worker لغو را همین‌جا می‌بیند و پیش از انتشار متوقف می‌شود (ممیزی: لغو job)
+	s.ok(w, map[string]any{"ok": true, "status": s.Jobs.StatusOf(uid)})
 }
 
 func (s *Server) handleInternalComplete(w http.ResponseWriter, r *http.Request) {

@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -240,6 +241,12 @@ func candidateCapFromEnv() int {
 type runState struct {
 	capped        bool
 	candSaturated bool
+	hitTruncated  bool // سقف مواضع در برخی قطعه‌ها فعال شد (۵۰ برای modeها، ۱۰ برای near)
+}
+
+// verifyStats آمار فرایند تطبیق؛ صادق‌گویی سقف‌های هر قطعه (ممیزی: سقف ۵۰ بی‌اعلام).
+type verifyStats struct {
+	truncatedPassages int
 }
 
 type Option func(*LocalEngine)
@@ -520,6 +527,11 @@ func (e *LocalEngine) buildResponse(sid, release string, req *Request, verified 
 	if st.capped {
 		rel = "lower_bound" // سقف فعال شد؛ شمارش‌ها حداقل واقعی‌اند
 		notices = append(notices, fmt.Sprintf("نتایج بیشتر از سقف جست‌وجو است؛ شمارش‌ها حداقل واقعی‌اند (سقف %s موضع).", faNum(e.maxResults)))
+	}
+	if st.hitTruncated {
+		// سقف مواضعِ هر قطعه فعال شد (ممیزی: سقف ۵۰/۱۰ بی‌اعلام نماند) — صادقانه lower_bound.
+		rel = "lower_bound"
+		notices = append(notices, "شمار مواضع در برخی قطعه‌ها از سقفِ مواضعِ هر قطعه گذشت و برش خورد؛ شمارش‌ها حداقل واقعی‌اند.")
 	}
 	if zeroToken {
 		notices = append(notices, "عبارت پس از نرمال‌سازی واژه‌ای نداشت؛ نتیجه‌ای وجود ندارد.")
@@ -830,6 +842,7 @@ func (e *LocalEngine) run(ctx context.Context, db *sql.DB, req *Request, release
 	var out []Result
 	seen := map[string]bool{}
 	rowN := 0
+	vs := &verifyStats{}
 	for rows.Next() {
 		rowN++
 		if ctx.Err() != nil {
@@ -848,7 +861,7 @@ func (e *LocalEngine) run(ctx context.Context, db *sql.DB, req *Request, release
 		if !citationAllows(req, &r) {
 			continue // استناد باید واقعاً در همین passage باشد، نه فقط در سند
 		}
-		hits, matchType := verifyInText(req, &r)
+		hits, matchType := verifyInText(req, &r, vs)
 		if req.Scope.Quran != nil && len([]rune(req.Query)) == 0 && len(hits) == 0 {
 			// جست‌وجوی صرفاً استنادی: خود passage با شاهد ابتدایی نمایش داده می‌شود
 			n1r := []rune(r.TextOriginal)
@@ -871,14 +884,14 @@ func (e *LocalEngine) run(ctx context.Context, db *sql.DB, req *Request, release
 			if len(out) >= cap {
 				// سقف کل نتایج فعال شد (ب-۵): جمع‌آوری متوقف؛ صادقانه lower_bound اعلام می‌شود.
 				e.statCands.Store(int64(rowN))
-				return out, runState{capped: true}, nil
+				return out, runState{capped: true, hitTruncated: vs.truncatedPassages > 0}, nil
 			}
 		}
 	}
 	e.statCands.Store(int64(rowN))
 	// SEARCH-01: رسیدن شمار کاندیدها به سقف زیرکوئری = احتمال برش خاموش؛
 	// پاسخ دیگر «کامل/دقیق» اعلام نمی‌شود (partial + lower_bound در buildResponse).
-	return out, runState{candSaturated: candLimited && rowN >= e.candCap}, nil
+	return out, runState{candSaturated: candLimited && rowN >= e.candCap, hitTruncated: vs.truncatedPassages > 0}, nil
 }
 
 // sampleTrigrams نمونهٔ پخش‌شده از سه‌گانه‌ها برای پرس‌وجوی پیش‌فیلتر —
@@ -889,8 +902,8 @@ func (e *LocalEngine) run(ctx context.Context, db *sql.DB, req *Request, release
 // قبلی است (مالک آن passage قبل است) و حذف می‌شود تا covering-hit و شمارش‌ها
 // duplicate نسازند. modeهای عبارتی tail را نگه می‌دارند (هدف: پوشش مرز) —
 // کلید مطلق dedupe تکرار واقعی را جمع می‌کند.
-func verifyInText(req *Request, r *candRow) ([]hit, string) {
-	hits, mt := verifyInTextRaw(req, r)
+func verifyInText(req *Request, r *candRow, vs *verifyStats) ([]hit, string) {
+	hits, mt := verifyInTextRaw(req, r, vs)
 	if r.OverlapRunes > 0 {
 		switch req.Mode {
 		case AllWords, AnyWords, Near, Linguistic:
@@ -939,7 +952,8 @@ type hit struct {
 }
 
 // verifyInTextRaw بدنهٔ تطبیق هر mode (بدون آگاهی از overlap).
-func verifyInTextRaw(req *Request, r *candRow) ([]hit, string) {
+// vs سقف‌های مواضعِ هر قطعه را می‌شمارد تا پاسخ صادقانه lower_bound اعلام شود.
+func verifyInTextRaw(req *Request, r *candRow, vs *verifyStats) ([]hit, string) {
 	orig := []rune(r.TextOriginal)
 	n1 := []rune(r.TextN1)
 	var n1Map []int
@@ -961,6 +975,7 @@ func verifyInTextRaw(req *Request, r *candRow) ([]hit, string) {
 			}
 			start = s + 1
 			if len(out) >= 50 {
+				vs.truncatedPassages++ // رسیدن به سقف مواضع قطعه — شمارش حداقل است (ممیزی)
 				break
 			}
 		}
@@ -994,8 +1009,12 @@ func verifyInTextRaw(req *Request, r *candRow) ([]hit, string) {
 			}
 			var out []hit
 			if req.Mode == Near && req.Near != nil && req.Near.Slop > 0 {
-				for _, rng := range nearCombination(positions, req.Near.Slop, req.Near.Ordered, len(n1)) {
+				wins, more := nearWindows(positions, req.Near.Slop, req.Near.Ordered, len(n1))
+				for _, rng := range wins {
 					out = append(out, mapN1Hit(rng, n1Map))
+				}
+				if more {
+					vs.truncatedPassages++ // پنجره‌های near بیش از سقف هر قطعه — شمارش حداقل است
 				}
 				return out, "normalized"
 			}
@@ -1030,6 +1049,7 @@ func verifyInTextRaw(req *Request, r *candRow) ([]hit, string) {
 			}
 			start = s + 1
 			if len(out) >= 50 {
+				vs.truncatedPassages++ // رسیدن به سقف مواضع قطعه — شمارش حداقل است (ممیزی)
 				break
 			}
 		}
@@ -1103,49 +1123,93 @@ func allPresent(ps [][]int) bool {
 	return true
 }
 
-func nearCombination(positions [][]int, slop int, ordered bool, textLen int) [][2]int {
-	var out [][2]int
+// nearWindows یافتن پنجره‌های near با الگوریتم کران‌دار — جایگزین شمارش دکارتیِ
+// موقعیت‌ها (ممیزی: near بی‌کران). معناشناسی حفظ شده: پنجرهٔ معتبر همهٔ واژه‌ها را
+// دارد و (بیشینه−کمینهٔ مواضع) ≤ slop*6 (slop×6 قرارداد مستند این سرویس است)؛
+// در ordered مواضع به‌ترتیب توکن‌ها نزول‌نپذیرند. خروجی حداکثر nearCap پنجره به‌همراه
+// پرچمِ «پنجرهٔ معتبر بیشتری از سقف وجود داشت» برای اعلام صادقانهٔ برش.
+// هزینه: ordered ‏O(|P0|·k·logN)‎ و unordered ‏O(N·k)‎ — دیگر تابع ضرب دکارتی نیست.
+func nearWindows(positions [][]int, slop int, ordered bool, textLen int) ([][2]int, bool) {
+	const nearCap = 10
 	if len(positions) == 0 || !allPresent(positions) {
-		return nil
+		return nil, false
 	}
-	idx := make([]int, len(positions))
-	for {
-		var lo, hi int
-		for i, p := range positions {
-			pos := p[idx[i]]
-			if i == 0 || pos < lo {
-				lo = pos
-			}
-			if i == 0 || pos > hi {
-				hi = pos
-			}
-		}
-		ok := (hi - lo) <= slop*6
-		if ok && ordered && len(positions) > 1 {
+	lim := slop * 6
+	out := make([][2]int, 0, nearCap)
+	endPad := len(positions[len(positions)-1])
+	if ordered && len(positions) > 1 {
+		// زنجیرهٔ حریصانه از هر رخداد واژهٔ نخست: نخستین موضعِ مجاز هر واژهٔ بعدی با
+		// جست‌وجوی دودویی — کم‌ترین پایان زنجیره تضمین می‌شود؛ پس اگر برای لنگرِ داده‌شده
+		// پنجرهٔ معتبری وجود داشته باشد همین الگوریتم آن را می‌یابد (کامل/sound).
+		for _, p0 := range positions[0] {
+			cur := p0
+			ok := true
 			for i := 1; i < len(positions); i++ {
-				if positions[i][idx[i]] < positions[i-1][idx[i-1]] {
+				j := sort.SearchInts(positions[i], cur)
+				if j >= len(positions[i]) {
+					ok = false
+					break
+				}
+				cur = positions[i][j]
+				if cur-p0 > lim {
 					ok = false
 					break
 				}
 			}
-		}
-		if ok {
-			out = append(out, [2]int{lo, clampInt(hi+len(positions[len(positions)-1]), 0, textLen)})
-		}
-		i := len(idx) - 1
-		for i >= 0 {
-			idx[i]++
-			if idx[i] < len(positions[i]) {
-				break
+			if ok {
+				if len(out) >= nearCap {
+					return out, true // پنجرهٔ معتبر بیشتری هم بود — صادقانه اعلام می‌شود
+				}
+				out = append(out, [2]int{p0, clampInt(cur+endPad, 0, textLen)})
 			}
-			idx[i] = 0
-			i--
 		}
-		if i < 0 || len(out) >= 10 {
-			break
+		return out, false
+	}
+	// unordered: پنجرهٔ لغزان روی رخدادهای ادغام‌شده — برای هر لنگر، کم‌ترین پنجرهٔ
+	// کامل‌کننده ثبت می‌شود؛ هر پنجرهٔ معتبرِ ممکن با لنگرِ کمینهٔ خود زیرمجموعهٔ
+	// همین فهرست است، پس هیچ تطبیقی از دست نمی‌رود.
+	type ev struct {
+		pos, tok int
+	}
+	var evs []ev
+	total := 0
+	for i, ps := range positions {
+		total += len(ps)
+		for _, p := range ps {
+			evs = append(evs, ev{p, i})
 		}
 	}
-	return out
+	sort.Slice(evs, func(a, b int) bool { return evs[a].pos < evs[b].pos })
+	count := make([]int, len(positions))
+	missing := len(positions)
+	hi := 0
+	for lo := 0; lo < len(evs); lo++ {
+		if lo > 0 {
+			count[evs[lo-1].tok]--
+			if count[evs[lo-1].tok] == 0 {
+				missing++
+			}
+		}
+		if missing > 0 {
+			for hi < total && missing > 0 {
+				count[evs[hi].tok]++
+				if count[evs[hi].tok] == 1 {
+					missing--
+				}
+				hi++
+			}
+			if missing > 0 {
+				break // هیچ پنجرهٔ کامل دیگری از این لنگر به بعد نیست
+			}
+		}
+		if evs[hi-1].pos-evs[lo].pos <= lim {
+			if len(out) >= nearCap {
+				return out, true
+			}
+			out = append(out, [2]int{evs[lo].pos, clampInt(evs[hi-1].pos+endPad, 0, textLen)})
+		}
+	}
+	return out, false
 }
 
 type roleRangeT struct {

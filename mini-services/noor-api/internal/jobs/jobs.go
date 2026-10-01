@@ -100,6 +100,15 @@ func (s *Service) Claim(worker string) (*Job, error) {
 	return s.Get(uid)
 }
 
+// StatusOf وضعیت فعلی کار؛ خالی اگر یافت نشود (مصرف: پاسخ progress داخلی).
+func (s *Service) StatusOf(uid string) string {
+	var st string
+	if err := s.db.QueryRow(`SELECT status FROM jobs WHERE uid=?`, uid).Scan(&st); err != nil {
+		return ""
+	}
+	return st
+}
+
 // Heartbeat تمدید lease.
 func (s *Service) Heartbeat(uid string, progress int, note string) error {
 	lease := time.Now().Add(10 * time.Minute).UTC().Format(time.RFC3339)
@@ -107,15 +116,15 @@ func (s *Service) Heartbeat(uid string, progress int, note string) error {
 	return err
 }
 
-// Complete پایان موفق.
+// Complete پایان موفق — هرگز کارِ لغوشده را «done» نمی‌کند (ممیزی: لغو بی‌اثر).
 func (s *Service) Complete(uid string, result json.RawMessage) error {
-	_, err := s.db.Exec(`UPDATE jobs SET status='done', progress=100, finished_at=datetime('now'), result=? WHERE uid=?`, string(result), uid)
+	_, err := s.db.Exec(`UPDATE jobs SET status='done', progress=100, finished_at=datetime('now'), result=? WHERE uid=? AND status IN ('queued','running')`, string(result), uid)
 	return err
 }
 
-// Fail شکست قابل بررسی (هرگز نیم‌کاره منتشر نمی‌شود).
+// Fail شکست قابل بررسی (هرگز نیم‌کاره منتشر نمی‌شود) — لغوشده هم لغوشده می‌ماند.
 func (s *Service) Fail(uid, errText string) error {
-	_, err := s.db.Exec(`UPDATE jobs SET status='failed', finished_at=datetime('now'), error=? WHERE uid=?`, errText, uid)
+	_, err := s.db.Exec(`UPDATE jobs SET status='failed', finished_at=datetime('now'), error=? WHERE uid=? AND status IN ('queued','running')`, errText, uid)
 	return err
 }
 
