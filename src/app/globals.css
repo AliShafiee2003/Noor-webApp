@@ -46,6 +46,9 @@
 
   --font-sans: var(--font-ui);
   --font-reader: var(--font-arabic);
+  /* قلم قرآنی (تگ‌های ayah) و قلم متون لاتین شناسایی‌شده */
+  --font-quranic: var(--font-quran);
+  --font-foreign: var(--font-latin);
 
   --color-sidebar: var(--surface);
   --color-sidebar-foreground: var(--text);
@@ -63,9 +66,16 @@
 }
 
 :root {
-  /* فونت‌های محلی */
-  --font-ui: "Vazirmatn", "Segoe UI", Tahoma, sans-serif;
-  --font-arabic: "Amiri", "Vazirmatn", serif;
+  /*
+   * قلم‌های محلی — چهار نقش (src/lib/fonts.ts):
+   * استک چنداسکریپتی: قلم لاتین انتخابیِ کاربر اول است تا در پاراگراف آمیختهٔ
+   * عربی/فارسی/لاتین، ران‌های لاتین با قلم لاتین و عربی/فارسی با قلم خودشان رندر شوند.
+   * (applyFontPrefs هنگام تغییر انتخاب کاربر همین متغیرها را بازنویسی می‌کند.)
+   */
+  --font-ui: "Vazirmatn", "Inter", "Segoe UI", Tahoma, sans-serif;
+  --font-arabic: "Source Serif 4", "Amiri", "Scheherazade New", "Vazirmatn", serif;
+  --font-quran: "Amiri Quran", "Scheherazade New", "Amiri", "Vazirmatn", serif;
+  --font-latin: "Source Serif 4", Georgia, "Times New Roman", serif;
 
   /* توکن‌های دقیق DESIGN.md — حالت روشن */
   --canvas: #f7f5ef;

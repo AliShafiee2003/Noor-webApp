@@ -24,6 +24,11 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Separator } from "@/components/ui/separator";
 import { Slider } from "@/components/ui/slider";
 import { useWorkspaceStore } from "@/store/workspace";
+import {
+  QURAN_FONT_OPTIONS,
+  QURAN_FONT_SIZE_DEFAULT,
+  QURAN_LINE_HEIGHT_DEFAULT,
+} from "@/lib/fonts";
 import type { ReaderDisplay, ReaderTextWidth } from "@/lib/types";
 
 const WIDTH_LABELS: Record<ReaderTextWidth, string> = {
@@ -191,16 +196,23 @@ export function SettingsPopover({
           />
         </div>
 
-        {/* فونت */}
+        {/* فونت نثر عربی */}
         <div className="space-y-2">
-          <Label>قلم متن</Label>
+          <Label>قلم نثر عربی</Label>
           <div className="flex gap-2">
             <SegButton
               label="قلم امیری"
-              pressed={prefs.font_family !== "vazirmatn"}
+              pressed={(prefs.font_family ?? "amiri") === "amiri"}
               onClick={() => updatePrefs({ font_family: "amiri" })}
             >
-              <span style={{ fontFamily: "var(--font-arabic)" }}>امیری</span>
+              <span style={{ fontFamily: '"Amiri", serif' }}>امیری</span>
+            </SegButton>
+            <SegButton
+              label="قلم شهرزاد جدید"
+              pressed={prefs.font_family === "scheherazade"}
+              onClick={() => updatePrefs({ font_family: "scheherazade" })}
+            >
+              <span style={{ fontFamily: '"Scheherazade New", serif' }}>شهرزاد</span>
             </SegButton>
             <SegButton
               label="قلم وزیرمتن"
@@ -210,6 +222,72 @@ export function SettingsPopover({
               <span style={{ fontFamily: "var(--font-ui)" }}>وزیرمتن</span>
             </SegButton>
           </div>
+        </div>
+
+        {/* قلم قرآنی + اندازهٔ متن قرآنی — تخصیص بر اساس نقش تگ آیه */}
+        <div className="space-y-2">
+          <Label>قلم متن قرآنی</Label>
+          <div className="flex gap-2">
+            {QURAN_FONT_OPTIONS.map((o) => (
+              <SegButton
+                key={o.id}
+                label={`قلم قرآنی ${o.label}`}
+                pressed={(prefs.font_quran ?? "amiri-quran") === o.id}
+                onClick={() => updatePrefs({ font_quran: o.id })}
+              >
+                <span
+                  style={{
+                    fontFamily:
+                      o.id === "amiri-quran"
+                        ? '"Amiri Quran", "Amiri", serif'
+                        : '"Scheherazade New", serif',
+                  }}
+                >
+                  {o.label}
+                </span>
+              </SegButton>
+            ))}
+          </div>
+          <div className="flex items-center justify-between pt-1">
+            <Label htmlFor="reader-quran-size" className="text-xs text-muted-foreground">
+              اندازهٔ متن قرآنی
+            </Label>
+            <span className="text-xs tabular-nums text-muted-foreground" dir="ltr">
+              {prefs.quran_font_size ?? QURAN_FONT_SIZE_DEFAULT}px
+            </span>
+          </div>
+          <Slider
+            id="reader-quran-size"
+            value={[prefs.quran_font_size ?? QURAN_FONT_SIZE_DEFAULT]}
+            min={18}
+            max={34}
+            step={1}
+            aria-label="اندازهٔ متن قرآنی"
+            onValueChange={(v) => {
+              const size = v[0];
+              if (typeof size === "number") updatePrefs({ quran_font_size: size });
+            }}
+          />
+          <div className="flex items-center justify-between">
+            <Label htmlFor="reader-quran-lh" className="text-xs text-muted-foreground">
+              فاصلهٔ سطر قرآنی
+            </Label>
+            <span className="text-xs tabular-nums text-muted-foreground" dir="ltr">
+              {(prefs.quran_line_height ?? QURAN_LINE_HEIGHT_DEFAULT).toFixed(1)}
+            </span>
+          </div>
+          <Slider
+            id="reader-quran-lh"
+            value={[prefs.quran_line_height ?? QURAN_LINE_HEIGHT_DEFAULT]}
+            min={1.6}
+            max={2.8}
+            step={0.1}
+            aria-label="فاصلهٔ سطر متن قرآنی"
+            onValueChange={(v) => {
+              const lh = v[0];
+              if (typeof lh === "number") updatePrefs({ quran_line_height: lh });
+            }}
+          />
         </div>
 
         {/* عرض متن */}

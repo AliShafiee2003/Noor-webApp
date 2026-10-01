@@ -13,6 +13,11 @@ import { Bookmark, Landmark, Quote, ScrollText, UserRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { faNum } from "@/lib/format";
+import { isLatinBlock } from "@/lib/script";
+import {
+  QURAN_FONT_SIZE_DEFAULT,
+  QURAN_LINE_HEIGHT_DEFAULT,
+} from "@/lib/fonts";
 import type {
   BlockLink,
   BlockSpan,
@@ -74,10 +79,51 @@ function blockIsPersian(block: PageBlock): boolean {
   return block.type === "b_note" || block.type === "sharh";
 }
 
-function fontFamilyFor(prefs: ReaderPrefs): string {
-  return prefs.font_family === "vazirmatn"
-    ? "var(--font-ui)"
-    : "var(--font-arabic)";
+/*
+ * قلم بلوک بر اساس نقش، نه حدس زبان (سامانهٔ قلم — docs/fonts/README.md):
+ * - ayah_quote → قلم قرآنی + اندازه/فاصلهٔ قرآنی (پیش‌فرض ۲۴px / ۲٫۰)
+ * - بلوک لاتین شناسایی‌شده (isLatinBlock) → dir=ltr + قلم لاتین
+ * - بیان مؤلف/شرح (فارسی) → قلم UI (وزیرمتن)
+ * - بقیهٔ نثر عربی → قلم نثر انتخابی کاربر (--font-arabic؛ ران‌های لاتین داخلش
+ *   خودکار با قلم لاتین رندر می‌شوند — استک چنداسکریپتی)
+ */
+interface BlockTextStyle {
+  fontFamily: string;
+  fontSize: string;
+  lineHeight: number;
+  lang: "ar" | "fa" | "en";
+  dir: "rtl" | "ltr";
+}
+
+function blockTextStyle(block: PageBlock, prefs: ReaderPrefs): BlockTextStyle {
+  const quranSize = prefs.quran_font_size ?? QURAN_FONT_SIZE_DEFAULT;
+  const quranLh = prefs.quran_line_height ?? QURAN_LINE_HEIGHT_DEFAULT;
+  if (block.type === "ayah_quote") {
+    return {
+      fontFamily: "var(--font-quran)",
+      fontSize: `${quranSize}px`,
+      lineHeight: quranLh,
+      lang: "ar",
+      dir: "rtl",
+    };
+  }
+  if (isLatinBlock(block.text)) {
+    return {
+      fontFamily: "var(--font-latin)",
+      fontSize: `${prefs.font_size}px`,
+      lineHeight: prefs.line_height,
+      lang: "en",
+      dir: "ltr",
+    };
+  }
+  const persian = blockIsPersian(block);
+  return {
+    fontFamily: persian ? "var(--font-ui)" : "var(--font-arabic)",
+    fontSize: `${prefs.font_size}px`,
+    lineHeight: prefs.line_height,
+    lang: persian ? "fa" : "ar",
+    dir: "rtl",
+  };
 }
 
 function citationAddress(block: PageBlock): string | null {
@@ -329,12 +375,27 @@ function BlockText({
               </span>
             );
           case "ayah_text":
+            // نقش تگ آیه → قلم قرآنی (مستقل از زبان کتاب)
             return (
               <span
                 key={i}
                 data-cp-start={seg.start}
                 data-cp-end={seg.end}
                 className="rounded bg-ayah-soft px-0.5"
+                style={{ fontFamily: "var(--font-quran)" }}
+              >
+                {text}
+              </span>
+            );
+          case "ayahWord":
+            // کلمهٔ آیه → قلم قرآنی
+            return (
+              <span
+                key={i}
+                data-cp-start={seg.start}
+                data-cp-end={seg.end}
+                className="rounded bg-ayah-soft/70 px-0.5"
+                style={{ fontFamily: "var(--font-quran)" }}
               >
                 {text}
               </span>
@@ -492,11 +553,11 @@ function BlockView({
   onHadithClick,
   semantic,
 }: BlockViewProps) {
-  const isPersian = blockIsPersian(block);
+  const ts = blockTextStyle(block, prefs);
   const style: React.CSSProperties = {
-    fontSize: `${prefs.font_size}px`,
-    lineHeight: prefs.line_height,
-    fontFamily: isPersian ? "var(--font-ui)" : fontFamilyFor(prefs),
+    fontSize: ts.fontSize,
+    lineHeight: ts.lineHeight,
+    fontFamily: ts.fontFamily,
   };
   const text = (
     <BlockText
@@ -515,9 +576,9 @@ function BlockView({
       return (
         <h3
           className="mt-6 mb-2 border-b border-border/70 pb-1.5 text-xl font-bold text-foreground first:mt-0"
-          lang={isPersian ? "fa" : "ar"}
-          dir="rtl"
-          style={{ fontFamily: isPersian ? "var(--font-ui)" : fontFamilyFor(prefs) }}
+          lang={ts.lang}
+          dir={ts.dir}
+          style={{ fontFamily: ts.fontFamily }}
         >
           {text}
         </h3>
@@ -605,7 +666,7 @@ function BlockView({
     case "unknown":
       // تگ ناشناخته: فقط متن، بدون هیچ تفسیر و نقش‌دهی (§۱۹)
       return (
-        <p lang="ar" dir="rtl" style={style}>
+        <p lang={ts.lang} dir={ts.dir} style={style}>
           {block.text}
         </p>
       );
@@ -614,7 +675,7 @@ function BlockView({
       const cit = block.citations?.[0];
       if (cit) {
         return (
-          <p lang={isPersian ? "fa" : "ar"} dir="rtl" style={style}>
+          <p lang={ts.lang} dir={ts.dir} style={style}>
             {text}{" "}
             <button
               type="button"
@@ -630,7 +691,7 @@ function BlockView({
         );
       }
       return (
-        <p lang={isPersian ? "fa" : "ar"} dir="rtl" style={style}>
+        <p lang={ts.lang} dir={ts.dir} style={style}>
           {text}
         </p>
       );

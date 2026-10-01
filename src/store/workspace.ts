@@ -11,6 +11,10 @@ import type { ReaderPrefs, WorkspaceState } from "@/lib/types";
 export const defaultReaderPrefs: ReaderPrefs = {
   font_size: 22,
   font_family: "amiri",
+  font_quran: "amiri-quran",
+  font_latin: "source-serif",
+  quran_font_size: 24,
+  quran_line_height: 2.0,
   line_height: 1.9,
   display: "paged",
 };

@@ -485,9 +485,13 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
         onToggleBookmark={() => void toggleBookmark()}
         onCopyAddress={() => void copyAddress()}
         settingsTrigger={
-          <Button variant="ghost" size="icon" aria-label="تنظیمات خواندن" className="size-11">
-            <SlidersHorizontal className="size-4" />
-          </Button>
+          <SettingsPopover
+            trigger={
+              <Button variant="ghost" size="icon" aria-label="تنظیمات خواندن" className="size-11">
+                <SlidersHorizontal className="size-4" />
+              </Button>
+            }
+          />
         }
         highlightActive={!!hl}
         onClearHighlight={() => {

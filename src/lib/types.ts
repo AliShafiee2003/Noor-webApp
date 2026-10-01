@@ -180,6 +180,7 @@ export type SpanRole =
   | "K"
   | "maasoom"
   | "ayah_text"
+  | /** واژهٔ آیه (QUR-05 — قرارداد بازهٔ واژگان حفظ شده) */ "ayahWord"
   | "B"
   | "sharh"
   | "lfootnote_ref"
@@ -603,8 +604,16 @@ export type ReaderTextWidth = "narrow" | "medium" | "wide";
 export interface ReaderPrefs {
   /** اندازهٔ قلم متن مطالعه (px) — بازهٔ ۱۶ تا ۳۲ */
   font_size: number;
-  /** "amiri" | "vazirmatn" */
+  /** قلم نثر عربی: "amiri" | "scheherazade" | "vazirmatn" (src/lib/fonts.ts) */
   font_family: string;
+  /** قلم متن قرآنی (تگ ayah): "amiri-quran" | "scheherazade-new" — پیش‌فرض amiri-quran */
+  font_quran?: string;
+  /** قلم متون لاتین شناسایی‌شده: "source-serif" | "inter" — پیش‌فرض source-serif */
+  font_latin?: string;
+  /** اندازهٔ متن قرآنی (px) — پیش‌فرض ۲۴ */
+  quran_font_size?: number;
+  /** فاصلهٔ سطر متن قرآنی — پیش‌فرض ۲٫۰ */
+  quran_line_height?: number;
   /** فاصلهٔ سطرها — بازهٔ ۱.۴ تا ۲.۴ */
   line_height: number;
   display: ReaderDisplay;

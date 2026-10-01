@@ -4,7 +4,7 @@
  * اسکلت کل اپ — میزکار پژوهشی نور
  * - status=loading → اسکلت تمام‌صفحه
  * - مهمان → فقط صفحهٔ ورود/دعوت رندر می‌شود
- * - کاربر → نوار بالا + ناوبری + main (موبایل: نوار پایین)
+ * - کاربر → نوار بالا + ناوبری (دسکتاپ) / منوی همبرگری راست‌بازشو (موبایل)
  */
 import { useEffect, useState } from "react";
 import {
@@ -14,6 +14,7 @@ import {
   Home,
   Library,
   LogOut,
+  Menu,
   Search,
   Settings,
   ShieldCheck,
@@ -29,9 +30,17 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
 import { HashLink, setPendingDestination, useRoute, type RouteInfo } from "@/lib/hash-router";
-import { ShortcutsHelp } from "@/components/shortcuts";
 import { roleLabels } from "@/lib/labels";
 import { useAuthStore } from "@/store/auth";
 import { useWorkspaceStore } from "@/store/workspace";
@@ -220,7 +229,7 @@ function UserMenu() {
   );
 }
 
-function TopBar() {
+function TopBar({ navItems }: { navItems: NavItem[] }) {
   return (
     <header className="sticky top-0 z-40 border-b border-border bg-surface/95 backdrop-blur supports-[backdrop-filter]:bg-surface/85">
       <div className="mx-auto flex h-14 w-full max-w-6xl items-center gap-3 px-4">
@@ -235,9 +244,9 @@ function TopBar() {
           </span>
         </HashLink>
         <div className="flex-1" />
-        <ShortcutsHelp />
         <QuickSearch />
         <UserMenu />
+        <MobileNavMenu items={navItems} />
       </div>
     </header>
   );
@@ -246,7 +255,10 @@ function TopBar() {
 function NavLinks({ items }: { items: NavItem[] }) {
   const { route } = useRoute();
   return (
-    <nav aria-label="ناوبری اصلی" className="border-b border-border bg-surface">
+    <nav
+      aria-label="ناوبری اصلی"
+      className="hidden border-b border-border bg-surface md:block"
+    >
       <ul className="mx-auto flex w-full max-w-6xl items-center gap-1 overflow-x-auto px-4 py-1">
         {items.map((item) => {
           const active = item.match(route.path);
@@ -272,33 +284,119 @@ function NavLinks({ items }: { items: NavItem[] }) {
   );
 }
 
-function BottomTabs({ items }: { items: NavItem[] }) {
+/* ---------- منوی همبرگری موبایل — از راست باز می‌شود ---------- */
+
+function MobileNavMenu({ items }: { items: NavItem[] }) {
+  const [open, setOpen] = useState(false);
   const { route } = useRoute();
+  const user = useAuthStore((s) => s.user);
+  const logout = useAuthStore((s) => s.logout);
+  const { navigate } = useRoute();
+
+  const close = () => setOpen(false);
+  const handleLogout = () => {
+    close();
+    void logout().then(() => navigate("/login", undefined, { replace: true }));
+  };
+
   return (
-    <nav
-      aria-label="ناوبری پایین"
-      className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-surface pb-[env(safe-area-inset-bottom)] md:hidden"
-    >
-      <ul className="grid grid-cols-5">
-        {items.map((item) => {
-          const active = item.match(route.path);
-          return (
-            <li key={item.path}>
-              <HashLink
-                to={item.path}
-                aria-current={active ? "page" : undefined}
-                className={`flex h-14 flex-col items-center justify-center gap-1 text-[11px] font-medium ${
-                  active ? "text-primary" : "text-muted-foreground"
-                }`}
+    <Sheet open={open} onOpenChange={setOpen}>
+      <SheetTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="md:hidden"
+          aria-label="بازکردن منوی ناوبری"
+          aria-expanded={open}
+        >
+          <Menu className="size-5" aria-hidden="true" />
+        </Button>
+      </SheetTrigger>
+      <SheetContent
+        side="right"
+        dir="rtl"
+        className="flex w-80 max-w-[86vw] flex-col gap-0 p-0"
+      >
+        <SheetHeader className="border-b border-border px-5 pb-4 pt-5 text-start">
+          <SheetTitle className="flex items-center gap-2 text-base">
+            <BookOpenText className="size-5 text-primary" aria-hidden="true" />
+            میزکار پژوهشی نور
+          </SheetTitle>
+          <SheetDescription className="text-xs">
+            منوی ناوبری اصلی — برای رفتن به بخش‌ها انتخاب کنید.
+          </SheetDescription>
+        </SheetHeader>
+
+        <nav aria-label="ناوبری منوی موبایل" className="flex-1 overflow-y-auto px-3 py-3">
+          <ul className="space-y-1">
+            {items.map((item) => {
+              const active = item.match(route.path);
+              return (
+                <li key={item.path}>
+                  <HashLink
+                    to={item.path}
+                    onClick={close}
+                    aria-current={active ? "page" : undefined}
+                    className={`flex min-h-11 items-center gap-3 rounded-lg px-3 text-sm font-medium transition-colors ${
+                      active
+                        ? "bg-primary/10 text-primary"
+                        : "text-foreground hover:bg-accent"
+                    }`}
+                  >
+                    <item.icon className="size-4 shrink-0" aria-hidden="true" />
+                    {item.label}
+                    {active ? (
+                      <span className="ms-auto size-1.5 rounded-full bg-primary" aria-hidden="true" />
+                    ) : null}
+                  </HashLink>
+                </li>
+              );
+            })}
+          </ul>
+        </nav>
+
+        {user ? (
+          <div className="border-t border-border px-5 py-4 pb-[calc(1rem+env(safe-area-inset-bottom))]">
+            <div className="flex items-center gap-3">
+              <span
+                className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground"
+                aria-hidden="true"
               >
-                <item.icon className="size-5" aria-hidden="true" />
-                {item.label}
-              </HashLink>
-            </li>
-          );
-        })}
-      </ul>
-    </nav>
+                {user.display_name.trim().charAt(0) || "؟"}
+              </span>
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium">{user.display_name}</p>
+                <p className="text-xs text-muted-foreground">
+                  {roleLabels[user.role] ?? user.role}
+                </p>
+              </div>
+            </div>
+            <Separator className="my-3" />
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                className="min-h-11 flex-1 gap-2"
+                onClick={() => {
+                  close();
+                  navigate("/settings");
+                }}
+              >
+                <Settings className="size-4" aria-hidden="true" />
+                تنظیمات
+              </Button>
+              <Button
+                variant="outline"
+                className="min-h-11 gap-2 text-destructive hover:text-destructive"
+                onClick={handleLogout}
+              >
+                <LogOut className="size-4" aria-hidden="true" />
+                خروج
+              </Button>
+            </div>
+          </div>
+        ) : null}
+      </SheetContent>
+    </Sheet>
   );
 }
 
@@ -373,19 +471,19 @@ export function AppShell() {
 
   return (
     <div className="flex min-h-screen flex-col bg-background">
-      <TopBar />
+      <TopBar navItems={navItems} />
       <NavLinks items={navItems} />
-      <main className="flex-1 pb-20 md:pb-8">
+      <main className="flex-1 pb-8">
         <CurrentView route={route} />
       </main>
-      {/* فوتر ریز — فقط در دسکتاپ؛ در موبایل نوار پایین جای آن را می‌گیرد.
-          با mt-auto در صفحات کوتاه به ته صفحه می‌چسبد. */}
-      <footer className="mt-auto hidden border-t border-border bg-surface py-3 md:block">
+      {/* فوتر چسبان — با mt-auto در صفحات کوتاه به ته صفحه می‌چسبد؛ در موبایل هم نمایان */}
+      <footer
+        className="mt-auto border-t border-border bg-surface py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]"
+      >
         <p className="mx-auto w-full max-w-6xl px-4 text-center text-xs text-muted-foreground">
           میزکار پژوهشی نور · ابزار مطالعه و پژوهش در منابع — محتوای نمایشی
         </p>
       </footer>
-      <BottomTabs items={NAV_ITEMS} />
     </div>
   );
 }

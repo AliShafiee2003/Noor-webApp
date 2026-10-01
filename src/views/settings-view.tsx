@@ -32,6 +32,13 @@ import { Slider } from "@/components/ui/slider";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ErrorState } from "@/components/feedback";
 import { api, errorMessage } from "@/lib/api";
+import {
+  LATIN_FONT_OPTIONS,
+  PROSE_FONT_OPTIONS,
+  QURAN_FONT_OPTIONS,
+  QURAN_FONT_SIZE_DEFAULT,
+  QURAN_LINE_HEIGHT_DEFAULT,
+} from "@/lib/fonts";
 import { useRoute } from "@/lib/hash-router";
 import { faDateTime } from "@/lib/format";
 import type { SessionInfo } from "@/lib/types";
@@ -77,14 +84,8 @@ function ReadingTab() {
   const prefs = useWorkspaceStore((s) => s.prefs);
   const updatePrefs = useWorkspaceStore((s) => s.updatePrefs);
 
-  const previewStyle: React.CSSProperties = {
-    fontSize: `${prefs.font_size}px`,
-    lineHeight: prefs.line_height,
-    fontFamily:
-      prefs.font_family === "vazirmatn"
-        ? "var(--font-ui)"
-        : "var(--font-arabic)",
-  };
+  const quranSize = prefs.quran_font_size ?? QURAN_FONT_SIZE_DEFAULT;
+  const quranLh = prefs.quran_line_height ?? QURAN_LINE_HEIGHT_DEFAULT;
 
   return (
     <div className="space-y-4">
@@ -139,19 +140,116 @@ function ReadingTab() {
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="pref-font-family">قلم متن مطالعه</Label>
+            <Label htmlFor="pref-font-prose">قلم نثر عربی (متن و پاورقی)</Label>
             <Select
               value={prefs.font_family}
               onValueChange={(v) => updatePrefs({ font_family: v })}
             >
-              <SelectTrigger id="pref-font-family" className="min-h-11 w-56">
+              <SelectTrigger id="pref-font-prose" className="min-h-11 w-56">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="amiri">امیری (متن عربی)</SelectItem>
-                <SelectItem value="vazirmatn">وزیرمتن</SelectItem>
+                {PROSE_FONT_OPTIONS.map((o) => (
+                  <SelectItem key={o.id} value={o.id}>
+                    {o.label}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
+            <p className="text-xs text-muted-foreground">
+              {PROSE_FONT_OPTIONS.find((o) => o.id === prefs.font_family)?.note ??
+                "نسخ کلاسیک، مناسب اعراب‌گذاری متن حدیث"}
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="pref-font-quran">قلم متن قرآنی (تگ‌های آیه)</Label>
+            <Select
+              value={prefs.font_quran ?? "amiri-quran"}
+              onValueChange={(v) => updatePrefs({ font_quran: v })}
+            >
+              <SelectTrigger id="pref-font-quran" className="min-h-11 w-56">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {QURAN_FONT_OPTIONS.map((o) => (
+                  <SelectItem key={o.id} value={o.id}>
+                    {o.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              {
+                QURAN_FONT_OPTIONS.find((o) => o.id === (prefs.font_quran ?? "amiri-quran"))
+                  ?.note
+              }
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="pref-font-latin">قلم متون انگلیسی/لاتین</Label>
+            <Select
+              value={prefs.font_latin ?? "source-serif"}
+              onValueChange={(v) => updatePrefs({ font_latin: v })}
+            >
+              <SelectTrigger id="pref-font-latin" className="min-h-11 w-56">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {LATIN_FONT_OPTIONS.map((o) => (
+                  <SelectItem key={o.id} value={o.id}>
+                    {o.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              بلوک‌های انگلیسی به‌طور خودکار شناسایی و با همین قلم چپ‌به‌راست نمایش داده می‌شوند؛
+              در متن آمیختهٔ عربی/لاتین نیز ران‌های لاتین با همین قلم می‌آیند.
+            </p>
+          </div>
+
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <Label htmlFor="pref-quran-size">اندازهٔ متن قرآنی</Label>
+              <span className="text-sm tabular-nums text-muted-foreground" dir="ltr">
+                {quranSize}px
+              </span>
+            </div>
+            <Slider
+              id="pref-quran-size"
+              value={[quranSize]}
+              min={18}
+              max={34}
+              step={1}
+              aria-label="اندازهٔ متن قرآنی"
+              onValueChange={(v) => {
+                const size = v[0];
+                if (typeof size === "number") updatePrefs({ quran_font_size: size });
+              }}
+            />
+          </div>
+
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <Label htmlFor="pref-quran-lh">فاصلهٔ سطر متن قرآنی</Label>
+              <span className="text-sm tabular-nums text-muted-foreground" dir="ltr">
+                {quranLh.toFixed(1)}
+              </span>
+            </div>
+            <Slider
+              id="pref-quran-lh"
+              value={[quranLh]}
+              min={1.6}
+              max={2.8}
+              step={0.1}
+              aria-label="فاصلهٔ سطر متن قرآنی"
+              onValueChange={(v) => {
+                const lh = v[0];
+                if (typeof lh === "number") updatePrefs({ quran_line_height: lh });
+              }}
+            />
           </div>
 
           <div className="space-y-2">
@@ -176,18 +274,51 @@ function ReadingTab() {
             </RadioGroup>
           </div>
 
-          <div className="rounded-xl border border-border bg-reader p-5">
+          <div className="space-y-3 rounded-xl border border-border bg-reader p-5">
             <p
               lang="ar"
               dir="rtl"
-              style={previewStyle}
+              style={{
+                fontSize: `${prefs.font_size}px`,
+                lineHeight: prefs.line_height,
+                fontFamily: "var(--font-arabic)",
+              }}
               className="text-foreground"
             >
               إنّما الْعِلْمُ نُورٌ يَهْدِي بِهِ اللَّهُ مَنْ يَشَاءُ؛ وَالْعِلْمُ
               مِفْتَاحُ الْفَهْمِ.
             </p>
-            <p className="mt-2 text-xs text-muted-foreground">
-              پیش‌نمایش متن مطالعه
+            <p className="text-xs text-muted-foreground">
+              پیش‌نمایش نثر عربی — قلم: {PROSE_FONT_OPTIONS.find((o) => o.id === prefs.font_family)?.label ?? "امیری"}
+            </p>
+            <Separator />
+            <blockquote
+              lang="ar"
+              dir="rtl"
+              style={{
+                fontSize: `${quranSize}px`,
+                lineHeight: quranLh,
+                fontFamily: "var(--font-quran)",
+              }}
+              className="text-foreground"
+            >
+              إِنَّمَا يَعْمُرُ مَسَاجِدَ اللّهِ مَنْ آمَنَ بِاللّهِ وَالْيَوْمِ الآخِرِ
+              وَأَقَامَ الصَّلاةَ وَآتَى الزَّكَاةَ وَلَمْ يَخْشَ إِلاَّ اللّهَ
+            </blockquote>
+            <p className="text-xs text-muted-foreground">
+              پیش‌نمایش متن قرآنی — قلم: {QURAN_FONT_OPTIONS.find((o) => o.id === (prefs.font_quran ?? "amiri-quran"))?.label ?? "امیری قرآن"} · {quranSize}px / {quranLh.toFixed(1)}
+            </p>
+            <Separator />
+            <p
+              lang="en"
+              dir="ltr"
+              style={{ fontFamily: "var(--font-latin)" }}
+              className="text-start text-[15px] leading-7 text-foreground"
+            >
+              Knowledge is a light through which Allah guides whom He wills.
+            </p>
+            <p className="text-xs text-muted-foreground">
+              پیش‌نمایش متن لاتین — قلم: {LATIN_FONT_OPTIONS.find((o) => o.id === (prefs.font_latin ?? "source-serif"))?.label ?? "Source Serif"}
             </p>
           </div>
 
@@ -257,10 +388,30 @@ function SessionsTab() {
   const logout = useAuthStore((s) => s.logout);
   const { navigate } = useRoute();
 
-  const sessionsQuery = useQuery<SessionInfo[]>({
+  const sessionsQuery = useQuery({
     queryKey: ["auth-sessions"],
-    queryFn: () => api.get<SessionInfo[]>("/auth/sessions"),
+    queryFn: async (): Promise<SessionInfo[]> => {
+      const raw = await api.get<unknown>("/auth/sessions");
+      /* API فهرست را داخل {items:[…]} می‌پیچد؛ هر دو شکل (آرایه/پوشش) پذیرفته می‌شود */
+      if (Array.isArray(raw)) return raw as SessionInfo[];
+      if (raw && typeof raw === "object") {
+        const items = (raw as { items?: unknown }).items;
+        if (Array.isArray(items)) return items as SessionInfo[];
+      }
+      return [];
+    },
   });
+
+  const sessions = Array.isArray(sessionsQuery.data) ? sessionsQuery.data : [];
+  /* بک‌اند فعلاً پرچم current نمی‌فرستد (بازسازی Go در سندباکس ممکن نیست):
+     آخرین نشست از نظر last_seen به‌عنوان نشست فعلی نشان داده می‌شود — تا زمانی که
+     بک‌اند بر اساس کوکی نشست، current را علامت بزند. */
+  const newestLastSeen = sessions.reduce<string | null>(
+    (acc, s) => (!acc || (s.last_seen ?? "") > acc ? (s.last_seen ?? "") : acc),
+    null,
+  );
+  const isCurrentSession = (s: SessionInfo): boolean =>
+    s.current === true || (!!s.last_seen && s.last_seen === newestLastSeen);
 
   const revokeMutation = useMutation({
     mutationFn: (uid: string) => api.del(`/auth/sessions/${encodeURIComponent(uid)}`),
@@ -295,20 +446,20 @@ function SessionsTab() {
               message={errorMessage(sessionsQuery.error, "بارگیری نشست‌ها ناموفق بود.")}
               onRetry={() => void sessionsQuery.refetch()}
             />
-          ) : (sessionsQuery.data ?? []).length === 0 ? (
+          ) : sessions.length === 0 ? (
             <p className="py-4 text-center text-sm text-muted-foreground">
               نشستی یافت نشد.
             </p>
           ) : (
             <ul className="max-h-96 divide-y divide-border overflow-y-auto">
-              {(sessionsQuery.data ?? []).map((session) => (
+              {sessions.map((session) => (
                 <li key={session.uid} className="flex items-start justify-between gap-3 py-3">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-sm font-medium">
-                        {session.current ? "این دستگاه" : "دستگاه دیگر"}
+                        {isCurrentSession(session) ? "این دستگاه" : "دستگاه دیگر"}
                       </span>
-                      {session.current ? (
+                      {isCurrentSession(session) ? (
                         <Badge variant="secondary" className="font-normal">
                           نشست فعلی
                         </Badge>
@@ -327,7 +478,7 @@ function SessionsTab() {
                       آخرین فعالیت: {faDateTime(session.last_seen)}
                     </p>
                   </div>
-                  {!session.current ? (
+                  {!isCurrentSession(session) ? (
                     <Button
                       variant="outline"
                       size="sm"
