@@ -164,6 +164,18 @@ type ClipInput struct {
 	Source        ClipSource `json:"source"`
 }
 
+/*
+normTags قرارداد «tags همیشه آرایه» را تضمین می‌کند: ردیف‌های قدیمی با
+tags='null' (خروجی json.Marshal روی اسلایس nil) و ورودیِ کلاینت بدون tags
+نباید در پاسخ به null سری شوند — قرارداد API tags: string[] است و فرانت
+روی null می‌شکند («c.tags is not iterable»).
+*/
+func normTags(t *[]string) {
+	if *t == nil {
+		*t = []string{}
+	}
+}
+
 // CreateClip داخل transaction: اول مالکیت project، بعد فیش (§۳۹).
 func (s *Service) CreateClip(owner string, in *ClipInput) (*Clip, error) {
 	if in.QuoteOriginal == "" {
@@ -182,6 +194,7 @@ func (s *Service) CreateClip(owner string, in *ClipInput) (*Clip, error) {
 		return nil, ErrNotFound
 	}
 	uid := uidOf("clip")
+	normTags(&in.Tags) /* ردیف 'null' در DB ذخیره نشود */
 	tags, _ := json.Marshal(in.Tags)
 	if _, err := tx.Exec(`INSERT INTO clips(uid, owner_user_id, project_uid, kind, quote_original, quote_as_read, prefix_context, suffix_context, note, tags,
                 work_uid, document_uid, page_uid, page_label, section_uid, source_offsets_start, source_offsets_end, offset_unit,
@@ -214,6 +227,7 @@ func (s *Service) GetClip(owner, uid string) (*Clip, error) {
 	}
 	c.Source = src
 	_ = json.Unmarshal([]byte(tags), &c.Tags)
+	normTags(&c.Tags) /* ردیف قدیمی با 'null' همیشه به [] برگردد */
 	return &c, nil
 }
 
@@ -257,6 +271,7 @@ func (s *Service) ListClips(owner, projectUID, state, q, tag string) ([]Clip, er
 		}
 		c.Source = src
 		_ = json.Unmarshal([]byte(tags), &c.Tags)
+		normTags(&c.Tags)
 		out = append(out, c)
 	}
 	/* §۳۹: پایان اسکن هم باید صریح کنترل شود — خطای اسکن خاموش نمی‌ماند */
@@ -312,6 +327,7 @@ func (s *Service) ListHadithClips(owner, documentUID, localHadithUID string) ([]
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(tags), &h.Tags)
+		normTags(&h.Tags)
 		out = append(out, h)
 	}
 	if err := rows.Err(); err != nil {
@@ -391,6 +407,7 @@ func (s *Service) ListMyClips(owner, kind, q, tag string) ([]MyClip, int, error)
 			return nil, 0, err
 		}
 		_ = json.Unmarshal([]byte(tags), &m.Tags)
+		normTags(&m.Tags)
 		out = append(out, m)
 	}
 	if err := rows.Err(); err != nil {

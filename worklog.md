@@ -662,3 +662,23 @@ Stage Summary:
 - هر شش مورد کاربر بسته شد؛ RTM با ردیف‌های دور۱۴-* به‌روز شد (هیچ ردیفی بهتر از شاهد آزمون خودش نیست).
 - دستور بازاجرا: پاریتی = `cd mini-services/noor-api && ./scripts/run-parity-foreground.sh [--with-scale]`؛ E2E = `bunx playwright test` (روی dev server جاری)؛ compose = `python3 deploy/validate-compose.py`.
 - محدودیت‌های صادقانه: اجرای واقعی docker compose (بدون runtime)؛ کورپوس واقعی (fixture×۲۸۰ مصنوعی)؛ بازگشت چندنسلی نمایه (worker فقط یک نسل پیشین را نگه می‌دارد — بازگشت به نسلِ مفقودفایل → جست‌وجو صادقانه ۰ و نیازمند rebuild؛ در RTM ثبت شد).
+
+---
+Task ID: user-round-15 (باگ runtime «c.tags is not iterable» در نمای پروژه)
+Agent: main (coordinator)
+Task: گزارش خطای Runtime TypeError — ProjectView.useMemo[allTags] روی c.tags؛ بررسی ریشه و رفع در هر دو لایه
+
+Work Log:
+- ریشه‌یابی دقیق: در Go، `CreateClip` وقتی کلاینت tags نمی‌فرستد `json.Marshal(nil)` = رشتهٔ 'null' را در DB می‌نوشت؛ هنگام خواندن `json.Unmarshal("null")` اسلایس را nil می‌گذاشت و پاسخ `tags: null` می‌شد (نقض قرارداد tags: string[]). DB بررسی شد: ۸ فیش موجود، **۷ ردیف با tags='null'** — دقیقاً عامل crash. فرانت در دو نقطه آسیب‌پذیر بود: خط 270 (for...of) و خط 133/135 (length/map) در project-view.tsx.
+- رفع سرور (ریشه، internal/research/research.go): helper `normTags(t *[]string)` (nil → []string{}) + اعمال در ۶ نقطه: CreateClip پیش از Marshal (ردیف 'null' دیگر ذخیره نمی‌شود)، GetClip، ListClips، ListHadithClips، ListMyClips پس از Unmarshal (ردیف‌های قدیمی در لحظهٔ خواندن healed می‌شوند — بدون نیاز به migration).
+- رفع فرانت (دفاعی، src/views/project-view.tsx): `const tags = Array.isArray(clip.tags) ? clip.tags : []` در ClipCard + `c.tags ?? []` در useMemo همهٔ برچسب‌ها — حتی پاسخ قدیمی کش‌شده هم دیگر crash نمی‌کند.
+- نکتهٔ ابزار: Go toolchain مجدداً از sandbox حذف شده بود → /home/z/sdk/go نصب شد (go1.22.10 + auto-toolchain به 1.23.0 طبق go.mod). ویرایش تورفتگی tab با Edit tool خراب می‌شد (دو بلوک تکراری normTags درج شده بود) → با python بایت‌دقیق اصلاح شد (حذف تکراری + افزودن ۳ فراخوانی جامانده).
+- بیلد و restart: gofmt + go vet ./internal/research + go vet ./... (همه پاک) + go build bin/api و bin/worker → ./run-local.sh → «noor-api listening on :8080 | engine: local | works: 6».
+- تأیید HTTP با curl روی gateway :81 (نشست واقعی qa-reader از §۵۰): CREATE فیش بدون فیلد tags → پاسخ `"tags":[]`؛ GET فیش/فهرست پرونده/`/my/clips/all`/`/my/clips/tags` همه آرایه؛ PATCH tags:[] → آرایه. دادهٔ آزمون (پرونده prj-e8e1df + فیش clip-90c33b) به سطل رفت؛ فهرست `{"items":[]}`.
+- تأیید مرورگری با agent-browser: ورود qa-reader → `#/project/prj-e8e1df` (همان صفحه‌ای که crash می‌کرد) → رندر کامل RTL: کارت فیش با badge «یادداشت»، نقل‌قول، خط منبع، سه دکمهٔ اقدام — بدون error overlay؛ console فقط info/log (HMR)، صفر خطا؛ screenshot در /tmp/project-view-fixed.png.
+- `bun run lint` پاک؛ ۷ ردیف legacy دیگر دست‌نخورده ماند (تغییر مستقیم DB ممنوع) — هنگام خواندن healed می‌شوند و گارد فرانت هم پوشش می‌دهد.
+
+Stage Summary:
+- قرارداد API اکنون واقعاً برقرار است: tags همیشه آرایه (پاسخ‌های null دیگر غیرممکن است؛ ردیف‌های قدیمی هم در خواندن اصلاح می‌شوند). رفتار فعلی هیچ چیز سازگاری را نشکست — فقط null نقض‌قرارداد قبلی حذف شد.
+- فایل‌ها: mini-services/noor-api/internal/research/research.go (+helper و ۶ فراخوانی)، src/views/project-view.tsx (۲ گارد دفاعی)، باینری‌های bin/api و bin/worker بازساخت.
+- برای ایجنت بعدی: هر مسیر جدیدی که Clip/MyClip/HadithClip از DB می‌خواند باید normTags را صدا بزند (الگوی موجود). بازاجرا: `cd mini-services/noor-api && PATH=/home/z/sdk/go/bin:$PATH go build -o bin/api ./cmd/api && ./run-local.sh`.

@@ -1,0 +1,789 @@
+     1→"use client";
+     2→
+     3→/**
+     4→ * پروندهٔ پژوهش — فیش‌ها، سطل بازیافت، تاریخچه و خروجی (RES-08..RES-14)
+     5→ * - فهرست فیش‌ها با جست‌وجو و فیلتر برچسب (GET /projects/{uid}/clips?state&q&tag)
+     6→ * - ویرایش یادداشت (PATCH با version) — تعارض 409: نمایش دو نسخه و انتخاب کاربر (RES-14)
+     7→ * - حذف → سطل بازیافت + بازیابی (RES-09) و تاریخچهٔ فیش در گفت‌وگو
+     8→ * - خروجی Markdown/CSV/چاپ (POST /exports + polling تا آماده شدن بارگیری) (RES-10/11)
+     9→ * - «بازگشت به منبع» → #/read/{documentUid}?pg={page_uid} (RES-08)
+    10→ */
+    11→import { useEffect, useMemo, useState } from "react";
+    12→import {
+    13→  useMutation,
+    14→  useQuery,
+    15→  useQueryClient,
+    16→} from "@tanstack/react-query";
+    17→import {
+    18→  ArrowLeft,
+    19→  BookOpenText,
+    20→  Clock,
+    21→  Download,
+    22→  FileSpreadsheet,
+    23→  FileText,
+    24→  History,
+    25→  Loader2,
+    26→  Pencil,
+    27→  Printer,
+    28→  RotateCcw,
+    29→  Search,
+    30→  Trash2,
+    31→} from "lucide-react";
+    32→import { Badge } from "@/components/ui/badge";
+    33→import { Button } from "@/components/ui/button";
+    34→import { Card, CardContent } from "@/components/ui/card";
+    35→import {
+    36→  Dialog,
+    37→  DialogContent,
+    38→  DialogDescription,
+    39→  DialogFooter,
+    40→  DialogHeader,
+    41→  DialogTitle,
+    42→} from "@/components/ui/dialog";
+    43→import { Input } from "@/components/ui/input";
+    44→import { Label } from "@/components/ui/label";
+    45→import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+    46→import { Textarea } from "@/components/ui/textarea";
+    47→import { EmptyState, ErrorState, ListSkeleton } from "@/components/feedback";
+    48→import { api, ApiError, apiUrl, errorMessage } from "@/lib/api";
+    49→import { fetchProjects } from "@/lib/projects";
+    50→import { HashLink } from "@/lib/hash-router";
+    51→import { faDate, faNum } from "@/lib/format";
+    52→import { useToast } from "@/hooks/use-toast";
+    53→import type { Clip, ClipKind, Work } from "@/lib/types";
+    54→
+    55→const KIND_LABELS: Record<ClipKind, string> = {
+    56→  original: "نقل‌قول اصل",
+    57→  as_read: "متن خوانده‌شده",
+    58→  note: "یادداشت",
+    59→};
+    60→
+    61→type ClipTab = "active" | "trashed";
+    62→type ExportFormat = "md" | "csv" | "print";
+    63→
+    64→function useDebounced<T>(value: T, delay: number): T {
+    65→  const [debounced, setDebounced] = useState(value);
+    66→  useEffect(() => {
+    67→    const timer = setTimeout(() => setDebounced(value), delay);
+    68→    return () => clearTimeout(timer);
+    69→  }, [value, delay]);
+    70→  return debounced;
+    71→}
+    72→
+    73→/** پاسخ قرارداد می‌تواند آرایهٔ خام یا {items} باشد — هر دو پذیرفته می‌شود. */
+    74→function normalizeItems<T>(data: T[] | { items?: T[] } | undefined | null): T[] {
+    75→  if (Array.isArray(data)) return data;
+    76→  return data?.items ?? [];
+    77→}
+    78→
+    79→/* ---------- کارت فیش ---------- */
+    80→
+    81→function ClipCard({
+    82→  clip,
+    83→  workTitle,
+    84→  trashed,
+    85→  onEditNote,
+    86→  onShowHistory,
+    87→  onTrash,
+    88→  onRestore,
+    89→  pendingAction,
+    90→}: {
+    91→  clip: Clip;
+    92→  workTitle: string | null;
+    93→  trashed?: boolean;
+    94→  onEditNote: (clip: Clip) => void;
+    95→  onShowHistory: (clip: Clip) => void;
+    96→  onTrash: (clip: Clip) => void;
+    97→  onRestore: (clip: Clip) => void;
+    98→  pendingAction: string | null;
+    99→}) {
+   100→  const source = clip.source;
+   101→  const busy = pendingAction === clip.uid;
+   102→
+   103→  return (
+   104→    <Card className="transition-colors hover:border-control-border/60">
+   105→      <CardContent className="space-y-3 p-4">
+   106→        <div className="flex flex-wrap items-center justify-between gap-2">
+   107→          <Badge variant="secondary" className="font-normal">
+   108→            {KIND_LABELS[clip.kind] ?? "فیش"}
+   109→          </Badge>
+   110→          <span className="text-xs text-muted-foreground">
+   111→            {clip.updated_at ? `آخرین تغییر: ${faDate(clip.updated_at)}` : null}
+   112→          </span>
+   113→        </div>
+   114→
+   115→        <blockquote className="rounded-lg bg-accent/50 px-3 py-2 text-sm leading-7 text-foreground">
+   116→          {clip.quote_original}
+   117→        </blockquote>
+   118→
+   119→        {clip.quote_as_read ? (
+   120→          <div className="space-y-1">
+   121→            <p className="text-xs font-medium text-muted-foreground">متن خوانده‌شده</p>
+   122→            <p className="text-sm leading-7 text-foreground">{clip.quote_as_read}</p>
+   123→          </div>
+   124→        ) : null}
+   125→
+   126→        {clip.note ? (
+   127→          <div className="space-y-1">
+   128→            <p className="text-xs font-medium text-muted-foreground">یادداشت</p>
+   129→            <p className="whitespace-pre-wrap text-sm leading-7 text-foreground">{clip.note}</p>
+   130→          </div>
+   131→        ) : null}
+   132→
+   133→        {clip.tags.length > 0 ? (
+   134→          <div className="flex flex-wrap gap-1.5">
+   135→            {clip.tags.map((tag) => (
+   136→              <Badge key={tag} variant="outline" className="font-normal">
+   137→                {tag}
+   138→              </Badge>
+   139→            ))}
+   140→          </div>
+   141→        ) : null}
+   142→
+   143→        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3">
+   144→          <p className="text-xs text-muted-foreground">
+   145→            منبع: {workTitle ?? "منبع ثبت‌شده در سامانه"}
+   146→            {source?.page_label ? ` · صفحهٔ ${source.page_label}` : ""}
+   147→          </p>
+   148→          <div className="flex flex-wrap items-center gap-1.5">
+   149→            {!trashed && source?.document_uid ? (
+   150→              <Button variant="outline" size="sm" className="min-h-11 gap-2" asChild>
+   151→                <HashLink
+   152→                  to={`/read/${source.document_uid}`}
+   153→                  query={source.page_uid ? { pg: source.page_uid } : undefined}
+   154→                >
+   155→                  <BookOpenText className="size-4" aria-hidden="true" />
+   156→                  بازگشت به منبع
+   157→                </HashLink>
+   158→              </Button>
+   159→            ) : null}
+   160→            {!trashed ? (
+   161→              <>
+   162→                <Button
+   163→                  variant="ghost"
+   164→                  size="sm"
+   165→                  className="min-h-11 gap-2"
+   166→                  onClick={() => onEditNote(clip)}
+   167→                >
+   168→                  <Pencil className="size-4" aria-hidden="true" />
+   169→                  ویرایش یادداشت
+   170→                </Button>
+   171→                <Button
+   172→                  variant="ghost"
+   173→                  size="sm"
+   174→                  className="min-h-11 gap-2"
+   175→                  onClick={() => onShowHistory(clip)}
+   176→                >
+   177→                  <History className="size-4" aria-hidden="true" />
+   178→                  تاریخچه
+   179→                </Button>
+   180→              </>
+   181→            ) : null}
+   182→            {trashed ? (
+   183→              <Button
+   184→                variant="outline"
+   185→                size="sm"
+   186→                className="min-h-11 gap-2"
+   187→                disabled={busy}
+   188→                onClick={() => onRestore(clip)}
+   189→              >
+   190→                {busy ? (
+   191→                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+   192→                ) : (
+   193→                  <RotateCcw className="size-4" aria-hidden="true" />
+   194→                )}
+   195→                بازیابی
+   196→              </Button>
+   197→            ) : (
+   198→              <Button
+   199→                variant="ghost"
+   200→                size="sm"
+   201→                className="min-h-11 gap-2 text-destructive hover:text-destructive"
+   202→                aria-label="حذف فیش و انتقال به سطل بازیافت"
+   203→                disabled={busy}
+   204→                onClick={() => onTrash(clip)}
+   205→              >
+   206→                {busy ? (
+   207→                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+   208→                ) : (
+   209→                  <Trash2 className="size-4" aria-hidden="true" />
+   210→                )}
+   211→                حذف
+   212→              </Button>
+   213→            )}
+   214→          </div>
+   215→        </div>
+   216→      </CardContent>
+   217→    </Card>
+   218→  );
+   219→}
+   220→
+   221→/* ---------- نمای اصلی ---------- */
+   222→
+   223→export function ProjectView({ uid }: { uid: string }) {
+   224→  const { toast } = useToast();
+   225→  const queryClient = useQueryClient();
+   226→
+   227→  /* ---------- تب و جست‌وجو ---------- */
+   228→  const [tab, setTab] = useState<ClipTab>("active");
+   229→  const [q, setQ] = useState("");
+   230→  const debouncedQ = useDebounced(q, 250);
+   231→  const [tag, setTag] = useState<string | null>(null);
+   232→  const [pendingAction, setPendingAction] = useState<string | null>(null);
+   233→
+   234→  const clipsQuery = useQuery({
+   235→    queryKey: ["project-clips", uid, tab, debouncedQ, tag],
+   236→    queryFn: () =>
+   237→      api
+   238→        .get<Clip[] | { items: Clip[] }>(`/projects/${uid}/clips`, {
+   239→          state: tab,
+   240→          q: debouncedQ || undefined,
+   241→          tag: tag ?? undefined,
+   242→        })
+   243→        .then((d) => normalizeItems<Clip>(d)),
+   244→    placeholderData: (prev) => prev,
+   245→  });
+   246→  const clips = useMemo(() => clipsQuery.data ?? [], [clipsQuery.data]);
+   247→
+   248→  /* ---------- نام پرونده (از فهرست پرونده‌ها) ---------- */
+   249→  const projectsQuery = useQuery({
+   250→    queryKey: ["projects"],
+   251→    queryFn: fetchProjects,
+   252→    staleTime: 30_000,
+   253→  });
+   254→  const projectName = projectsQuery.data?.find((p) => p.uid === uid)?.name ?? "پروندهٔ پژوهش";
+   255→
+   256→  /* ---------- نقشهٔ عنوان آثار برای نمایش منبع (بدون شناسهٔ فنی) ---------- */
+   257→  const worksMapQuery = useQuery({
+   258→    queryKey: ["works-map"],
+   259→    queryFn: async () => {
+   260→      const resp = await api.get<Work[] | { items: Work[] }>("/works", { page_size: 200 });
+   261→      const map: Record<string, string> = {};
+   262→      for (const w of normalizeItems<Work>(resp)) map[w.uid] = w.title;
+   263→      return map;
+   264→    },
+   265→    staleTime: 5 * 60_000,
+   266→  });
+   267→
+   268→  const allTags = useMemo(() => {
+   269→    const set = new Set<string>();
+   270→    for (const c of clips) for (const t of c.tags) set.add(t);
+   271→    return Array.from(set).sort((a, b) => a.localeCompare(b, "fa"));
+   272→  }, [clips]);
+   273→
+   274→  const refreshClips = () => {
+   275→    void queryClient.invalidateQueries({ queryKey: ["project-clips", uid] });
+   276→  };
+   277→
+   278→  /* ---------- ویرایش یادداشت ---------- */
+   279→  const [editClip, setEditClip] = useState<Clip | null>(null);
+   280→  const [editNote, setEditNote] = useState("");
+   281→  const [editError, setEditError] = useState<string | null>(null);
+   282→  /** تعارض RES-14: نسخهٔ کاربر در برابر نسخهٔ موجود در سامانه */
+   283→  const [conflict, setConflict] = useState<{ draft: string; serverClip: Clip } | null>(null);
+   284→
+   285→  const openEdit = (clip: Clip) => {
+   286→    setEditClip(clip);
+   287→    setEditNote(clip.note ?? "");
+   288→    setEditError(null);
+   289→    setConflict(null);
+   290→  };
+   291→
+   292→  const saveNote = async (clip: Clip, note: string) => {
+   293→    setEditError(null);
+   294→    try {
+   295→      await api.patch<Clip>(`/clips/${clip.uid}`, { version: clip.version, note });
+   296→      setEditClip(null);
+   297→      setConflict(null);
+   298→      refreshClips();
+   299→      toast({ title: "یادداشت فیش ذخیره شد." });
+   300→    } catch (err) {
+   301→      if (err instanceof ApiError && err.status === 409) {
+   302→        try {
+   303→          const serverClip = await api.get<Clip>(`/clips/${clip.uid}`);
+   304→          setConflict({ draft: note, serverClip });
+   305→          return;
+   306→        } catch {
+   307→          setEditError(
+   308→            "یادداشت این فیش در جای دیگری تغییر کرده است؛ فهرست را به‌روزرسانی و دوباره تلاش کنید.",
+   309→          );
+   310→          refreshClips();
+   311→          return;
+   312→        }
+   313→      }
+   314→      setEditError(errorMessage(err, "ذخیرهٔ یادداشت ناموفق بود؛ دوباره تلاش کنید."));
+   315→    }
+   316→  };
+   317→
+   318→  /* ---------- حذف / بازیابی ---------- */
+   319→  const trashClip = async (clip: Clip) => {
+   320→    setPendingAction(clip.uid);
+   321→    try {
+   322→      await api.del(`/clips/${clip.uid}`);
+   323→      toast({ title: "فیش به سطل بازیافت رفت." });
+   324→      refreshClips();
+   325→    } catch (err) {
+   326→      toast({
+   327→        title: "حذف فیش ممکن نشد.",
+   328→        description: errorMessage(err),
+   329→        variant: "destructive",
+   330→      });
+   331→    } finally {
+   332→      setPendingAction(null);
+   333→    }
+   334→  };
+   335→
+   336→  const restoreClip = async (clip: Clip) => {
+   337→    setPendingAction(clip.uid);
+   338→    try {
+   339→      await api.post(`/clips/${clip.uid}/restore`);
+   340→      toast({ title: "فیش بازیابی شد و به پرونده بازگشت." });
+   341→      refreshClips();
+   342→    } catch (err) {
+   343→      toast({
+   344→        title: "بازیابی فیش ممکن نشد.",
+   345→        description: errorMessage(err),
+   346→        variant: "destructive",
+   347→      });
+   348→    } finally {
+   349→      setPendingAction(null);
+   350→    }
+   351→  };
+   352→
+   353→  /* ---------- تاریخچهٔ فیش ---------- */
+   354→  const [historyClip, setHistoryClip] = useState<Clip | null>(null);
+   355→  const historyQuery = useQuery({
+   356→    queryKey: ["clip-revisions", historyClip?.uid],
+   357→    enabled: !!historyClip,
+   358→    queryFn: () =>
+   359→      api
+   360→        .get<Record<string, unknown>[] | { items: Record<string, unknown>[] }>(
+   361→          `/clips/${historyClip?.uid}/revisions`,
+   362→        )
+   363→        .then((d) => normalizeItems<Record<string, unknown>>(d)),
+   364→  });
+   365→  const openHistory = (clip: Clip) => setHistoryClip(clip);
+   366→
+   367→  /* ---------- خروجی (RES-10/11) ---------- */
+   368→  const [exportJob, setExportJob] = useState<{ uid: string; format: ExportFormat } | null>(null);
+   369→  const [exportError, setExportError] = useState<string | null>(null);
+   370→
+   371→  const createExport = useMutation({
+   372→    mutationFn: (format: ExportFormat) =>
+   373→      api
+   374→        .post<{ export_uid: string }>("/exports", { project_uid: uid, format })
+   375→        .then((r) => ({ uid: r.export_uid, format })),
+   376→    onSuccess: (job) => {
+   377→      setExportError(null);
+   378→      setExportJob(job);
+   379→      toast({ title: "درخواست خروجی ثبت شد؛ در حال آماده‌سازی فایل…" });
+   380→    },
+   381→    onError: (err) => {
+   382→      setExportError(errorMessage(err, "ثبت درخواست خروجی ناموفق بود؛ دوباره تلاش کنید."));
+   383→    },
+   384→  });
+   385→
+   386→  const exportStatusQuery = useQuery({
+   387→    queryKey: ["export-status", exportJob?.uid],
+   388→    enabled: !!exportJob,
+   389→    queryFn: () =>
+   390→      api.get<{ export_uid: string; status: string; download_ready: boolean }>(
+   391→        `/exports/${exportJob?.uid ?? ""}`,
+   392→      ),
+   393→    refetchInterval: (query) => {
+   394→      const status = query.state.data?.status;
+   395→      return status === "done" || status === "failed" ? false : 1500;
+   396→    },
+   397→  });
+   398→
+   399→  const exportStatus = exportStatusQuery.data?.status;
+   400→  const EXPORT_LABELS: Record<ExportFormat, string> = {
+   401→    md: "خروجی Markdown",
+   402→    csv: "خروجی CSV",
+   403→    print: "نسخهٔ چاپی",
+   404→  };
+   405→
+   406→  const downloadExport = (exportUid: string) => {
+   407→    // بارگیری با نشانی همان کلاینت API (شامل پارامتر gateway)
+   408→    window.open(apiUrl(`/exports/${exportUid}/download`), "_blank", "noopener");
+   409→  };
+   410→
+   411→  const exportBusy =
+   412→    createExport.isPending ||
+   413→    (exportStatusQuery.isLoading && !!exportJob) ||
+   414→    exportStatus === "queued" ||
+   415→    exportStatus === "running";
+   416→
+   417→  return (
+   418→    <div className="mx-auto w-full max-w-4xl px-4 py-8">
+   419→      <header className="mb-6 space-y-3">
+   420→        <Button variant="ghost" size="sm" className="min-h-11 gap-2 -ms-2" asChild>
+   421→          <HashLink to="/research">
+   422→            <ArrowLeft className="size-4" aria-hidden="true" />
+   423→            بازگشت به پژوهش‌های من
+   424→          </HashLink>
+   425→        </Button>
+   426→        <div className="flex flex-wrap items-start justify-between gap-4">
+   427→          <div className="min-w-0">
+   428→            <h1 className="truncate text-xl font-bold">{projectName}</h1>
+   429→            <p className="mt-1 text-sm text-muted-foreground">
+   430→              فیش‌های گردآوری‌شده از میز مطالعه؛ با انتخاب متن در منابع، فیش تازه ثبت کنید.
+   431→            </p>
+   432→          </div>
+   433→          <div className="flex flex-wrap items-center gap-1.5">
+   434→            <Button
+   435→              variant="outline"
+   436→              size="sm"
+   437→              className="min-h-11 gap-2"
+   438→              disabled={exportBusy}
+   439→              onClick={() => createExport.mutate("md")}
+   440→            >
+   441→              <FileText className="size-4" aria-hidden="true" />
+   442→              خروجی Markdown
+   443→            </Button>
+   444→            <Button
+   445→              variant="outline"
+   446→              size="sm"
+   447→              className="min-h-11 gap-2"
+   448→              disabled={exportBusy}
+   449→              onClick={() => createExport.mutate("csv")}
+   450→            >
+   451→              <FileSpreadsheet className="size-4" aria-hidden="true" />
+   452→              خروجی CSV
+   453→            </Button>
+   454→            <Button
+   455→              variant="outline"
+   456→              size="sm"
+   457→              className="min-h-11 gap-2"
+   458→              disabled={exportBusy}
+   459→              onClick={() => createExport.mutate("print")}
+   460→            >
+   461→              <Printer className="size-4" aria-hidden="true" />
+   462→              چاپ
+   463→            </Button>
+   464→          </div>
+   465→        </div>
+   466→
+   467→        {exportBusy ? (
+   468→          <p
+   469→            className="flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-muted-foreground"
+   470→            role="status"
+   471→          >
+   472→            <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+   473→            در حال آماده‌سازی فایل خروجی…
+   474→          </p>
+   475→        ) : exportStatusQuery.isError && exportJob ? (
+   476→          <ErrorState
+   477→            message="پیگیری وضعیت خروجی ممکن نشد."
+   478→            onRetry={() => void exportStatusQuery.refetch()}
+   479→          />
+   480→        ) : exportStatus === "failed" ? (
+   481→          <ErrorState
+   482→            message="تولید فایل خروجی ناموفق بود؛ دوباره تلاش کنید."
+   483→            onRetry={() => exportJob && createExport.mutate(exportJob.format)}
+   484→          />
+   485→        ) : exportStatus === "done" && exportJob ? (
+   486→          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-surface px-3 py-2">
+   487→            <p className="text-sm text-foreground">
+   488→              فایل {EXPORT_LABELS[exportJob.format]} آمادهٔ بارگیری است.
+   489→            </p>
+   490→            <Button
+   491→              size="sm"
+   492→              className="min-h-11 gap-2"
+   493→              onClick={() => downloadExport(exportJob.uid)}
+   494→            >
+   495→              <Download className="size-4" aria-hidden="true" />
+   496→              بارگیری فایل
+   497→            </Button>
+   498→          </div>
+   499→        ) : exportError ? (
+   500→          <p className="text-sm text-destructive" role="alert">
+   501→            {exportError}
+   502→          </p>
+   503→        ) : null}
+   504→      </header>
+   505→
+   506→      {/* ---------- جست‌وجو و برچسب ---------- */}
+   507→      <div className="mb-4 space-y-3">
+   508→        <div className="relative">
+   509→          <Search
+   510→            className="pointer-events-none absolute end-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+   511→            aria-hidden="true"
+   512→          />
+   513→          <Input
+   514→            value={q}
+   515→            onChange={(e) => setQ(e.target.value)}
+   516→            placeholder="جست‌وجو در متن فیش‌ها و یادداشت‌ها…"
+   517→            aria-label="جست‌وجو در فیش‌های این پرونده"
+   518→            className="min-h-11 pe-9"
+   519→          />
+   520→        </div>
+   521→        {allTags.length > 0 ? (
+   522→          <div className="flex flex-wrap items-center gap-1.5">
+   523→            <span className="text-xs text-muted-foreground">فیلتر برچسب:</span>
+   524→            {tag ? (
+   525→              <Button
+   526→                variant="secondary"
+   527→                size="sm"
+   528→                className="min-h-9 gap-1.5 rounded-full px-3"
+   529→                onClick={() => setTag(null)}
+   530→              >
+   531→                حذف فیلتر «{tag}»
+   532→              </Button>
+   533→            ) : (
+   534→              allTags.map((t) => (
+   535→                <button
+   536→                  key={t}
+   537→                  type="button"
+   538→                  className="min-h-11 rounded-full border border-border px-3 text-xs text-foreground transition-colors hover:bg-accent md:min-h-9"
+   539→                  onClick={() => setTag(t)}
+   540→                >
+   541→                  {t}
+   542→                </button>
+   543→              ))
+   544→            )}
+   545→          </div>
+   546→        ) : null}
+   547→      </div>
+   548→
+   549→      {/* ---------- تب فیش‌ها / سطل بازیافت ---------- */}
+   550→      <Tabs
+   551→        value={tab}
+   552→        onValueChange={(v) => setTab(v as ClipTab)}
+   553→        className="mb-4"
+   554→      >
+   555→        <TabsList className="h-11">
+   556→          <TabsTrigger value="active" className="min-h-9">
+   557→            فیش‌ها
+   558→          </TabsTrigger>
+   559→          <TabsTrigger value="trashed" className="min-h-9">
+   560→            سطل بازیافت
+   561→          </TabsTrigger>
+   562→        </TabsList>
+   563→      </Tabs>
+   564→
+   565→      {clipsQuery.isPending ? (
+   566→        <ListSkeleton rows={4} />
+   567→      ) : clipsQuery.isError ? (
+   568→        <ErrorState
+   569→          message={errorMessage(clipsQuery.error, "بارگیری فیش‌ها ناموفق بود.")}
+   570→          onRetry={() => refreshClips()}
+   571→        />
+   572→      ) : clips.length === 0 ? (
+   573→        tab === "active" ? (
+   574→          debouncedQ || tag ? (
+   575→            <EmptyState
+   576→              title="فیشی با این جست‌وجو یا برچسب یافت نشد."
+   577→              hint="عبارت جست‌وجو یا فیلتر برچسب را تغییر دهید."
+   578→              action={
+   579→                <Button
+   580→                  variant="outline"
+   581→                  className="min-h-11"
+   582→                  onClick={() => {
+   583→                    setQ("");
+   584→                    setTag(null);
+   585→                  }}
+   586→                >
+   587→                  پاک‌کردن جست‌وجو و فیلتر
+   588→                </Button>
+   589→              }
+   590→            />
+   591→          ) : (
+   592→            <EmptyState
+   593→              title="در این پرونده هنوز فیشی ثبت نشده است."
+   594→              hint="در میز مطالعه بخشی از متن را انتخاب کنید و «ثبت فیش» را بزنید تا در این پرونده ذخیره شود."
+   595→            />
+   596→          )
+   597→        ) : (
+   598→          <EmptyState
+   599→            title="سطل بازیافت خالی است."
+   600→            hint="فیش‌های حذف‌شده به این بخش می‌آیند و قابل بازیابی‌اند."
+   601→          />
+   602→        )
+   603→      ) : (
+   604→        <ul className="space-y-3" aria-live="polite">
+   605→          {clips.map((clip) => (
+   606→            <li key={clip.uid}>
+   607→              <ClipCard
+   608→                clip={clip}
+   609→                workTitle={worksMapQuery.data?.[clip.source?.work_uid ?? ""] ?? null}
+   610→                trashed={tab === "trashed"}
+   611→                pendingAction={pendingAction}
+   612→                onEditNote={openEdit}
+   613→                onShowHistory={openHistory}
+   614→                onTrash={(c) => void trashClip(c)}
+   615→                onRestore={(c) => void restoreClip(c)}
+   616→              />
+   617→            </li>
+   618→          ))}
+   619→        </ul>
+   620→      )}
+   621→
+   622→      {/* ---------- گفت‌وگوی ویرایش یادداشت ---------- */}
+   623→      <Dialog
+   624→        open={editClip !== null && !conflict}
+   625→        onOpenChange={(o) => !o && setEditClip(null)}
+   626→      >
+   627→        <DialogContent className="sm:max-w-lg">
+   628→          <DialogHeader>
+   629→            <DialogTitle>ویرایش یادداشت فیش</DialogTitle>
+   630→            <DialogDescription>
+   631→              یادداشت شما همراه فیش ذخیره می‌شود؛ نقل‌قول اصل دست‌نخورده می‌ماند.
+   632→            </DialogDescription>
+   633→          </DialogHeader>
+   634→          <div className="space-y-3">
+   635→            <blockquote className="max-h-28 overflow-y-auto rounded-lg bg-accent/50 px-3 py-2 text-sm leading-7">
+   636→              {editClip?.quote_original}
+   637→            </blockquote>
+   638→            <div className="space-y-1.5">
+   639→              <Label htmlFor="clip-note">یادداشت</Label>
+   640→              <Textarea
+   641→                id="clip-note"
+   642→                value={editNote}
+   643→                onChange={(e) => setEditNote(e.target.value)}
+   644→                className="min-h-28 text-sm"
+   645→                placeholder="یادداشت پژوهشی خود را بنویسید…"
+   646→              />
+   647→              {editError ? (
+   648→                <p className="text-sm text-destructive" role="alert">
+   649→                  {editError}
+   650→                </p>
+   651→              ) : null}
+   652→            </div>
+   653→          </div>
+   654→          <DialogFooter>
+   655→            <Button
+   656→              variant="outline"
+   657→              className="min-h-11"
+   658→              onClick={() => setEditClip(null)}
+   659→            >
+   660→              انصراف
+   661→            </Button>
+   662→            <Button
+   663→              className="min-h-11"
+   664→              disabled={editClip === null}
+   665→              onClick={() => {
+   666→                if (editClip) void saveNote(editClip, editNote);
+   667→              }}
+   668→            >
+   669→              ذخیره
+   670→            </Button>
+   671→          </DialogFooter>
+   672→        </DialogContent>
+   673→      </Dialog>
+   674→
+   675→      {/* ---------- تعارض نسخهٔ یادداشت (RES-14): انتخاب کاربر ---------- */}
+   676→      <Dialog
+   677→        open={conflict !== null}
+   678→        onOpenChange={(o) => {
+   679→          if (!o) {
+   680→            setConflict(null);
+   681→            setEditClip(null);
+   682→          }
+   683→        }}
+   684→      >
+   685→        <DialogContent className="sm:max-w-2xl">
+   686→          <DialogHeader>
+   687→            <DialogTitle>این یادداشت پیش‌تر در جای دیگری ذخیره شده است</DialogTitle>
+   688→            <DialogDescription>
+   689→              نسخهٔ شما با نسخهٔ موجود در سامانه متفاوت است؛ کدام نسخه حفظ شود؟
+   690→            </DialogDescription>
+   691→          </DialogHeader>
+   692→          <div className="grid gap-3 md:grid-cols-2">
+   693→            <div className="space-y-2 rounded-lg border border-border p-3">
+   694→              <p className="text-xs font-semibold text-foreground">نسخهٔ شما</p>
+   695→              <p className="max-h-40 overflow-y-auto whitespace-pre-wrap text-sm leading-7">
+   696→                {conflict?.draft || "—"}
+   697→              </p>
+   698→            </div>
+   699→            <div className="space-y-2 rounded-lg border border-border p-3">
+   700→              <p className="text-xs font-semibold text-foreground">نسخهٔ موجود در سامانه</p>
+   701→              <p className="max-h-40 overflow-y-auto whitespace-pre-wrap text-sm leading-7">
+   702→                {conflict?.serverClip.note || "—"}
+   703→              </p>
+   704→            </div>
+   705→          </div>
+   706→          <DialogFooter className="flex-col gap-2 sm:flex-row">
+   707→            <Button
+   708→              variant="outline"
+   709→              className="min-h-11"
+   710→              onClick={() => {
+   711→                setConflict(null);
+   712→                setEditClip(null);
+   713→                refreshClips();
+   714→              }}
+   715→            >
+   716→              حفظ نسخهٔ سامانه
+   717→            </Button>
+   718→            <Button
+   719→              className="min-h-11"
+   720→              disabled={!conflict}
+   721→              onClick={() => {
+   722→                if (conflict) void saveNote(conflict.serverClip, conflict.draft);
+   723→              }}
+   724→            >
+   725→              حفظ نسخهٔ من
+   726→            </Button>
+   727→          </DialogFooter>
+   728→        </DialogContent>
+   729→      </Dialog>
+   730→
+   731→      {/* ---------- گفت‌وگوی تاریخچهٔ فیش ---------- */}
+   732→      <Dialog
+   733→        open={historyClip !== null}
+   734→        onOpenChange={(o) => !o && setHistoryClip(null)}
+   735→      >
+   736→        <DialogContent className="sm:max-w-lg">
+   737→          <DialogHeader>
+   738→            <DialogTitle>تاریخچهٔ فیش</DialogTitle>
+   739→            <DialogDescription>
+   740→              نسخه‌های پیشین این فیش؛ با هر ذخیره، نسخهٔ قبلی نگه داشته می‌شود.
+   741→            </DialogDescription>
+   742→          </DialogHeader>
+   743→          {historyQuery.isPending ? (
+   744→            <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
+   745→              <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+   746→              در حال بارگیری تاریخچه…
+   747→            </div>
+   748→          ) : historyQuery.isError ? (
+   749→            <ErrorState
+   750→              message="بارگیری تاریخچهٔ فیش ناموفق بود."
+   751→              onRetry={() => void historyQuery.refetch()}
+   752→            />
+   753→          ) : (historyQuery.data?.length ?? 0) === 0 ? (
+   754→            <EmptyState
+   755→              title="تغییری ثبت نشده است."
+   756→              hint="این فیش تاکنون ویرایش نشده و نسخهٔ پیشینی ندارد."
+   757→            />
+   758→          ) : (
+   759→            <ul className="max-h-80 space-y-3 overflow-y-auto pe-1" aria-live="polite">
+   760→              {historyQuery.data?.map((rev, i) => (
+   761→                <li key={i} className="rounded-lg border border-border p-3">
+   762→                  <p className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
+   763→                    <Clock className="size-3.5" aria-hidden="true" />
+   764→                    نسخهٔ {faNum(typeof rev.version === "number" ? rev.version : 0)}
+   765→                    {typeof rev.updated_at === "string" ? ` · ${faDate(rev.updated_at)}` : ""}
+   766→                  </p>
+   767→                  <p className="whitespace-pre-wrap text-sm leading-7">
+   768→                    {typeof rev.note === "string" && rev.note ? rev.note : "بدون یادداشت"}
+   769→                  </p>
+   770→                </li>
+   771→              ))}
+   772→            </ul>
+   773→          )}
+   774→          <DialogFooter>
+   775→            <Button variant="outline" className="min-h-11" onClick={() => setHistoryClip(null)}>
+   776→              بستن
+   777→            </Button>
+   778→          </DialogFooter>
+   779→        </DialogContent>
+   780→      </Dialog>
+   781→    </div>
+   782→  );
+   783→}
+   784→
+   785→type ProjectRow = {
+   786→  uid: string;
+   787→  name: string;
+   788→};
+   789→

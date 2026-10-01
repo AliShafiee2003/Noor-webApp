@@ -98,6 +98,8 @@ function ClipCard({
   pendingAction: string | null;
 }) {
   const source = clip.source;
+  /* دفاعی: قرارداد سرور tags: string[] است ولی ردیف‌های قدیمی ممکن است null بفرستند */
+  const tags = Array.isArray(clip.tags) ? clip.tags : [];
   const busy = pendingAction === clip.uid;
 
   return (
@@ -130,9 +132,9 @@ function ClipCard({
           </div>
         ) : null}
 
-        {clip.tags.length > 0 ? (
+        {tags.length > 0 ? (
           <div className="flex flex-wrap gap-1.5">
-            {clip.tags.map((tag) => (
+            {tags.map((tag) => (
               <Badge key={tag} variant="outline" className="font-normal">
                 {tag}
               </Badge>
@@ -267,7 +269,7 @@ export function ProjectView({ uid }: { uid: string }) {
 
   const allTags = useMemo(() => {
     const set = new Set<string>();
-    for (const c of clips) for (const t of c.tags) set.add(t);
+    for (const c of clips) for (const t of c.tags ?? []) set.add(t);
     return Array.from(set).sort((a, b) => a.localeCompare(b, "fa"));
   }, [clips]);
 
