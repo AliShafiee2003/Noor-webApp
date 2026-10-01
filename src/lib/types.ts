@@ -238,6 +238,24 @@ export interface SourceOffsets {
   unit?: string;
 }
 
+/**
+ * نرمال‌سازی source_offsets بلوک: قرارداد {start,end} یا آرایهٔ [start,end] سرور.
+ * در نبود بازهٔ معتبر null برمی‌گردد (حدس زده نمی‌شود).
+ */
+export function blockOffsets(
+  block: Pick<PageBlock, "source_offsets">,
+): { start: number; end: number } | null {
+  const raw = block.source_offsets;
+  if (Array.isArray(raw)) {
+    return typeof raw[0] === "number" && typeof raw[1] === "number"
+      ? { start: raw[0], end: raw[1] }
+      : null;
+  }
+  return raw && typeof raw.start === "number" && typeof raw.end === "number"
+    ? { start: raw.start, end: raw.end }
+    : null;
+}
+
 export interface PageBlock {
   id: string;
   type: BlockType;
@@ -512,6 +530,27 @@ export interface HadithClipSummary {
   quote_original: string;
   note?: string | null;
   tags: string[];
+  page_uid?: string | null;
+  page_label?: string | null;
+  updated_at?: string | null;
+}
+
+/**
+ * خلاصهٔ فیش برای نمای «همهٔ فیش‌های من» در میزکار —
+ * GET /my/clips/all?kind=&q=&tag= → {items:[MyClip], total}
+ * عنوان اثر از کاتالوگ سرور می‌آید و در نبود آن خالی است (نه حدس).
+ */
+export interface MyClipSummary {
+  uid: string;
+  project_uid: string;
+  project_name: string;
+  kind: ClipKind;
+  quote_original: string;
+  note?: string | null;
+  tags: string[];
+  work_uid?: string;
+  work_title?: string;
+  document_uid?: string;
   page_uid?: string | null;
   page_label?: string | null;
   updated_at?: string | null;

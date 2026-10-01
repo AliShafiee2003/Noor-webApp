@@ -132,6 +132,29 @@ func (s *Server) handleMyClips(w http.ResponseWriter, r *http.Request) {
         s.ok(w, map[string]any{"items": items})
 }
 
+/* handleMyClipsAll — «همهٔ فیش‌های من» برای میزکار:
+   GET /my/clips/all?kind=&q=&tag= — فیش‌های فعال کاربر از همهٔ پرونده‌ها؛
+   عنوان اثر از کاتالوگ پر می‌شود و در نبود اثر خالی می‌ماند (نه حدس). */
+func (s *Server) handleMyClipsAll(w http.ResponseWriter, r *http.Request) {
+        q := r.URL.Query()
+        items, total, err := s.Research.ListMyClips(userOf(r).UID, q.Get("kind"), q.Get("q"), q.Get("tag"))
+        if err != nil {
+                s.fail(w, r, 422, "invalid_query", err.Error(), false)
+                return
+        }
+        for i := range items {
+                if items[i].WorkUID != "" {
+                        if wk, found := s.Catalog.Work(items[i].WorkUID); found {
+                                items[i].WorkTitle = wk.Title
+                        }
+                }
+        }
+        if items == nil {
+                items = []research.MyClip{}
+        }
+        s.ok(w, map[string]any{"items": items, "total": total})
+}
+
 func (s *Server) handleCreateClip(w http.ResponseWriter, r *http.Request) {
         var in research.ClipInput
         if !decodeBody(w, r, &in) {

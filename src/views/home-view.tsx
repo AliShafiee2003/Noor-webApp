@@ -22,6 +22,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { ErrorState, ListSkeleton } from "@/components/feedback";
+import { MyFichesSection } from "@/components/home/my-fiches-section";
 import { api, errorMessage } from "@/lib/api";
 import { fetchProjects } from "@/lib/projects";
 import { HashLink, useRoute } from "@/lib/hash-router";
@@ -188,7 +189,7 @@ function ContinueReading() {
         <div className="space-y-2">
           <HashLink
             to={`/read/${primary.document_uid}`}
-            query={primary.page_uid ? { page: primary.page_uid } : undefined}
+            query={primary.page_uid ? { pg: primary.page_uid } : undefined}
             className="block rounded-xl border border-border bg-surface p-4 transition-colors hover:bg-accent"
           >
             <div className="flex items-center justify-between gap-3">
@@ -224,7 +225,7 @@ function ContinueReading() {
                 <li key={`${item.document_uid}-${item.page_uid}`}>
                   <HashLink
                     to={`/read/${item.document_uid}`}
-                    query={item.page_uid ? { page: item.page_uid } : undefined}
+                    query={item.page_uid ? { pg: item.page_uid } : undefined}
                     className="flex min-h-11 items-center justify-between gap-3 px-4 py-2.5 text-sm transition-colors hover:bg-accent"
                   >
                     <span className="truncate">
@@ -336,6 +337,7 @@ export function HomeView() {
       <ShortEntries />
       <ContinueReading />
       <RecentProjects />
+      <MyFichesSection />
     </div>
   );
 }

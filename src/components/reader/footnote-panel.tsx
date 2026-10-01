@@ -74,9 +74,11 @@ const KIND_META: Record<HadithClipSummary["kind"], { label: string; className: s
 function HadithClipsSection({
   documentUid,
   localUid,
+  onFiche,
 }: {
   documentUid: string;
   localUid: string;
+  onFiche?: () => void;
 }) {
   const query = useQuery({
     queryKey: ["hadith-clips", documentUid, localUid],
@@ -129,8 +131,19 @@ function HadithClipsSection({
         <div className="rounded-xl border border-dashed border-border p-3 text-center">
           <p className="text-xs font-medium">از این روایت هنوز فیشی ثبت نکرده‌اید</p>
           <p className="mt-1 text-[11px] leading-5 text-muted-foreground">
-            فیش یادداشت مطالعهٔ شماست؛ با انتخاب متن روایت می‌توانید آن را به یک پرونده بیفزایید.
+            با دکمهٔ «ثبت فیش این روایت» یا انتخاب متنِ روایت، آن را به یک پرونده بیفزایید.
           </p>
+          {onFiche ? (
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-2 min-h-9 gap-1.5"
+              onClick={onFiche}
+            >
+              <ClipboardList className="size-3.5" aria-hidden="true" />
+              ثبت فیش این روایت
+            </Button>
+          ) : null}
         </div>
       ) : (
         <ul className="space-y-2">
@@ -197,6 +210,8 @@ export function FootnotePanel({
   onBack,
   onHadithLookup,
   onHadithNote,
+  /** RES: ثبت فیش این روایت — والد فیش کامل روایت را به دیالوگ فیش می‌دهد */
+  onHadithFiche,
   /** برای «فیش‌های این روایت» — بدون آن بخش فیش‌ها نمایش داده نمی‌شود */
   documentUid,
 }: {
@@ -206,6 +221,8 @@ export function FootnotePanel({
   onHadithLookup?: (localUid: string) => void;
   /** RES: ثبت یادداشت روی همین روایت — والد به تب یادداشت‌ها با دامنهٔ روایت می‌رود */
   onHadithNote?: (localUid: string, revayatIndex?: string | null) => void;
+  /** RES: ثبت فیش این روایت — با متن کامل روایت در همین صفحه */
+  onHadithFiche?: (localUid: string, revayatIndex?: string | null) => void;
   documentUid?: string;
 }) {
   if (!data) {
@@ -355,8 +372,25 @@ export function FootnotePanel({
                 ثبت یادداشت روی این روایت
               </Button>
             ) : null}
+            {onHadithFiche && h.localUid ? (
+              <Button
+                className="min-h-11 w-full gap-2"
+                onClick={() => onHadithFiche(h.localUid, h.revayatIndex ?? null)}
+              >
+                <ClipboardList className="size-4" aria-hidden="true" />
+                ثبت فیش این روایت
+              </Button>
+            ) : null}
             {documentUid && h.localUid ? (
-              <HadithClipsSection documentUid={documentUid} localUid={h.localUid} />
+              <HadithClipsSection
+                documentUid={documentUid}
+                localUid={h.localUid}
+                onFiche={
+                  onHadithFiche
+                    ? () => onHadithFiche(h.localUid, h.revayatIndex ?? null)
+                    : undefined
+                }
+              />
             ) : null}
             <p className="rounded-xl border border-border bg-muted px-3 py-2.5 text-xs leading-6 text-muted-foreground">
               شمارهٔ روایت، شناسهٔ درون‌منبع است و فقط برای پیگیری در همین کتاب کاربرد دارد؛

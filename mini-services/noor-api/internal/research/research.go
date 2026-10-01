@@ -310,6 +310,79 @@ func (s *Service) ListHadithClips(owner, documentUID, localHadithUID string) ([]
         return out, nil
 }
 
+// ---- همهٔ فیش‌های من (نمای میزکار) ----
+
+/* MyClip خلاصهٔ فیش برای نمای «همهٔ فیش‌های من» در میزکار؛
+   نام پرونده و عنوان اثر برای جهت‌گیری می‌آید (عنوان اثر در handler
+   از کاتالوگ پر می‌شود — کاتالوگ در سرویس پژوهش در دسترس نیست). */
+type MyClip struct {
+        UID           string   `json:"uid"`
+        ProjectUID    string   `json:"project_uid"`
+        ProjectName   string   `json:"project_name"`
+        Kind          string   `json:"kind"`
+        QuoteOriginal string   `json:"quote_original"`
+        Note          *string  `json:"note"`
+        Tags          []string `json:"tags"`
+        WorkUID       string   `json:"work_uid,omitempty"`
+        WorkTitle     string   `json:"work_title,omitempty"`
+        DocumentUID   string   `json:"document_uid,omitempty"`
+        PageUID       string   `json:"page_uid,omitempty"`
+        PageLabel     string   `json:"page_label,omitempty"`
+        UpdatedAt     string   `json:"updated_at"`
+}
+
+/* ListMyClips فیش‌های فعالِ کاربر از همهٔ پرونده‌ها با پالایش اختیاری
+   kind (original|as_read|note)، q (در نقل/یادداشت) و tag برمی‌گرداند.
+   شمارش کل صادقانه با COUNT جداگانه است؛ فهرست سقف ۱۰۰ دارد. */
+func (s *Service) ListMyClips(owner, kind, q, tag string) ([]MyClip, int, error) {
+        where := `c.owner_user_id=? AND c.deleted_at IS NULL AND p.deleted_at IS NULL`
+        args := []any{owner}
+        switch kind {
+        case "original", "as_read", "note":
+                where += ` AND c.kind=?`
+                args = append(args, kind)
+        case "":
+                /* بدون پالایش نوع */
+        default:
+                return nil, 0, errors.New("نوع فیش نامعتبر است")
+        }
+        if q != "" {
+                where += ` AND (c.quote_original LIKE '%'||?||'%' OR c.note LIKE '%'||?||'%')`
+                args = append(args, q, q)
+        }
+        if tag != "" {
+                where += ` AND c.tags LIKE '%'||?||'%'`
+                args = append(args, tag)
+        }
+        var total int
+        if err := s.db.QueryRow(`SELECT COUNT(*) FROM clips c JOIN projects p ON p.uid=c.project_uid WHERE `+where, args...).Scan(&total); err != nil {
+                return nil, 0, err
+        }
+        rows, err := s.db.Query(`SELECT c.uid, c.project_uid, p.name, c.kind, c.quote_original, c.note, c.tags,
+                c.work_uid, c.document_uid, c.page_uid, c.page_label, c.updated_at
+                FROM clips c JOIN projects p ON p.uid = c.project_uid
+                WHERE `+where+` ORDER BY c.updated_at DESC LIMIT 100`, args...)
+        if err != nil {
+                return nil, 0, err
+        }
+        defer rows.Close()
+        var out []MyClip
+        for rows.Next() {
+                var m MyClip
+                var tags string
+                if err := rows.Scan(&m.UID, &m.ProjectUID, &m.ProjectName, &m.Kind, &m.QuoteOriginal, &m.Note, &tags,
+                        &m.WorkUID, &m.DocumentUID, &m.PageUID, &m.PageLabel, &m.UpdatedAt); err != nil {
+                        return nil, 0, err
+                }
+                _ = json.Unmarshal([]byte(tags), &m.Tags)
+                out = append(out, m)
+        }
+        if err := rows.Err(); err != nil {
+                return nil, 0, err
+        }
+        return out, total, nil
+}
+
 // UpdateClip تعارض: شناسه + مالک + نسخه هر سه باید تطابق کنند (§۳۹).
 func (s *Service) UpdateClip(owner, uid string, expectedVersion int, note, quoteAsRead *string, tags *[]string, projectUID *string) (*Clip, error) {
         c, err := s.GetClip(owner, uid)

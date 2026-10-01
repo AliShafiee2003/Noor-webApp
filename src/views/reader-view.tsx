@@ -37,6 +37,7 @@ import type {
   TocSection,
   WorkDetail,
 } from "@/lib/types";
+import { blockOffsets } from "@/lib/types";
 import { useWorkspaceStore } from "@/store/workspace";
 import { useIsCompact } from "@/hooks/use-mobile";
 import { PageRenderer, type ReaderSelection } from "@/components/reader/page-renderer";
@@ -353,6 +354,40 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
     });
   }, []);
 
+  /* ---------- RES: ثبت فیش این روایت — متن کامل روایتِ همین صفحه ----------
+     همهٔ بلوک‌های همان روایت در صفحه جمع می‌شود (روایت ممکن است چند بلوک باشد؛
+     بازه = آغاز نخستین تا پایان آخرین بلوک). متن با \n میان بلوک‌ها می‌پیوندد. */
+  const hadithFiche = useCallback(
+    (localUid: string) => {
+      if (!pageQuery.data) return false;
+      const parts = pageQuery.data.blocks.filter((b) => b.hadith_uid === localUid);
+      if (parts.length === 0) return false;
+      const first = blockOffsets(parts[0]);
+      const last = blockOffsets(parts[parts.length - 1]);
+      if (!first || !last) return false;
+      setSelection({
+        blockId: parts[0].id,
+        start: first.start,
+        end: last.end,
+        text: parts.map((b) => b.text).join("\n"),
+        hadithUid: localUid,
+      });
+      setFicheOpen(true);
+      return true;
+    },
+    [pageQuery.data],
+  );
+
+  const onHadithFiche = useCallback(
+    (localUid: string) => {
+      const ok = hadithFiche(localUid);
+      if (ok && isCompact) {
+        setFootnote(null);
+      }
+    },
+    [hadithFiche, isCompact],
+  );
+
   const onSearchInDocument = useCallback(
     (q: string) => {
       window.location.hash = `#/search?q=${encodeURIComponent(q)}&mode=normalized_phrase&scope=document&doc=${documentUid}`;
@@ -596,6 +631,7 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
                 onBack={() => setFootnote(null)}
                 onHadithLookup={setHadithLookupUid}
                 documentUid={documentUid}
+                onHadithFiche={onHadithFiche}
                 onHadithNote={(localUid, revayatIndex) => {
                   setHadithNoteScope({ localUid, revayatIndex });
                   setCtxTab("notes");
@@ -624,6 +660,7 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
               onBack={() => setFootnote(null)}
               onHadithLookup={setHadithLookupUid}
               documentUid={documentUid}
+              onHadithFiche={onHadithFiche}
               onHadithNote={(localUid, revayatIndex) => {
                 setHadithNoteScope({ localUid, revayatIndex });
                 setFootnote(null);

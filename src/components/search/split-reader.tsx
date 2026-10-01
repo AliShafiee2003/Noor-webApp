@@ -38,6 +38,7 @@ import type {
   PageRef,
   WorkDetail,
 } from "@/lib/types";
+import { blockOffsets } from "@/lib/types";
 import { useWorkspaceStore } from "@/store/workspace";
 import { PageRenderer, type ReaderSelection } from "@/components/reader/page-renderer";
 import { FootnotePanel, type FootnotePanelData } from "@/components/reader/footnote-panel";
@@ -209,6 +210,27 @@ export function SplitReaderPanel({ locator, onClose, onNavigate }: PanelProps) {
       hadith: { localUid: block.hadith_uid, revayatIndex: block.revayat_index ?? null },
     });
   }, []);
+
+  /* RES: ثبت فیش این روایت — متن کامل روایتِ همین صفحه (همان قاعدهٔ کتاب‌خوان) */
+  const onHadithFiche = useCallback(
+    (localUid: string) => {
+      if (!pageQuery.data) return;
+      const parts = pageQuery.data.blocks.filter((b) => b.hadith_uid === localUid);
+      if (parts.length === 0) return;
+      const first = blockOffsets(parts[0]);
+      const last = blockOffsets(parts[parts.length - 1]);
+      if (!first || !last) return;
+      setSelection({
+        blockId: parts[0].id,
+        start: first.start,
+        end: last.end,
+        text: parts.map((b) => b.text).join("\n"),
+        hadithUid: localUid,
+      });
+      setFicheOpen(true);
+    },
+    [pageQuery.data],
+  );
 
   const onSelection = useCallback((sel: ReaderSelection | null) => {
     setSelection(sel);
@@ -413,6 +435,7 @@ export function SplitReaderPanel({ locator, onClose, onNavigate }: PanelProps) {
             onBack={() => setCtx(null)}
             onHadithLookup={setHadithLookupUid}
             documentUid={documentUid}
+            onHadithFiche={onHadithFiche}
             onHadithNote={(localUid, revayatIndex) => {
               setHadithNoteScope({ localUid, revayatIndex });
               setCtx(null);
