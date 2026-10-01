@@ -455,11 +455,13 @@ export function NotesPanel({
                           {n.page_uid
                             ? n.page_uid === currentPageUid
                               ? "همین صفحه"
-                              : "صفحهٔ دیگر"
+                              : n.page_label && n.page_label !== "—"
+                                ? `صفحهٔ ${faNum(n.page_label)}`
+                                : "صفحهٔ دیگر"
                             : "کل سند"}
                         </span>
                         {n.updated_at ? <span>{faDateTime(n.updated_at)}</span> : null}
-                        {/* نشانی عمیق: پرش به صفحهٔ مقصد یادداشت */}
+                        {/* نشانی عمیق: پرش به صفحهٔ مقصد یادداشت — با برچسب چاپی صفحه */}
                         {n.page_uid && n.page_uid !== currentPageUid && onJumpToPage ? (
                           <button
                             type="button"
@@ -467,7 +469,9 @@ export function NotesPanel({
                             onClick={() => onJumpToPage(n.page_uid as string)}
                             title="رفتن به صفحهٔ این یادداشت"
                           >
-                            پرش به این صفحه
+                            {n.page_label && n.page_label !== "—"
+                              ? `پرش به صفحهٔ ${faNum(n.page_label)}`
+                              : "پرش به این صفحه"}
                             <ArrowLeft className="size-3" aria-hidden="true" />
                           </button>
                         ) : null}

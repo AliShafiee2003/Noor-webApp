@@ -18,7 +18,9 @@ import {
   NotebookPen,
   RotateCcw,
   Search,
+  Tag,
   TriangleAlert,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -27,7 +29,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { api, errorMessage } from "@/lib/api";
 import { HashLink } from "@/lib/hash-router";
 import { faDate, faNum } from "@/lib/format";
-import type { ClipKind, MyClipSummary } from "@/lib/types";
+import type { ClipKind, ClipTagSummary, MyClipSummary } from "@/lib/types";
 
 /** نشان نوع فیش — هم‌واژگان پروژه (KIND_META در footnote-panel و project-view) */
 const KIND_META: Record<ClipKind, { label: string; className: string; icon: typeof ClipboardList }> = {
@@ -60,8 +62,17 @@ const KIND_FILTERS: Array<{ value: KindFilter; label: string }> = [
 function FicheCard({ clip }: { clip: MyClipSummary }) {
   const meta = KIND_META[clip.kind] ?? KIND_META.original;
   const Icon = meta.icon;
+  const tags = (clip.tags ?? []).filter((t) => t && t.trim() !== "");
   return (
-    <li className="anim-rise quiet-card group rounded-xl border border-border bg-surface p-3 transition-all hover:-translate-y-px hover:shadow-sm">
+    <li
+      className={`anim-rise quiet-card group rounded-xl border bg-surface p-3 transition-all hover:-translate-y-px hover:shadow-sm ${
+        clip.kind === "original"
+          ? "border-s-[3px] border-s-primary/50 border-border"
+          : clip.kind === "as_read"
+            ? "border-s-[3px] border-s-ayah/60 border-border"
+            : "border-s-[3px] border-s-muted-foreground/40 border-border"
+      }`}
+    >
       <div className="flex flex-wrap items-center gap-1.5">
         <span
           className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${meta.className}`}
@@ -92,6 +103,20 @@ function FicheCard({ clip }: { clip: MyClipSummary }) {
         <p className="mt-1.5 line-clamp-2 whitespace-pre-wrap border-t border-border/60 pt-1.5 text-[12px] leading-6 text-muted-foreground">
           {clip.note}
         </p>
+      ) : null}
+
+      {tags.length > 0 ? (
+        <ul className="mt-2 flex flex-wrap items-center gap-1" aria-label="برچسب‌های فیش">
+          {tags.map((t) => (
+            <li
+              key={t}
+              className="inline-flex max-w-36 items-center gap-1 rounded-full border border-border/70 bg-muted/50 px-2 py-0.5 text-[10px] text-muted-foreground"
+            >
+              <Tag className="size-2.5 shrink-0" aria-hidden="true" />
+              <span className="truncate">{t}</span>
+            </li>
+          ))}
+        </ul>
       ) : null}
 
       <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-border/60 pt-2">
@@ -132,23 +157,42 @@ function FicheCard({ clip }: { clip: MyClipSummary }) {
 
 export function MyFichesSection() {
   const [kind, setKind] = useState<KindFilter>("");
+  const [tag, setTag] = useState("");
   const [qInput, setQInput] = useState("");
   const [q, setQ] = useState("");
 
   const query = useQuery({
-    queryKey: ["my-clips-all", kind, q],
+    queryKey: ["my-clips-all", kind, tag, q],
     queryFn: ({ signal }) => {
       const params: Record<string, string> = {};
       if (kind) params.kind = kind;
+      if (tag) params.tag = tag;
       if (q) params.q = q;
       return api.get<{ items: MyClipSummary[]; total: number }>("/my/clips/all", params, signal);
     },
     staleTime: 15_000,
   });
 
+  /* توزیع برچسب‌ها برای چیپ‌های پالایش — شمار صادقانهٔ سرور از کل فیش‌های فعال */
+  const tagsQuery = useQuery({
+    queryKey: ["my-clips-tags"],
+    queryFn: ({ signal }) =>
+      api.get<{ items: ClipTagSummary[] }>("/my/clips/tags", undefined, signal),
+    staleTime: 30_000,
+  });
+  const availableTags = tagsQuery.data?.items ?? [];
+
   const clips = query.data?.items ?? [];
   const total = query.data?.total ?? 0;
   const truncated = total > clips.length;
+  const hasFilter = Boolean(kind || tag || q);
+
+  const clearFilters = () => {
+    setKind("");
+    setTag("");
+    setQ("");
+    setQInput("");
+  };
 
   return (
     <section aria-labelledby="my-fiches-title">
@@ -166,7 +210,7 @@ export function MyFichesSection() {
         </HashLink>
       </div>
 
-      {/* پالایش: نوع فیش + جست‌وجوی متنی */}
+      {/* پالایش: نوع فیش + برچسب‌ها + جست‌وجوی متنی */}
       <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center">
         <div
           role="group"
@@ -218,6 +262,57 @@ export function MyFichesSection() {
         </form>
       </div>
 
+      {/* چیپ‌های برچسب — فقط وقتی برچسبی وجود دارد (شمار صادقانهٔ سرور) */}
+      {availableTags.length > 0 ? (
+        <div
+          role="group"
+          aria-label="پالایش برچسب فیش"
+          className="mb-3 flex flex-wrap items-center gap-1.5"
+        >
+          <Tag
+            className="size-3.5 shrink-0 text-muted-foreground"
+            aria-hidden="true"
+          />
+          <span className="sr-only">پالایش بر اساس برچسب:</span>
+          {availableTags.map((t) => {
+            const active = tag === t.tag;
+            return (
+              <button
+                key={t.tag}
+                type="button"
+                aria-pressed={active}
+                title={`${faNum(t.count)} فیش با برچسب «${t.tag}»`}
+                className={`inline-flex min-h-8 items-center gap-1 rounded-full border px-2.5 text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-primary ${
+                  active
+                    ? "border-primary/60 bg-primary/10 text-primary"
+                    : "border-border bg-surface text-muted-foreground hover:border-primary/40 hover:bg-primary/5 hover:text-foreground"
+                }`}
+                onClick={() => setTag(active ? "" : t.tag)}
+              >
+                {t.tag}
+                <span
+                  className={`rounded-full px-1.5 text-[10px] leading-4 ${
+                    active ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground"
+                  }`}
+                >
+                  {faNum(t.count)}
+                </span>
+              </button>
+            );
+          })}
+          {tag ? (
+            <button
+              type="button"
+              className="inline-flex min-h-8 items-center gap-1 rounded-full px-2 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              onClick={() => setTag("")}
+            >
+              <X className="size-3" aria-hidden="true" />
+              برداشتن برچسب
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
       {query.isPending ? (
         <div className="space-y-2" aria-busy="true">
           <Skeleton className="h-28 w-full" />
@@ -244,7 +339,7 @@ export function MyFichesSection() {
         <Card className="border-dashed">
           <CardContent className="flex flex-col items-center gap-1.5 p-6 text-center">
             <ClipboardList className="size-6 text-muted-foreground/50" aria-hidden="true" />
-            {q || kind ? (
+            {hasFilter ? (
               <>
                 <p className="text-sm text-muted-foreground">
                   فیشی با این پالایش یافت نشد.
@@ -253,11 +348,7 @@ export function MyFichesSection() {
                   variant="ghost"
                   size="sm"
                   className="min-h-11 md:min-h-9"
-                  onClick={() => {
-                    setKind("");
-                    setQ("");
-                    setQInput("");
-                  }}
+                  onClick={clearFilters}
                 >
                   برداشتن پالایش
                 </Button>
@@ -275,7 +366,7 @@ export function MyFichesSection() {
           <p className="mb-2 text-xs text-muted-foreground" aria-live="polite">
             {faNum(total)} فیش
             {truncated ? " — ۱۰۰ مورد نخست نمایش داده می‌شود" : ""}
-            {kind || q ? " (با پالایش فعلی)" : ""}
+            {hasFilter ? " (با پالایش فعلی)" : ""}
           </p>
           <ul className="grid gap-3 lg:grid-cols-2">
             {clips.map((c) => (

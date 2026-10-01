@@ -544,6 +544,30 @@ func (s *Server) handleHadithLocations(w http.ResponseWriter, r *http.Request) {
                 excerpt = string([]rune(excerpt)[:320]) + "…"
         }
         hadithInfo["body_excerpt"] = excerpt
+        /* «فیش‌های من» روی هر سند (RES): شمار فیش‌های فعالِ همین کاربر برای
+           این روایت محلی، گروه‌شده بر سند؛ روی خروجی گروه‌ها لحاظ می‌شود
+           تا کاربر ببیند کدام منبع را قبلاً فیش‌برداری کرده است. */
+        clipCounts, cerr := s.Research.CountMyClipsForHadith(userOf(r).UID, localUID)
+        if cerr != nil {
+                s.fail(w, r, 500, "internal", "شمار فیش‌های این روایت در دسترس نیست.", true)
+                return
+        }
+        type locDoc struct {
+                search.DocEvidence
+                MyClips int `json:"my_clips"`
+        }
+        type locGroup struct {
+                Work      search.Ref `json:"work"`
+                Documents []locDoc   `json:"documents"`
+        }
+        outGroups := make([]locGroup, 0, len(groups))
+        for _, g := range groups {
+                lg := locGroup{Work: g.Work, Documents: make([]locDoc, 0, len(g.Documents))}
+                for _, d := range g.Documents {
+                        lg.Documents = append(lg.Documents, locDoc{DocEvidence: d, MyClips: clipCounts[d.Document.UID]})
+                }
+                outGroups = append(outGroups, lg)
+        }
         out := map[string]any{
                 "hadith":               hadithInfo,
                 "query_truncated":      truncated,
@@ -551,7 +575,7 @@ func (s *Server) handleHadithLocations(w http.ResponseWriter, r *http.Request) {
                 "pass_note":            passes[0].note,
                 "verified_occurrences": totalOcc,
                 "verified_books":       len(groups),
-                "groups":               groups,
+                "groups":               outGroups,
                 "disclaimer":           "این فهرست «منابع دارای این عبارت» است؛ یکسانیِ کامل روایت بدون بررسی کارشناسی ادعا نمی‌شود.",
         }
         if len(passMeta) > 1 {

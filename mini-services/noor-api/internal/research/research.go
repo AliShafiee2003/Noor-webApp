@@ -7,6 +7,8 @@ import (
         "database/sql"
         "encoding/json"
         "errors"
+        "sort"
+        "strings"
         "time"
 
         "noor/internal/store"
@@ -383,6 +385,90 @@ func (s *Service) ListMyClips(owner, kind, q, tag string) ([]MyClip, int, error)
         return out, total, nil
 }
 
+/* ClipTag توزیع برچسب‌های کاربر: شناسه + شمار فیش‌های فعالِ دارای آن برچسب.
+   مبنای چیپ‌های پالایش برچسب در نمای «همهٔ فیش‌های من» — شمارش صادقانه
+   از کل فیش‌های فعال (نه فقط ۱۰۰ مورد نمایان) با COUNT گروهی. */
+type ClipTag struct {
+        Tag   string `json:"tag"`
+        Count int    `json:"count"`
+}
+
+/* ListMyClipTags برچسب‌های متمایز فیش‌های فعال کاربر با شمار.
+   تجزیهٔ JSON در Go انجام می‌شود نه در SQL: برنامه‌ریز کوئری SQLite
+   جدول‌مجازی json_each را پیش از پالایش WHERE ارزیابی می‌کند و ردیف
+   خراب (مثلاً tags='null' قدیمی) کل کوئری را با «malformed JSON» می‌شکند.
+   ردیف خراب = بدون برچسب، نه خطا (صداقت داده: مقادیر نامعتبر نادیده
+   گرفته می‌شوند، پنهان نمی‌شوند). شمار صادقانه از کل فیش‌های فعال با
+   COUNT در Go؛ سقف ۵۰ برچسب پرکاربردتر — نمای پالایش است، نه آرشیو. */
+func (s *Service) ListMyClipTags(owner string) ([]ClipTag, error) {
+        rows, err := s.db.Query(`SELECT c.tags FROM clips c
+                JOIN projects p ON p.uid = c.project_uid
+                WHERE c.owner_user_id=? AND c.deleted_at IS NULL AND p.deleted_at IS NULL`, owner)
+        if err != nil {
+                return nil, err
+        }
+        defer rows.Close()
+        counts := map[string]int{}
+        for rows.Next() {
+                var tags string
+                if err := rows.Scan(&tags); err != nil {
+                        return nil, err
+                }
+                var arr []string
+                if json.Unmarshal([]byte(tags), &arr) != nil {
+                        continue // مقدار نامعتبر برچسبی ندارد
+                }
+                for _, t := range arr {
+                        if t = strings.TrimSpace(t); t != "" {
+                                counts[t]++
+                        }
+                }
+        }
+        if err := rows.Err(); err != nil {
+                return nil, err
+        }
+        out := make([]ClipTag, 0, len(counts))
+        for tag, n := range counts {
+                out = append(out, ClipTag{Tag: tag, Count: n})
+        }
+        sort.Slice(out, func(i, j int) bool {
+                if out[i].Count != out[j].Count {
+                        return out[i].Count > out[j].Count
+                }
+                return out[i].Tag < out[j].Tag
+        })
+        if len(out) > 50 {
+                out = out[:50]
+        }
+        return out, nil
+}
+
+/* CountMyClipsForHadith شمار فیش‌های فعالِ کاربر برای یک روایت محلی،
+   گروه‌شده بر document_uid — برای «فیش‌های من» در گروه‌های دیالوگ §۴۷.
+   کلید گم ErrorCode نیست؛ سند بدون فیش اصلاً کلید ندارد. */
+func (s *Service) CountMyClipsForHadith(owner, localHadithUID string) (map[string]int, error) {
+        if localHadithUID == "" {
+                return map[string]int{}, nil
+        }
+        rows, err := s.db.Query(`SELECT document_uid, COUNT(*) FROM clips
+                WHERE owner_user_id=? AND local_hadith_uid=? AND deleted_at IS NULL AND document_uid<>''
+                GROUP BY document_uid`, owner, localHadithUID)
+        if err != nil {
+                return nil, err
+        }
+        defer rows.Close()
+        out := map[string]int{}
+        for rows.Next() {
+                var doc string
+                var n int
+                if err := rows.Scan(&doc, &n); err != nil {
+                        return nil, err
+                }
+                out[doc] = n
+        }
+        return out, rows.Err()
+}
+
 // UpdateClip تعارض: شناسه + مالک + نسخه هر سه باید تطابق کنند (§۳۹).
 func (s *Service) UpdateClip(owner, uid string, expectedVersion int, note, quoteAsRead *string, tags *[]string, projectUID *string) (*Clip, error) {
         c, err := s.GetClip(owner, uid)
@@ -480,6 +566,10 @@ type Note struct {
         UID         string `json:"uid"`
         DocumentUID string `json:"document_uid"`
         PageUID     string `json:"page_uid,omitempty"`
+        /* PageLabel در handler از مدل سند پر می‌شود (برچسب چاپی صفحهٔ مقصد
+           برای «پرش به صفحهٔ …» در نشانی عمیق یادداشت‌ها). برچسب دادهٔ
+           نمایشی است، نه دادهٔ ذخیره‌شدهٔ یادداشت. */
+        PageLabel   string `json:"page_label,omitempty"`
         SectionUID  string `json:"section_uid,omitempty"`
         LocalHadith string `json:"local_hadith_uid,omitempty"`
         Body        string `json:"body"`

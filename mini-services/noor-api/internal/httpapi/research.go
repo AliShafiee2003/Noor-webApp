@@ -2,6 +2,7 @@ package httpapi
 
 import (
         "encoding/json"
+        "log"
         "net/http"
         "os"
         "path/filepath"
@@ -132,6 +133,18 @@ func (s *Server) handleMyClips(w http.ResponseWriter, r *http.Request) {
         s.ok(w, map[string]any{"items": items})
 }
 
+/* handleMyClipsTags — توزیع برچسب‌های فیش‌های کاربر برای چیپ‌های پالایش:
+   GET /my/clips/tags → [{tag, count}] — شمار صادقانه از کل فیش‌های فعال. */
+func (s *Server) handleMyClipsTags(w http.ResponseWriter, r *http.Request) {
+        tags, err := s.Research.ListMyClipTags(userOf(r).UID)
+        if err != nil {
+                log.Printf("my-clips-tags: owner=%s err=%v", userOf(r).UID, err)
+                s.fail(w, r, 500, "internal", "فهرست برچسب‌ها در دسترس نیست.", true)
+                return
+        }
+        s.ok(w, map[string]any{"items": tags})
+}
+
 /* handleMyClipsAll — «همهٔ فیش‌های من» برای میزکار:
    GET /my/clips/all?kind=&q=&tag= — فیش‌های فعال کاربر از همهٔ پرونده‌ها؛
    عنوان اثر از کاتالوگ پر می‌شود و در نبود اثر خالی می‌ماند (نه حدس). */
@@ -229,6 +242,26 @@ func (s *Server) handleListNotes(w http.ResponseWriter, r *http.Request) {
         if err != nil {
                 s.fail(w, r, 500, "internal", "فهرست یادداشت‌ها در دسترس نیست.", true)
                 return
+        }
+        /* برچسب چاپی صفحهٔ مقصد — از مدل سند (دادهٔ نمایش، نه حدس).
+           مدل هر سند فقط یک‌بار در این درخواست ساخته می‌شود؛ سندی که در
+           کاتالوگ نباشد بی‌برچسب می‌ماند (LIB-09: دادهٔ ناموجود null است). */
+        labelCache := map[string]map[string]string{}
+        for i := range items {
+                if items[i].PageUID == "" {
+                        continue
+                }
+                labels, cached := labelCache[items[i].DocumentUID]
+                if !cached {
+                        labels = map[string]string{}
+                        if m, merr := s.Catalog.Model(items[i].DocumentUID); merr == nil {
+                                for _, p := range m.Pages {
+                                        labels[p.UID] = p.Label
+                                }
+                        }
+                        labelCache[items[i].DocumentUID] = labels
+                }
+                items[i].PageLabel = labels[items[i].PageUID]
         }
         if items == nil {
                 items = []research.Note{}

@@ -36,7 +36,7 @@ Mutationها باید هدر `X-Noor-CSRF` داشته باشند (token از `GE
   `{hadith:{document_uid,local_uid,piece_index,revayat_index,body_excerpt,body_length,body_blocks,sanad_blocks}, query_truncated, pass_note, passes?:[{note,query_excerpt,works_found,works_added}], verified_occurrences, verified_books, groups:[BookGroup], note?, disclaimer}`
   - `localUID` هر دو شکل را می‌پذیرد: محلی (`h-101`) و anchor (`docUID:h-101`، با یا بدون `%3A`).
   - جست‌وجو پلکانی است: نخست متن کامل بدنه (سقف ۲۰۴۸ code point؛ بیشتر → برش در مرز واژه + `query_truncated`)، سپس در نبود نتیجه بخش آغازین (۱۶۰ و ۶۰ نویسه). کتاب‌های یافت‌شده از همهٔ گذرها **اجتماع** می‌شوند (بدون دوبارشماری؛ هر اثر از گذر کشفشده) — `passes` گزارش هر گذر است.
-  - `groups` همان ساختار BookGroup جست‌وجوی کتاب‌هاست (فقط تطبیق‌های تأییدشده). UI باید «منابع دارای این عبارت» بگوید و disclaimer را عیناً نمایش دهد (عدم ادعای یکسانی روایت).
+  - `groups` همان ساختار BookGroup جست‌وجوی کتاب‌هاست (فقط تطبیق‌های تأییدشده) با افزودنیِ RES: هر سند `my_clips` دارد — شمار فیش‌های فعالِ همین کاربر برای این روایتِ محلی در آن سند (سند بدون فیش مقدار ۰ دارد). UI باید «منابع دارای این عبارت» بگوید و disclaimer را عیناً نمایش دهد (عدم ادعای یکسانی روایت).
 - `GET /documents/{uid}/pages/{page_uid}` → صفحه با بلوک‌های ساخت‌یافته:
 ```json
 { "page_uid":"p-0042","label":"۴۲","serial":42,"release_uid":"rel-...","overlay_revision_uid":"ovl-...|null",
@@ -94,9 +94,10 @@ Mutationها باید هدر `X-Noor-CSRF` داشته باشند (token از `GE
 - `GET /projects/{uid}/clips?state=active|trashed&q=&tag=&page=`
 - `GET /my/clips?document_uid=&local_hadith_uid=` → فیش‌های فعالِ همین کاربر متصل به یک روایت مشخص، از همهٔ پرونده‌هایش (هر دو پارامتر الزامی؛ شناسهٔ روایت محلی است و فقط همراه سند معنا دارد — IDH-04) → `{items:[{uid,project_uid,project_name,kind,quote_original,note,tags,page_uid,page_label,updated_at}]}`
 - `GET /my/clips/all?kind=&q=&tag=` → «همهٔ فیش‌های من» برای میزکار — فیش‌های فعال کاربر از همهٔ پرونده‌ها → `{items:[{uid,project_uid,project_name,kind,quote_original,note,tags,work_uid,work_title,document_uid,page_uid,page_label,updated_at}],total}`؛ `kind` یکی از original|as_read|note (نامعتبر → 422)، `q` در نقل‌قول/یادداشت، `tag` شامل. `total` شمارش صادقانهٔ کامل است؛ فهرست سقف ۱۰۰ دارد (اگر بیشتر شد UI برش را اعلام می‌کند). `work_title` از کاتالوگ پر می‌شود و اگر اثر در کاتالوگ نباشد خالی می‌ماند (بدون حدس — LIB-09).
+- `GET /my/clips/tags` → توزیع برچسب‌های فیش‌های فعال کاربر برای چیپ‌های پالایش «همهٔ فیش‌های من» → `{items:[{tag,count}]}`؛ شمار صادقانه از کل فیش‌های فعال (نه فقط ۱۰۰ مورد نمایان)، مرتب بر شمار نزولی، سقف ۵۰ برچسب. ردیف tags نامعتبر (مثل `null` قدیمی) برچسبی ندارد و نادیده گرفته می‌شود — خطا نیست.
 - `POST /clips {project_uid,kind:"original|as_read|note",quote_original,quote_as_read?,prefix_context?,suffix_context?,note?,tags?[],source:{work_uid,document_uid,page_uid?,page_label?,section_uid?,source_offsets:{start,end,unit:"codepoint"},source_version_uid,release_uid,overlay_revision_uid?,local_hadith_uid?}}` → snapshot کامل ذخیره می‌شود (TECH-08)
 - `GET /clips/{uid}` / `PATCH /clips/{uid} {version,...}` (409 + مسیر حل تعارض) / `DELETE /clips/{uid}` → سطل / `POST /clips/{uid}/restore` / `GET /clips/{uid}/revisions`
-- `GET /notes?document_uid=&page_uid=` / `POST /notes {target:{document_uid,page_uid?,section_uid?,local_hadith_uid?},body}` / PATCH با version
+- `GET /notes?document_uid=&page_uid=` → `{items:[{uid,document_uid,page_uid,page_label,section_uid,local_hadith_uid,body,version,updated_at}]}` — `page_label` برچسب چاپی صفحهٔ مقصد از مدل سند است (نمایشی؛ برای «پرش به صفحهٔ …» در نشانی عمیق یادداشت‌ها) و اگر سند در کاتالوگ نباشد غایب است (بدون حدس — LIB-09) / `POST /notes {target:{document_uid,page_uid?,section_uid?,local_hadith_uid?},body}` / PATCH با version
 - `GET /bookmarks` / `POST /bookmarks {document_uid,page_uid,label}` / `DELETE /bookmarks/{uid}`
 - `GET /saved-searches` / `POST /saved-searches {name,payload}` / `DELETE /saved-searches/{uid}`
 - `GET /workspace` → `{recent:[{document_uid,page_uid,label,work_title,updated_at}],prefs:{reader:{font_size,font_family,line_height,display:"paged|continuous"},theme}}`

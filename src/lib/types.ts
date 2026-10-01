@@ -404,6 +404,20 @@ export interface SearchBooksGroup {
   }>;
 }
 
+/**
+ * گروه دیالوگ §۴۷ با «فیش‌های من» — سرور شمار فیش‌های فعالِ کاربرِ همین
+ * روایت را برای هر سند (my_clips) اضافه می‌کند؛ سند بدون فیش مقدار 0 دارد.
+ */
+export interface HadithLocationsGroup {
+  work: { uid: string; title: string };
+  documents: Array<{
+    document: { uid: string; label: string };
+    verified_occurrences: number | null;
+    evidence: SearchBooksEvidence[];
+    my_clips?: number;
+  }>;
+}
+
 /* ---------- «این روایت در چه کتاب‌هایی آمده؟» (§۴۷) ---------- */
 
 export interface HadithLocationsInfo {
@@ -432,7 +446,7 @@ export interface HadithLocationsResponse {
   passes?: HadithLocationsPass[];
   verified_occurrences: number;
   verified_books: number;
-  groups: SearchBooksGroup[];
+  groups: HadithLocationsGroup[];
   note?: string | null;
   disclaimer: string;
 }
@@ -510,6 +524,8 @@ export interface Note {
   uid: string;
   document_uid: string;
   page_uid?: string | null;
+  /** برچسب چاپی صفحهٔ مقصد — از مدل سند در سرور پر می‌شود (نمایشی) */
+  page_label?: string | null;
   section_uid?: string | null;
   local_hadith_uid?: string | null;
   body: string;
@@ -554,6 +570,12 @@ export interface MyClipSummary {
   page_uid?: string | null;
   page_label?: string | null;
   updated_at?: string | null;
+}
+
+/** توزیع برچسب‌های فیش‌های من — GET /my/clips/tags (چیپ‌های پالایش) */
+export interface ClipTagSummary {
+  tag: string;
+  count: number;
 }
 
 export interface Bookmark {

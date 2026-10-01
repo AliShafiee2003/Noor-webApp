@@ -13,6 +13,7 @@
 import { useQuery } from "@tanstack/react-query";
 import {
   BookOpenText,
+  ClipboardList,
   FileText,
   LibraryBig,
   Loader2,
@@ -178,6 +179,10 @@ export function HadithLocationsDialog({
                     gi >= firstPassWorks && data.passes && data.passes.length > 1
                       ? (data.passes[1]?.note ?? null)
                       : null;
+                  const groupClips = g.documents.reduce(
+                    (n, d) => n + (d.my_clips ?? 0),
+                    0,
+                  );
                   return (
                     <li
                       key={g.work.uid + "-loc-" + gi}
@@ -193,15 +198,26 @@ export function HadithLocationsDialog({
                           </span>
                           {g.work.title}
                         </h4>
-                        <Badge variant="secondary" className="font-normal">
-                          {faNum(
-                            g.documents.reduce(
-                              (n, d) => n + (d.verified_occurrences ?? 0),
-                              0,
-                            ),
-                          )}{" "}
-                          موضع تأییدشده
-                        </Badge>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {groupClips > 0 ? (
+                            <Badge
+                              variant="outline"
+                              className="gap-1 border-primary/40 bg-primary/5 font-normal text-primary"
+                            >
+                              <ClipboardList className="size-3" aria-hidden="true" />
+                              {faNum(groupClips)} فیش من
+                            </Badge>
+                          ) : null}
+                          <Badge variant="secondary" className="font-normal">
+                            {faNum(
+                              g.documents.reduce(
+                                (n, d) => n + (d.verified_occurrences ?? 0),
+                                0,
+                              ),
+                            )}{" "}
+                            موضع تأییدشده
+                          </Badge>
+                        </div>
                       </div>
                       {relaxedNote ? (
                         <p className="mt-1.5 text-[11px] leading-5 text-muted-foreground/90">
@@ -220,11 +236,17 @@ export function HadithLocationsDialog({
                               className="rounded-lg border border-border/70 bg-background/60 p-2.5"
                             >
                               <div className="flex flex-wrap items-center justify-between gap-2">
-                                <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                <p className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
                                   <FileText className="size-3.5" aria-hidden="true" />
                                   {d.document.label || "جلد"}
                                   <span aria-hidden="true">·</span>
                                   {faNum(d.verified_occurrences ?? 0)} موضع
+                                  {d.my_clips ? (
+                                    <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                                      <ClipboardList className="size-3" aria-hidden="true" />
+                                      {faNum(d.my_clips)} فیش
+                                    </span>
+                                  ) : null}
                                 </p>
                                 {docUid ? (
                                   <HashLink
