@@ -1,29 +1,37 @@
 import "server-only";
 
 /**
- * اجراکنندهٔ کارهای خروجی PDF (§۷-الف-۲) — فقط سمت سرور.
- *
- * - کار در DB (Prisma/PdfJob) پیگیری می‌شود؛ کوکی کاربر فقط در حافظهٔ
- *   همین فراخوانی زنده است و هرگز ذخیره نمی‌شود.
- * - پیشرفت: ۵ (شروع) → ۷۰ (واکشی صفحه‌ها) → ۸۰ (ساخت PDF) → ۱۰۰ (پایان).
- * - فایل خروجی خصوصی است: data/pdf-exports/{jobUid}.pdf و فقط با توکن
- *   منقضی‌شدنی (۲۴ ساعت) از مسیر دانلود بی‌نام قابل واکشی است.
- * - بازیافت تنبل: کارهای «running» بیش از ۳۰ دقیقه هنگام فهرست‌گیری مردود می‌شوند.
+ * اجراکنندهٔ کارهای خروجی PDF (§۷-الف-۲) — نسخهٔ ج-۷:
+ * رکورد کار فقط در Go (app.sqlite) است و این فایل فقط «اجرا»ست:
+ * claim داخلی (X-Noor-Service) → واکشی صفحه‌ها/یادداشت‌ها/هایلایت‌ها با کوکی مالک
+ * → ساخت PDF با موتور موجود و نوشتن در PDF_EXPORT_DIR → progress/complete/fail داخلی.
+ * هیچ دسترسی مستقیم دیتابیس این‌جا نیست (Prisma حذف شده است) و کوکی کاربر فقط
+ * در حافظهٔ همین فراخوانی زنده است و هرگز ذخیره نمی‌شود.
  */
 
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
-import { db } from "@/lib/db";
 import { goFetch } from "@/lib/bff-auth";
 import { generateBookPdf } from "@/lib/pdf-export";
 import type { PdfIncludeNote, PdfPageInput, PdfWorkInfo } from "@/lib/pdf-export";
-import type { HighlightColor, PdfJob } from "@/lib/types";
 
-export const PDF_EXPORT_DIR = "/home/z/my-project/data/pdf-exports";
-export const TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // ۲۴ ساعت
-const STALE_RUNNING_MS = 30 * 60 * 1000; // ۳۰ دقیقه
-const ACTIVE_STATUSES = ["queued", "running"] as const;
+/** د-۹: خروجی PDF روی volume سوارشونده — با env پیکربندی می‌شود */
+export const PDF_EXPORT_DIR =
+  process.env.NOOR_PDF_EXPORT_DIR ?? "/home/z/my-project/data/pdf-exports";
+
+/** توکن سرویس داخلی worker↔api — از env (run-local.sh همان را ست می‌کند) */
+const SERVICE_TOKEN = process.env.NOOR_SERVICE_TOKEN || "dev-internal-token";
+/** د-۹: نشانی داخلی Go API — در compose «http://api:8080» */
+const UPSTREAM = process.env.NOOR_API_INTERNAL_URL ?? "http://127.0.0.1:8080";
+
+/** رنگ‌های هایلایت برای متن یادداشت */
+const COLOR_FA: Record<string, string> = {
+  yellow: "زرد",
+  green: "سبز",
+  blue: "آبی",
+  pink: "صورتی",
+  orange: "نارنجی",
+};
 
 /* ---------- نرمال‌سازی ارقام فارسی/عربی ---------- */
 
@@ -34,103 +42,36 @@ export function normalizeDigits(input: string): string {
     .replace(/[\u0660-\u0669]/g, (c) => String(c.charCodeAt(0) - 0x0660));
 }
 
-/* ---------- پارامترهای کار ---------- */
+/* ---------- فراخوانی داخلی با service token ---------- */
 
-export interface PdfJobParams {
-  from: string | null;
-  to: string | null;
-  whole: boolean;
-  include_notes: boolean;
+async function internalPdfPost(pathName: string, body: unknown): Promise<Response> {
+  return fetch(`${UPSTREAM}/api/v1${pathName}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-noor-service": SERVICE_TOKEN },
+    body: JSON.stringify(body ?? {}),
+    cache: "no-store",
+  });
 }
 
-export function parsePdfJobParams(raw: string | null | undefined): PdfJobParams | null {
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw) as Partial<PdfJobParams> | null;
-    if (!parsed || typeof parsed !== "object") return null;
-    const from = typeof parsed.from === "string" && parsed.from.trim() ? parsed.from.trim() : null;
-    const to = typeof parsed.to === "string" && parsed.to.trim() ? parsed.to.trim() : null;
-    return {
-      from,
-      to,
-      whole: parsed.whole === true || (!from && !to),
-      include_notes: parsed.include_notes === true,
-    };
-  } catch {
-    return null;
-  }
+/** اعلام شکست کار به سامانهٔ Go (مثلاً از مسیر دانلود هنگام فایل غایب) */
+export async function failPdfJob(jobUid: string, statusNote: string): Promise<void> {
+  await internalPdfPost(`/internal/pdf-jobs/${encodeURIComponent(jobUid)}/fail`, {
+    status_note: statusNote,
+  }).catch(() => undefined);
 }
 
-/* ---------- نگاشت به شکل فرانت‌اند ---------- */
+/* ---------- ردیف کار همان‌طور که Go برمی‌گرداند ---------- */
 
-/** نگاشت ردیف DB به تایپ فرانت‌اند PdfJob — لینک دانلود فقط وقتی معتبر است */
-export function mapPdfJobRow(row: {
-  id: string;
-  documentUid: string;
-  documentLabel: string;
-  workTitle: string | null;
+interface PdfJobRow {
+  uid: string;
+  document_uid: string;
+  document_label: string;
+  work_title?: string | null;
   status: string;
   progress: number;
-  statusNote: string | null;
-  fileBytes: number | null;
-  createdAt: Date;
-  finishedAt: Date | null;
-  downloadToken: string | null;
-  tokenExpiresAt: Date | null;
-  paramsJson: string;
-}): PdfJob {
-  const tokenLive =
-    row.status === "done" &&
-    !!row.downloadToken &&
-    !!row.tokenExpiresAt &&
-    row.tokenExpiresAt.getTime() > Date.now();
-  return {
-    uid: row.id,
-    document_uid: row.documentUid,
-    document_label: row.documentLabel,
-    work_title: row.workTitle,
-    status: row.status as PdfJob["status"],
-    progress: row.progress,
-    status_note: row.statusNote,
-    file_bytes: row.fileBytes,
-    created_at: row.createdAt.toISOString(),
-    finished_at: row.finishedAt ? row.finishedAt.toISOString() : null,
-    download_url:
-      tokenLive && row.downloadToken
-        ? `/api/v1/pdf-jobs/${row.id}/download?token=${encodeURIComponent(row.downloadToken)}`
-        : null,
-    token_expires_at: row.tokenExpiresAt ? row.tokenExpiresAt.toISOString() : null,
-    params: parsePdfJobParams(row.paramsJson) ?? { from: null, to: null, whole: true, include_notes: false },
-  };
+  download_token?: string | null;
+  params?: { from?: string | null; to?: string | null; whole: boolean; include_notes: boolean };
 }
-
-/* ---------- بازیافت تنبل کارهای گیرکرده ---------- */
-
-export async function reapStalePdfJobs(): Promise<void> {
-  const cutoff = new Date(Date.now() - STALE_RUNNING_MS);
-  try {
-    await db.pdfJob.updateMany({
-      where: { status: "running", createdAt: { lt: cutoff } },
-      data: {
-        status: "failed",
-        statusNote: "کار بیش از حد طول کشید؛ دوباره تلاش کنید.",
-        finishedAt: new Date(),
-      },
-    });
-  } catch (err) {
-    console.error("[pdf-jobs] reap failed:", err);
-  }
-}
-
-/* ---------- رنگ‌های هایلایت برای متن یادداشت ---------- */
-
-const COLOR_FA: Record<string, string> = {
-  yellow: "زرد",
-  green: "سبز",
-  blue: "آبی",
-  pink: "صورتی",
-  orange: "نارنجی",
-};
 
 /* ---------- خطای معنادار فارسی از پاسخ Go ---------- */
 
@@ -148,13 +89,12 @@ async function goErrorMessage(resp: Response, fallback: string): Promise<string>
 
 interface WorkResolution {
   work: PdfWorkInfo | null;
-  workUid: string | null;
   workTitle: string | null;
   documentLabel: string | null;
 }
 
 async function resolveWork(documentUid: string, cookie: string | null): Promise<WorkResolution> {
-  const empty: WorkResolution = { work: null, workUid: null, workTitle: null, documentLabel: null };
+  const empty: WorkResolution = { work: null, workTitle: null, documentLabel: null };
   try {
     const resp = await goFetch("/works?page_size=100", { cookie });
     if (!resp.ok) return empty;
@@ -181,7 +121,6 @@ async function resolveWork(documentUid: string, cookie: string | null): Promise<
             year: detail.year ?? null,
             language: detail.language ?? null,
           },
-          workUid: w.uid,
           workTitle: detail.title ?? null,
           documentLabel: doc.label || null,
         };
@@ -196,31 +135,33 @@ async function resolveWork(documentUid: string, cookie: string | null): Promise<
 /* ---------- اجرای کار ---------- */
 
 /**
- * اجرای کامل یک کار PDF: واکشی صفحه‌ها از سامانهٔ Go، جمع یادداشت‌ها/هایلایت‌ها،
- * ساخت PDF و ثبت نتیجه. کوکی فقط در همین فراخوانی زنده است.
- * هر خطا → status=failed با پیام فارسی.
+ * اجرای کامل یک کار PDF: claim از Go، واکشی صفحه‌ها، جمع یادداشت‌ها/هایلایت‌ها،
+ * ساخت PDF و ثبت نتیجه با endpoints داخلی. هر خطا → failed با پیام فارسی.
  */
 export async function runPdfJob(jobUid: string, cookie: string | null): Promise<void> {
   let filePath: string | null = null;
   try {
-    const job = await db.pdfJob.findUnique({ where: { id: jobUid } });
-    if (!job || !ACTIVE_STATUSES.includes(job.status as (typeof ACTIVE_STATUSES)[number])) return;
+    /* ۱) claim رکورد — اگر در صف نبود (claimed قبلی) بی‌صدا خارج شو */
+    const claimResp = await internalPdfPost(`/internal/pdf-jobs/claim`, { uid: jobUid });
+    if (!claimResp.ok) {
+      throw new Error("رکورد کار خروجی در سامانه claim نشد.");
+    }
+    const claimData = (await claimResp.json()) as { job?: PdfJobRow | null };
+    const job = claimData.job;
+    if (!job || job.uid !== jobUid) return;
+    const params = job.params ?? { from: null, to: null, whole: true, include_notes: false };
 
-    const params = parsePdfJobParams(job.paramsJson) ?? {
-      from: null,
-      to: null,
-      whole: true,
-      include_notes: false,
+    const progress = (p: number): void => {
+      void internalPdfPost(`/internal/pdf-jobs/${encodeURIComponent(jobUid)}/progress`, {
+        progress: p,
+      }).catch(() => undefined);
     };
 
-    await db.pdfJob.update({
-      where: { id: jobUid },
-      data: { status: "running", progress: 5, statusNote: null },
-    });
+    progress(5);
 
-    /* فهرست صفحه‌های سند */
+    /* ۲) فهرست صفحه‌های سند — با کوکی مالک */
     const pagesResp = await goFetch(
-      `/documents/${encodeURIComponent(job.documentUid)}/pages?page_size=500`,
+      `/documents/${encodeURIComponent(job.document_uid)}/pages?page_size=500`,
       { cookie },
     );
     if (!pagesResp.ok) {
@@ -233,7 +174,7 @@ export async function runPdfJob(jobUid: string, cookie: string | null): Promise<
     };
     const allItems = pagesData.items ?? [];
 
-    /* انتخاب بازه — برچسب‌های چاپی با نرمال‌سازی ارقام تطبیق می‌شوند */
+    /* ۳) انتخاب بازه — برچسب‌های چاپی با نرمال‌سازی ارقام تطبیق می‌شوند */
     let selected = allItems;
     if (!params.whole) {
       const idxOf = (label: string): number =>
@@ -251,31 +192,19 @@ export async function runPdfJob(jobUid: string, cookie: string | null): Promise<
     }
     if (selected.length === 0) throw new Error("هیچ صفحه‌ای برای خروجی یافت نشد.");
 
-    /* حل اثر والد (بهترین تلاش — هم‌زمان جلد و برچسب سند را کامل می‌کند) */
-    const resolved = await resolveWork(job.documentUid, cookie);
-    const work: PdfWorkInfo = resolved.work ?? { title: job.workTitle ?? job.documentLabel };
-    const documentLabel = resolved.documentLabel ?? job.documentLabel;
-    if (resolved.workUid || resolved.documentLabel) {
-      await db.pdfJob
-        .update({
-          where: { id: jobUid },
-          data: {
-            workUid: resolved.workUid ?? undefined,
-            workTitle: resolved.workTitle ?? undefined,
-            documentLabel,
-          },
-        })
-        .catch(() => undefined);
-    }
+    /* ۴) حل اثر والد (بهترین تلاش — برای جلد PDF) */
+    const resolved = await resolveWork(job.document_uid, cookie);
+    const work: PdfWorkInfo = resolved.work ?? { title: job.work_title ?? job.document_label };
+    const documentLabel = resolved.documentLabel ?? job.document_label;
 
-    /* واکشی محتوای صفحه‌ها — پیشرفت ۵ تا ۷۰ */
+    /* ۵) واکشی محتوای صفحه‌ها — پیشرفت ۵ تا ۷۰ */
     const pages: PdfPageInput[] = [];
     let overlayNote: string | null = null;
     let lastProgress = 5;
     for (let i = 0; i < selected.length; i++) {
       const item = selected[i];
       const resp = await goFetch(
-        `/documents/${encodeURIComponent(job.documentUid)}/pages/${encodeURIComponent(item.page_uid)}`,
+        `/documents/${encodeURIComponent(job.document_uid)}/pages/${encodeURIComponent(item.page_uid)}`,
         { cookie },
       );
       if (!resp.ok) {
@@ -306,23 +235,21 @@ export async function runPdfJob(jobUid: string, cookie: string | null): Promise<
         },
       });
 
-      const progress = 5 + Math.round(((i + 1) / selected.length) * 65);
+      const nextProgress = 5 + Math.round(((i + 1) / selected.length) * 65);
       // به‌روزرسانی هر چند صفحه (هر ۵ صفحه یا صفحهٔ آخر)
-      if (progress > lastProgress + 4 || i === selected.length - 1) {
-        lastProgress = progress;
-        await db.pdfJob
-          .update({ where: { id: jobUid }, data: { progress } })
-          .catch(() => undefined);
+      if (nextProgress > lastProgress + 4 || i === selected.length - 1) {
+        lastProgress = nextProgress;
+        progress(nextProgress);
       }
     }
 
-    /* یادداشت‌ها و هایلایت‌های خصوصی کاربر (فقط با درخواست صریح) */
+    /* ۶) یادداشت‌ها و هایلایت‌های خصوصی مالک (فقط با درخواست صریح) */
     const includeNotes: PdfIncludeNote[] = [];
     if (params.include_notes) {
-      // یادداشت‌ها در سامانهٔ Go نگهداری می‌شوند
+      // یادداشت‌ها در سامانهٔ Go
       try {
         const notesResp = await goFetch(
-          `/notes?document_uid=${encodeURIComponent(job.documentUid)}`,
+          `/notes?document_uid=${encodeURIComponent(job.document_uid)}`,
           { cookie },
         );
         if (notesResp.ok) {
@@ -340,75 +267,64 @@ export async function runPdfJob(jobUid: string, cookie: string | null): Promise<
         console.error("[pdf-jobs] fetch notes failed:", err);
       }
 
-      // هایلایت‌ها در DB محلی کاربر
+      // هایلایت‌ها هم اکنون در Go هستند (ج-۷)
       try {
-        const highlights = await db.highlight.findMany({
-          where: { userUid: job.userUid, documentUid: job.documentUid },
-          orderBy: { createdAt: "asc" },
-        });
-        for (const h of highlights) {
-          const label = selected.find((it) => it.page_uid === h.pageUid)?.label ?? null;
-          const color = COLOR_FA[h.color] ?? "";
-          const notePart = h.note ? ` — یادداشت: ${h.note}` : "";
-          includeNotes.push({
-            pageUid: h.pageUid,
-            pageLabel: label,
-            body: `هایلایت${color ? ` (${color})` : ""}: «${h.text}»${notePart}`,
-          });
+        const hlResp = await goFetch(
+          `/annotations?document_uid=${encodeURIComponent(job.document_uid)}`,
+          { cookie },
+        );
+        if (hlResp.ok) {
+          const hlData = (await hlResp.json()) as {
+            items?: Array<{ page_uid: string; text: string; color: string; note?: string | null }>;
+          };
+          for (const h of hlData.items ?? []) {
+            const label = selected.find((it) => it.page_uid === h.page_uid)?.label ?? null;
+            const color = COLOR_FA[h.color] ?? "";
+            const notePart = h.note ? ` — یادداشت: ${h.note}` : "";
+            includeNotes.push({
+              pageUid: h.page_uid,
+              pageLabel: label,
+              body: `هایلایت${color ? ` (${color})` : ""}: «${h.text}»${notePart}`,
+            });
+          }
         }
       } catch (err) {
         console.error("[pdf-jobs] fetch highlights failed:", err);
       }
     }
 
-    /* ساخت PDF — پیشرفت ۸۰ */
-    await db.pdfJob
-      .update({ where: { id: jobUid }, data: { progress: 80 } })
-      .catch(() => undefined);
+    /* ۷) ساخت PDF — پیشرفت ۸۰ (موتور و مسیر خروجی دست‌نخورده) */
+    progress(80);
 
     const pdfBuffer = await generateBookPdf({
       pages,
       work,
       documentLabel,
-      fromLabel: params.whole ? null : params.from,
-      toLabel: params.whole ? null : params.to,
+      fromLabel: params.whole || params.from == null ? null : params.from,
+      toLabel: params.whole || params.to == null ? null : params.to,
       includeNotes,
       overlayNote,
     });
 
-    /* نوشتن فایل و بستن کار */
+    /* ۸) نوشتن فایل سمت Next و بستن کار در Go */
     mkdirSync(PDF_EXPORT_DIR, { recursive: true });
     filePath = path.join(PDF_EXPORT_DIR, `${jobUid}.pdf`);
     writeFileSync(filePath, pdfBuffer);
 
-    const now = new Date();
-    await db.pdfJob.update({
-      where: { id: jobUid },
-      data: {
-        status: "done",
-        progress: 100,
-        statusNote: null,
-        fileBytes: pdfBuffer.length,
-        filePath,
-        downloadToken: job.downloadToken ?? randomUUID(),
-        tokenExpiresAt: new Date(now.getTime() + TOKEN_TTL_MS),
-        finishedAt: now,
-      },
-    });
+    const completeResp = await internalPdfPost(
+      `/internal/pdf-jobs/${encodeURIComponent(jobUid)}/complete`,
+      { token: job.download_token ?? "", file_size: pdfBuffer.length },
+    );
+    if (!completeResp.ok) {
+      throw new Error("ثبت پایان کار خروجی در سامانه ناموفق بود.");
+    }
   } catch (err) {
     console.error(`[pdf-jobs] job ${jobUid} failed:`, err);
     const message =
       err instanceof Error && err.message
         ? err.message
         : "ساخت PDF ناموفق بود؛ دوباره تلاش کنید.";
-    try {
-      await db.pdfJob.updateMany({
-        where: { id: jobUid, status: { in: [...ACTIVE_STATUSES] } },
-        data: { status: "failed", statusNote: message, finishedAt: new Date() },
-      });
-    } catch (dbErr) {
-      console.error(`[pdf-jobs] failed to mark job ${jobUid}:`, dbErr);
-    }
+    await failPdfJob(jobUid, message);
     // پاک‌سازی فایل ناتمام در صورت وجود
     if (filePath) {
       try {
@@ -418,18 +334,4 @@ export async function runPdfJob(jobUid: string, cookie: string | null): Promise<
       }
     }
   }
-}
-
-/* ---------- شمار کارهای فعال ---------- */
-
-export async function countActivePdfJobs(): Promise<number> {
-  return db.pdfJob.count({
-    where: { status: { in: [...ACTIVE_STATUSES] } },
-  });
-}
-
-export async function countActivePdfJobsForUser(userUid: string): Promise<number> {
-  return db.pdfJob.count({
-    where: { userUid, status: { in: [...ACTIVE_STATUSES] } },
-  });
 }

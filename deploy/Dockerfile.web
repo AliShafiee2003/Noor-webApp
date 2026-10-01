@@ -5,14 +5,31 @@ COPY package.json bun.lock ./
 RUN corepack enable && bun install --frozen-lockfile
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
+# د-۹: فقط ۷ فایل woff2 موردنیاز موتور PDF (Vazirmatn/Amiri/Amiri Quran/Scheherazade/Source Serif)
+RUN mkdir -p fonts-pdf/vazirmatn/files fonts-pdf/amiri/files fonts-pdf/amiri-quran/files \
+ && mkdir -p fonts-pdf/scheherazade-new/files fonts-pdf/source-serif-4/files \
+ && cp node_modules/@fontsource/vazirmatn/files/vazirmatn-arabic-400-normal.woff2 fonts-pdf/vazirmatn/files/ \
+ && cp node_modules/@fontsource/vazirmatn/files/vazirmatn-arabic-700-normal.woff2 fonts-pdf/vazirmatn/files/ \
+ && cp node_modules/@fontsource/amiri/files/amiri-arabic-400-normal.woff2 fonts-pdf/amiri/files/ \
+ && cp node_modules/@fontsource/amiri/files/amiri-arabic-700-normal.woff2 fonts-pdf/amiri/files/ \
+ && cp node_modules/@fontsource/amiri-quran/files/amiri-quran-arabic-400-normal.woff2 fonts-pdf/amiri-quran/files/ \
+ && cp node_modules/@fontsource/scheherazade-new/files/scheherazade-new-arabic-400-normal.woff2 fonts-pdf/scheherazade-new/files/ \
+ && cp node_modules/@fontsource/source-serif-4/files/source-serif-4-latin-400-normal.woff2 fonts-pdf/source-serif-4/files/
 RUN bun run build
 
 FROM node:22-alpine
-RUN addgroup -g 10001 noor && adduser -D -u 10001 -G noor noor
+# د-۹: Chromium برای موتور خروجی PDF (puppeteer-core) + فونت‌های مجوزدار محلی
+RUN addgroup -g 10001 noor && adduser -D -u 10001 -G noor noor \
+ && apk add --no-cache chromium ca-certificates fontconfig
 WORKDIR /app
 COPY --from=build --chown=noor:noor /app/.next/standalone ./
 COPY --from=build --chown=noor:noor /app/.next/static ./.next/static
 COPY --from=build --chown=noor:noor /app/public ./public
+# فونت‌های woff2 برای PDF (Vazirmatn/Amiri/...) — از node_modules جدا کپی می‌شود
+COPY --from=build --chown=noor:noor /app/fonts-pdf /app/fonts-pdf
+ENV NOOR_CHROME_PATH=/usr/bin/chromium-browser \
+    NOOR_FONT_DIR=/app/fonts-pdf \
+    NOOR_PDF_EXPORT_DIR=/data/pdf-exports
 USER noor
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=3s CMD wget -qO- http://127.0.0.1:3000/ || exit 1

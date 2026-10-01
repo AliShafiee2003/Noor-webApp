@@ -18,11 +18,11 @@
 - استک: TanStack Query (server state)، Zustand (وضعیت میزکار)، shadcn/ui بازبینی‌شده برای RTL، Tailwind 4 با tokenهای §۴۱.
 - فونت‌ها **محلی**: Vazirmatn (UI) و Amiri (متن عربی) از پکیج‌های @fontsource — بدون CDN.
 
-## ADR-4: داده‌ها
+## ADR-4: داده‌ها (بازنویسی در ج-۷ — ۲۰۲۶-۱۰-۰۱)
 - منابع نور: فقط‌خواندنی در `mini-services/noor-api/data/sources/*.db` (fixture هم‌ساخت تولیدشده توسط `cmd/fixturegen`؛ **corpus واقعی در سندباکس موجود نیست**).
-- `app.sqlite`: کاربران/نشست‌ها/دعوت‌ها/پروژه‌ها/فیش‌ها/یادداشت‌ها/نشانک‌ها/جست‌وجوهای ذخیره/ترجیحات/overlay/release/job/outbox/audit — فقط Go API نویسنده.
+- `app.sqlite`: کاربران/نشست‌ها/دعوت‌ها/پروژه‌ها/فیش‌ها/یادداشت‌ها/نشانک‌ها/جست‌وجوهای ذخیره/ترجیحات/overlay/release/job/outbox/audit **+ دادهٔ خصوصی کاربر: هایلایت‌ها (highlights)، اشتراک‌ها (share_links) و کارهای خروجی PDF (pdf_jobs)** — فقط Go API نویسنده.
 - `index.sqlite` (نسل نمایه، immutable per release): worker می‌سازد؛ API فقط می‌خواند. نسخهٔ فعال با pointer `active_release` در app.sqlite (اتمیک + outbox + audit).
-- Prisma پروژهٔ Next در این محصول استفاده نمی‌شود (مالک دادهٔ برنامه، Go API است — PRD §۳۹).
+- **Prisma حذف شد؛ مالک همهٔ داده‌ها Go API است (app.sqlite)؛ Next فقط پروکسی BFF** (PRD §۳۹). پیش‌تر (user-round-11) سه مدل Highlight/ShareLink/PdfJob روی Prisma/db/custom.db در لایهٔ BFF ساخته شده بود؛ در ج-۷ این داده‌ها به Go منتقل شدند (جدول‌های new در `internal/store/store.go`، هندلرها در `internal/httpapi/ugc.go`)، ردیف‌های موجود یک‌بار با `cmd/migrate-bff` (همان uid، تاریخ‌ها RFC3339 UTC) منتقل شدند و `prisma/` + `db/custom.db` + `@prisma/client` از پروژهٔ Next حذف شدند. مسیرهای `/api/v1/annotations`، `/api/v1/shares` و `/api/v1/pdf-jobs` در Next فقط resolveGoUser + فوروارد شفاف به `127.0.0.1:8080` هستند؛ runner خروجی PDF همچنان سمت Next اجرا می‌شود (فایل روی دیسک Next نوشته می‌شود) و رکورد/توکن/سقف هم‌زمانی را فقط از طریق endpoints داخلی Go (X-Noor-Service) ثبت می‌کند.
 
 ## ADR-5: امنیت
 - Argon2id (64MiB, t=3, p=1) با rehash در ورود؛ session token تصادفی ≥256bit، فقط digest در DB؛ کوکی HttpOnly SameSite=Lax (`Secure`/نام `__Host-` در تولید، در سندباکس بدون Secure چون preview ممکن است http باشد).

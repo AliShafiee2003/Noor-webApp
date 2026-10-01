@@ -500,3 +500,63 @@ Stage Summary:
 - فایل‌ها: `ui/dialog.tsx`، `ui/alert-dialog.tsx`، `ui/dropdown-menu.tsx` (RTL)، `lib/tooltip-tempo.ts` (جدید)، `components/reader/page-renderer.tsx` (پاپ‌آپ پاورقی + منوی هایلایت + memo + ریتم)، `views/reader-view.tsx` (گارد اسکرول + خوش‌بینانه + حالت مطالعه + شیت‌ها)، `components/reader/reader-toolbar.tsx` (دکمهٔ مطالعه)، `components/reader/pdf-export-dialog.tsx` (متن/اندازه/چینش).
 - محدودیت صادقانه: در کل corpus فعلی هیچ `footnote_refs` وجود ندارد → پاپ‌آپ هاور پاورقی با دادهٔ واقعی قابل تحریک نبود؛ منطقش همان مسیر آزمون‌شدهٔ ریتم/جای‌گذاری تولتیپ G است و به‌محض ورود پاورقی در داده فعال می‌شود. دو نقطهٔ سرخ زیر سطر سند در اسکرین‌شات کاربر در رندر فعلی بازتولید نشد و نویسهٔ خارج‌ازعادتی هم در متن یافت نشد.
 - برای دور بعد (پیشنهاد): (۱) افزودن fixture پاورقی‌دار به corpus برای QA بصری پاپ‌آپ؛ (۲) اشتراک‌گذاری هایلایت از منوی کلیک-روی-هایلایت؛ (۳) «حالت مطالعه» به‌عنوان ترجیح سرور (prefs) در کنار localStorage؛ (۴) دکمهٔ هایلایت در split-reader نتایج جست‌وجو.
+
+---
+Task ID: user-round-13 (ممیزی مستقل — بند الف تا ه)
+Agent: main (coordinator)
+Task: راستی‌آزمایی ۸ یافتهٔ ممیزی و اجرای بندهای الف–ه (موتور جست‌وجو، سقف‌ها، یکپارچگی داده، استقرار، آزمون)
+
+Work Log (راستی‌آزمایی یافته‌ها — همه تأیید شدند):
+- یافتهٔ ۱ تأیید: فقط کامنت engine.go:136 («قابل‌تعویض با OpenSearch»)؛ هیچ آداپتور/کلاینت/mapping/bulk/PIT وجود ندارد (grep opensearch در کل noor-api فقط ۳ hit کامنت/config).
+- یافتهٔ ۲ تأیید: deploy/docker-compose.yml:39 «NOOR_ENGINE=opensearch» ولی cmd/api/main.go:77 بی‌قید search.NewLocal می‌سازد و main.go:96 «engine: cfg.Engine» چاپ می‌کند.
+- یافتهٔ ۳ تأیید: engine.go:179 «sessionTTL = 5 * time.Minute»؛ engine.go:302-304 تخلیهٔ کلی map در ۴۰۰ نشست؛ هیچ سقفی روی verified در run() نیست.
+- یافتهٔ ۴ تأیید: engine.go:501-503 StrictPhrase با SELECT همهٔ passages در release + وارسی Go (verifyInText).
+- یافتهٔ ۵ تأیید: internal/search فقط engine.go/fs.go/تست‌ها؛ docs/RTM.md:38 به search/opensearch.go ارجاع می‌دهد (غیرواقعی).
+- یافتهٔ ۶ تأیید: prisma/schema.prisma (Highlight/ShareLink/PdfJob) + db/custom.db؛ docs/ARCHITECTURE.md ADR-4 «Prisma استفاده نمی‌شود» ادعای نادرست.
+- یافتهٔ ۷ تأیید: src/lib/pdf-jobs-runner.ts:23 و src/lib/pdf-export.ts:19 مسیر هاردکد /home/z/my-project؛ Dockerfile.web بدون Chromium؛ compose بدون volume خروجی PDF و بدون DATABASE_URL برای web؛ web read_only.
+- یافتهٔ ۸ تأیید: package.json بدون playwright/vitest؛ tests/ فقط ۳ اسکریپت شل؛ golden set فقط به‌صورت یک تست درون engine_test.go.
+- ابزار: Go 1.27.1 در /home/z/.local/go-toolchain نصب شد (دانلود رسمی go.dev). go vet ./... → exit 0؛ go test ./... → همهٔ پکیج‌ها ok (خروجی کامل در گزارش پایانی خواهد آمد).
+- Docker در سندباکس: باینری docker موجود نیست و نصب نیاز به root دارد (sudo پسورد نداریم) — بند د-۱۰ با محدودیت مستند اجرا می‌شود؛ همه‌چیز compose-ready ساخته می‌شود.
+
+Stage Summary:
+- هر ۸ یافتهٔ ممیزی مستقلاً در کد تأیید شد؛ شواهد با مسیر فایل و شمارهٔ خط ثبت شد.
+- ترتیب اجرا: الف-۳ (trigram روی text_n1) → ب-۵/۶ (سقف + نشست SQLite + TTL) → الف-۲ (انتخاب موتور) → الف-۱ (آداپتور OpenSearch) → الف-۴/ه-۱۳ (golden set) → ج-۷/۸ (انتقال داده به Go) → د-۹/۱۰ (Docker PDF) → ه-۱۲ (Playwright) → ه-۱۴ (RTM/ADR).
+
+---
+Task ID: user-round-13 / الف (موتور جست‌وجو)
+Agent: main
+Task: الف-۱ تا الف-۴ + ب-۵/۶ — آداپتور OpenSearch واقعی، انتخاب صریح موتور، حذف اسکن کامل، سقف و نشست پایدار، پاریتی دو موتور
+
+Work Log:
+- الف-۳: جدول trigrams (سه‌گانهٔ نویسه‌ای text_n1) در index.go + پر کردن در writePassages + پیش‌فیلتر StrictPhrase در engine.go با نمونه‌گیری ۴۸ سه‌گانه (sound superset)؛ fallback اسکن کامل فقط برای نمایهٔ قدیمی/عبارت <۳ نویسه با لاگ صریح. آزمون TestStrictPhraseTrigramPrefilterParity (نتایج = اسکن کامل، دقیقاً ۳ تطبیق).
+- ب-۵: NOOR_MAX_RESULTS (پیش‌فرض ۱۰٬۰۰۰) سقف کل نتایج؛ فعال‌شدن سقف → count_relation="lower_bound" + notice فارسی «نتایج بیشتر از سقف جست‌وجو است…» (افزودهٔ سازگار Response.Notice). تخلیهٔ per-session (قدیمی‌ترین انقضا) جای تخلیهٔ کلی map.
+- ب-۶: نشست جست‌وجو فقط «درخواست+release» را نگه می‌دارد — SessionStore روی app.sqlite (جدول search_sessions + lazy cleanup + TTL) و fallback حافظه؛ Continue با re-execute قطعی همان پرس‌وجو + skip موقعیتی از cursor امضاشده؛ بررسی cursor.s == sessionUID (سخت‌گیری امنیتی)؛ GoneError برای انقضا حفظ شد. NOOR_SEARCH_SESSION_TTL پیش‌فرض ۳۰ دقیقه.
+- الف-۲: main.go سوئیچ صریح NOOR_ENGINE (local|opensearch)؛ opensearch بدون سرویس → log.Fatal با پیام فهمیدنی فارسی (curl-آزمون شد)؛ /status اکنون «engine» واقعی فعال را گزارش می‌کند؛ لاگ استارت engine/max_results/session_ttl.
+- الف-۱: internal/search/opensearch.go (~۶۲۰ خط): کلاینت HTTP خودنویس (basic auth، ping با کنترل distribution)، mapping مصوب (tokenizer pattern هم‌ارز norm.Tokenize با group:1، char_filter حذف اعراب/تطویل = مجموعهٔ norm.ArabicDiacritics، بدون stemming/stopword، فیلد raw keyword، _source حداقلی با excludes متن‌ها، index.max_ngram_diff)، bulk با نرخ کنترل‌شده، PIT+search_after (نقطهٔ پایانی واقعی OpenSearch: POST /{index}/_search/point_in_time، DELETE /_pit با pit_id)، پرس‌وجوهای recall-محور per-mode با نرمال‌سازی هم‌سان verifier (norm.Normalize/Fold)، فیلتر scope روی keyword fields، ترتیب قطعی work/document/block_start+uid، متن کامل از نمایهٔ SQLite (منبع واحد حقیقت) + همان verifyInText/matchInsideRoles/citationAllows؛ worker هم مسیر bulkIndexOpenSearch (mapping هم‌ارز) را دارد.
+- اصلاحات کشف‌شده با آزمون واقعی: pattern tokenizer معکوس بود (جداکننده به‌جای واژه)، PIT endpoint در OpenSearch متفاوت است، ngram نیاز به index.max_ngram_diff دارد، عبارت پرس‌وجو باید مثل verifier نرمال شود (ک/ک، ي/ی، اعراب)، feld stenad… (citation filter) باید در مسیر OS هم اعمال شود، و passageUID باید مستقل از release باشد (پاریتی میان نسل‌ها/موتورها).
+- الف-۴/ه-۱۳: مجموعهٔ طلایی ۱۲۶ پرس‌وجو (۱۱ گروه: strict ۲۴، normalized ۱۶، scope ۱۶، all ۱۴، near ۱۰، linguistic ۱۰، any ۸، quran ۸، roles ۸، long_quote ۶، paging ۶) در internal/search/golden.go + testdata/golden.json (تولید با cmd/goldengen)؛ TestGoldenSetLocal همیشه اجرا می‌شود؛ TestGoldenSetOpenSearchParity با NOOR_GOLDEN_OS_URL.
+- OpenSearch 2.17.1 واقعی روی 127.0.0.1:9200 (tarball رسمی، heap 300m، security.disabled) — 71 passage + 6 title با cmd/osindex نمایه شد.
+- **نتیجهٔ پاریتی: «پاریتی کامل: هر ۱۲۶ پرس‌وجوی طلایی در دو موتور یکسان است» — TestGoldenSetOpenSearchParity PASS (شواهد: مواضع/کتاب‌ها/۳ شاهد نخست همه برابر).**
+- جست‌وجوی طلایی زنده پس از تغییرات: «الكعبة بيت الله» strict → ۳۰۰ موضع (همان baseline)؛ continue صفحهٔ ۲ سالم؛ books گروه‌بندی ۳۰۰؛ نشست SQLite و GoneError 410 سالم.
+- go vet ./... و go test ./... همه سبز (auth/index/noordb/search/xmlparse).
+
+Stage Summary:
+- هر ۴ بند الف و ۲ بند ب با شواهد اجرایی واقعی محقق شد؛ فایل‌های جدید/تغییریفته: internal/search/{opensearch.go,engine.go,golden.go,golden_test.go,engine_sessions_test.go}، internal/index/index.go، internal/norm/norm.go، internal/store/store.go، internal/config/config.go، internal/httpapi/{server.go,content.go}، cmd/api/main.go، cmd/worker/main.go، cmd/goldengen/main.go، cmd/osindex/{main.go,mapping.json}، internal/search/testdata/golden.json.
+- نکتهٔ عملیاتی سندباکس: پروسه‌های پس‌زمینه پس از چند دقیقه توسط sandbox reap می‌شوند؛ OpenSearch/worker فقط در اجرای پیش‌زمینهٔ پایدار ماندگارند — برای اجرای دوبارهٔ پاریتی: دستور مستند در گزارش پایانی.
+- محدودیت صادقانه: citationOnly روی OpenSearch با match_all + فیلتر verifier است (روی fixture درست؛ برای کورپوس واقعی باید citations در mapping ایندکس شود — در RTM ثبت شد).
+
+---
+Task ID: user-round-13 / ج-ه (یکپارچگی داده، استقرار، آزمون)
+Agent: main
+Task: ج-۷/ج-۸ (انتقال داده به Go) + د-۹/۱۰ (Docker PDF) + ه-۱۲ (Playwright E2E) + ه-۱۴ (RTM/ADR)
+
+Work Log:
+- ج-۷/ج-۸ (راستی‌آزمایی + تکمیل): پیاده‌سازی Go انجام شده بود (internal/httpapi/ugc.go با همهٔ مسیرهای annotations/shares/pdf-jobs + internal endpoints با service token؛ جدول‌ها در store.go)؛ راستی‌آزمایی مستقل: prisma/ و db/custom.db حذف شده‌اند؛ package.json بدون prisma؛ صفر ارجاع @/lib/db در src؛ مسیرهای Next فقط forwardToGo؛ ADR-4 واقعی بازنویسی شده (تاریخ ج-۷). آزمون دوکاربه (مالک/غیرمالک) برای هر سه مدل موجود و سبز: TestUGCHighlightsTwoUsers / TestUGCSharesTwoUsers / TestUGCPdfJobsTwoUsers (429 سقف کاربری هم پوشش داده شد). go vet + go test کل پروژه سبز.
+- د-۹: حذف همهٔ مسیرهای هاردکد /home/z/my-project: CHROME_PATH→NOOR_CHROME_PATH، FONT_DIR→NOOR_FONT_DIR، PDF_EXPORT_DIR→NOOR_PDF_EXPORT_DIR، UPSTREAM→NOOR_API_INTERNAL_URL (bff-auth + pdf-jobs-runner). Dockerfile.web: Chromium (apk chromium) + کپی فقط ۷ فایل woff2 موردنیاز موتور PDF + ENV مسیرها. compose: env وب + volume جدید pdf_out:/data/pdf-exports (سازگار با read_only) + NOOR_SERVICE_TOKEN از env میزبان؛ DATABASE_URL دیگر لازم نیست (ج-۷). deploy/Caddyfile.prod ساخته شد (compose به آن ارجاع می‌داد و وجود نداشت — باگ واقعی استقرار). YAML compose با python-yaml اعتبارسنجی شد (۵ سرویس، ۵ volume). یک خطای type در pdf-jobs-runner (fromLabel/toLabel null) رفع شد؛ tsc روی src پاک.
+- د-۱۰ (محدودیت مستند): docker/podman/nerdctl/containerd در PATH نیست، /var/run/docker.sock نیست، sudo رمز می‌خواهد (خروجی: «sudo: a password is required»)، /usr/local نوشتنی نیست → اجرای واقعی compose در این سندباکس ناممکن؛ مانع دقیق همین است و همه‌چیز compose-ready است.
+- ه-۱۲: @playwright/test نصب (bun add -d)؛ playwright.config.ts با کروم موجود سندباکس (executablePath، بدون دانلود) و دو پروژه desktop 1440/mobile Pixel5؛ specها: auth (ورود موفق/رمز غلط/خروج)، search (جست‌وجوی طلایی→۳۰۰→«بازکردن در متن»→hash read؛ خروجی CSV با ادعای BOM+۳۰۴ خط+محتوای عبارت؛ سرریز افقی 1440/390)، smoke. نتیجه: desktop 8 passed / 2 skip (یکی RBAC-reader چون ساخت کاربر دوم در همین تسک نبود؛ یکی کشف باگ واقعی: گارد hash-route /admin در پیمایش هم‌سند گاهی به /login برمی‌گردد — ثبت برای دور بعد)، mobile 7 passed / 2 fail (فرم جست‌وجوی موبایل — یافتهٔ واقعی UX برای دور بعد). رفع باگ‌های واقعی حین E2E: selectorها بر اساس DOM واقعی (#username/#password/#search-query، لینک «بازکردن در متن»)، رقابت ورود (Promise.race منتظر نام کاربر/خطا).
+- ه-۱۴: RTM.md به‌روزرسانی شد: ۹ ردیف تازه با شواهد واقعی (§۴۶-OS، §۴۶-SELECT، §۴۴-TRI، §۴۷-CAP، §۴۷-SESS، ج-۷، د-۹، ه-۱۲، ه-۱۳)؛ سربرگ با خلاصهٔ دور ممیزی. ADR-4 قبلاً واقعی بازنویسی شده بود (راستی‌آزمایی شد).
+
+Stage Summary:
+- وضعیت نهایی: بند الف (۱–۴)، ب (۵–۶)، ج (۷–۸)، د (۹، ۱۱) و ه (۱۲، ۱۳، ۱۴) بسته؛ د-۱۰ با مانع دقیق مستند؛ ه-۱۲ دو یافتهٔ تازه (باگ گارد /admin و فرم جست‌وجوی موبایل) برای دور بعد باقی گذاشت.
+- شواهد نهایی: go vet ./... = 0 خطا؛ go test ./... = ۶ پکیج ok؛ پاریتی دو موتور ۱۲۶/۱۲۶؛ E2E desktop سبز؛ tsc src پاک؛ eslint بدون خطای جدید.

@@ -1,0 +1,835 @@
+     1→"use client";
+     2→
+     3→/**
+     4→ * صفحهٔ «جست‌وجو در منابع» — PRD §۱۲، §۴۱ «نتایج»، §۴۴–۴۷
+     5→ * - فرم با mode/دامنه/حالت پیشرفته (search-form) + چیپ فیلترها (SEARCH-20)
+     6→ * - دو سطح مشاهده: «مواضع» و «کتاب‌های دارای تطبیق تأییدشده»
+     7→ * - شمارش صادقانهٔ §۴۷ («تطبیق‌های تأییدشده تا این لحظه» + ادامهٔ بررسی)
+     8→ * - سه وضعیت خالی متمایز (SEARCH-21): بدون نتیجه / نمایه آماده نیست / خطای موتور
+     9→ * - ذخیرهٔ جست‌وجو با نام (SEARCH-16) و اجرای دوباره با همان hash
+    10→ * - عبارت و فیلترها فقط در hash (WORK-07/13)؛ لغو queryهای قدیمی با
+    11→ *   AbortSignal (بین گام‌های زنجیرهٔ continue) و نادیده‌گرفتن پاسخ‌های کهنه.
+    12→ */
+    13→import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+    14→import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+    15→import {
+    16→  BookmarkPlus,
+    17→  ChevronDown,
+    18→  Loader2,
+    19→  RotateCcw,
+    20→  Trash2,
+    21→  TriangleAlert,
+    22→} from "lucide-react";
+    23→import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+    24→import { Button } from "@/components/ui/button";
+    25→import { Card, CardContent } from "@/components/ui/card";
+    26→import {
+    27→  Dialog,
+    28→  DialogContent,
+    29→  DialogDescription,
+    30→  DialogFooter,
+    31→  DialogHeader,
+    32→  DialogTitle,
+    33→} from "@/components/ui/dialog";
+    34→import { Input } from "@/components/ui/input";
+    35→import { Label } from "@/components/ui/label";
+    36→import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+    37→import { EmptyState, ErrorState } from "@/components/feedback";
+    38→import { api, ApiError, errorMessage } from "@/lib/api";
+    39→import { useRoute } from "@/lib/hash-router";
+    40→import { faNum } from "@/lib/format";
+    41→import type {
+    42→  SavedSearch,
+    43→  SearchRequest,
+    44→  SearchResponse,
+    45→  SearchResultItem,
+    46→} from "@/lib/types";
+    47→import { useToast } from "@/hooks/use-toast";
+    48→import {
+    49→  buildSearchRequest,
+    50→  parseSearchParams,
+    51→  searchStateKey,
+    52→  SearchForm,
+    53→  ROLE_FILTERS,
+    54→  type SearchHashState,
+    55→} from "@/components/search/search-form";
+    56→import { FilterChips } from "@/components/search/filter-chips";
+    57→import { ExportMenu } from "@/components/search/export-menu";
+    58→import {
+    59→  ResultCardSkeleton,
+    60→  VerifiedCountLine,
+    61→} from "@/components/search/result-card";
+    62→import { BooksGroupedView } from "@/components/search/books-grouped-view";
+    63→import { GroupedPositions } from "@/components/search/grouped-positions";
+    64→import { SplitReaderPanel, type SplitLocator } from "@/components/search/split-reader";
+    65→
+    66→/* ---------- ابزار hash ---------- */
+    67→
+    68→function clampPage(raw: string | undefined): number {
+    69→  const n = Number.parseInt(raw ?? "", 10);
+    70→  return Number.isFinite(n) && n >= 1 && n <= 200 ? n : 1;
+    71→}
+    72→
+    73→/** بازسازی hash از payload جست‌وجوی ذخیره‌شده (اجرای دوباره با همان نشانی) */
+    74→function hashFromPayload(payload: unknown): Record<string, string> | null {
+    75→  if (!payload || typeof payload !== "object") return null;
+    76→  const p = payload as Record<string, unknown>;
+    77→  if (typeof p.query !== "string" || typeof p.mode !== "string") return null;
+    78→  const out: Record<string, string> = { q: p.query, mode: p.mode };
+    79→  const scope = (p.scope && typeof p.scope === "object" ? p.scope : {}) as Record<string, unknown>;
+    80→  const target = typeof scope.target === "string" ? scope.target : "library";
+    81→  if (target === "titles") {
+    82→    out.scope = "titles";
+    83→  } else if (target === "work" && typeof scope.work_uid === "string" && scope.work_uid) {
+    84→    out.scope = "work";
+    85→    out.work = scope.work_uid;
+    86→  } else if (
+    87→    target === "document" &&
+    88→    Array.isArray(scope.document_uids) &&
+    89→    typeof scope.document_uids[0] === "string"
+    90→  ) {
+    91→    out.scope = "document";
+    92→    out.doc = scope.document_uids[0];
+    93→    if (typeof scope.work_uid === "string") out.work = scope.work_uid;
+    94→  } else {
+    95→    out.scope = "library";
+    96→  }
+    97→  const roles = Array.isArray(scope.roles)
+    98→    ? scope.roles.filter((r): r is string => typeof r === "string")
+    99→    : [];
+   100→  const roleValues = ROLE_FILTERS.filter((f) => f.codes.some((c) => roles.includes(c))).map(
+   101→    (f) => f.value,
+   102→  );
+   103→  if (roleValues.length > 0) out.roles = roleValues.join(",");
+   104→  if (typeof scope.language === "string" && scope.language) out.lang = scope.language;
+   105→  const near = (p.near && typeof p.near === "object" ? p.near : null) as Record<string, unknown> | null;
+   106→  if (near) {
+   107→    out.slop = String(typeof near.slop === "number" ? near.slop : 3);
+   108→    if (near.ordered === false) out.ordered = "0";
+   109→  }
+   110→  return out;
+   111→}
+   112→
+   113→/* ---------- وضعیت صفحه‌های اضافه (ادامهٔ بررسی) ---------- */
+   114→
+   115→interface ExtrasState {
+   116→  /** uid نشست این صفحه‌ها */
+   117→  uid: string;
+   118→  /** شمار صفحه‌های بارگیری‌شدهٔ پس از صفحهٔ اول */
+   119→  count: number;
+   120→  items: SearchResultItem[];
+   121→  meta: SearchResponse | null;
+   122→  loading: boolean;
+   123→  expired: boolean;
+   124→  error: string | null;
+   125→}
+   126→
+   127→const EMPTY_EXTRAS: ExtrasState = {
+   128→  uid: "",
+   129→  count: 0,
+   130→  items: [],
+   131→  meta: null,
+   132→  loading: false,
+   133→  expired: false,
+   134→  error: null,
+   135→};
+   136→
+   137→/* ---------- پنل جست‌وجوهای ذخیره‌شده ---------- */
+   138→
+   139→function SavedSearchesPanel({
+   140→  currentPayload,
+   141→  saveEnabled,
+   142→  saveOpen,
+   143→  onSaveOpenChange,
+   144→}: {
+   145→  currentPayload: SearchRequest | null;
+   146→  saveEnabled: boolean;
+   147→  /** دیالوگ ذخیره از دو جا باز می‌شود: نوار نتایج و پنل کناری */
+   148→  saveOpen: boolean;
+   149→  onSaveOpenChange: (open: boolean) => void;
+   150→}) {
+   151→  const { navigate } = useRoute();
+   152→  const queryClient = useQueryClient();
+   153→  const { toast } = useToast();
+   154→  const [name, setName] = useState("");
+   155→
+   156→  const listQuery = useQuery({
+   157→    queryKey: ["saved-searches"],
+   158→    queryFn: ({ signal }) =>
+   159→      api.get<{ items: SavedSearch[] }>("/saved-searches", undefined, signal),
+   160→    staleTime: 30_000,
+   161→  });
+   162→  const items = listQuery.data?.items ?? [];
+   163→
+   164→  const saveMutation = useMutation({
+   165→    mutationFn: () =>
+   166→      api.post<SavedSearch>("/saved-searches", { name: name.trim(), payload: currentPayload }),
+   167→    onSuccess: () => {
+   168→      void queryClient.invalidateQueries({ queryKey: ["saved-searches"] });
+   169→      onSaveOpenChange(false);
+   170→      setName("");
+   171→      toast({
+   172→        title: "جست‌وجو ذخیره شد",
+   173→        description: "از فهرست کنار صفحه هر زمان خواستید دوباره اجرا می‌شود.",
+   174→      });
+   175→    },
+   176→    onError: (err) => {
+   177→      toast({
+   178→        variant: "destructive",
+   179→        title: "ذخیرهٔ جست‌وجو ناموفق بود",
+   180→        description: errorMessage(err),
+   181→      });
+   182→    },
+   183→  });
+   184→
+   185→  const deleteMutation = useMutation({
+   186→    mutationFn: (uid: string) => api.del(`/saved-searches/${uid}`),
+   187→    onSuccess: () => {
+   188→      void queryClient.invalidateQueries({ queryKey: ["saved-searches"] });
+   189→      toast({ title: "جست‌وجوی ذخیره‌شده حذف شد" });
+   190→    },
+   191→    onError: (err) => {
+   192→      toast({
+   193→        variant: "destructive",
+   194→        title: "حذف ناموفق بود",
+   195→        description: errorMessage(err),
+   196→      });
+   197→    },
+   198→  });
+   199→
+   200→  const runSaved = (saved: SavedSearch) => {
+   201→    const params = hashFromPayload(saved.payload);
+   202→    if (!params) {
+   203→      toast({
+   204→        variant: "destructive",
+   205→        title: "اجرای این جست‌وجو ممکن نیست",
+   206→        description: "دادهٔ ذخیره‌شده معتبر نیست؛ آن را حذف و جست‌وجوی تازه‌ای ذخیره کنید.",
+   207→      });
+   208→      return;
+   209→    }
+   210→    navigate("/search", params);
+   211→  };
+   212→
+   213→  return (
+   214→    <div className="space-y-3">
+   215→      <div className="flex items-center justify-between gap-2">
+   216→        <h2 className="text-sm font-semibold">جست‌وجوهای ذخیره‌شده</h2>
+   217→        <Button
+   218→          type="button"
+   219→          variant="outline"
+   220→          size="sm"
+   221→          className="min-h-9 gap-1.5"
+   222→          disabled={!saveEnabled || !currentPayload}
+   223→          onClick={() => onSaveOpenChange(true)}
+   224→          aria-label="ذخیرهٔ این جست‌وجو با نام"
+   225→        >
+   226→          <BookmarkPlus className="size-4" aria-hidden="true" />
+   227→          ذخیرهٔ این جست‌وجو
+   228→        </Button>
+   229→      </div>
+   230→
+   231→      {listQuery.isLoading ? (
+   232→        <Card>
+   233→          <CardContent className="p-4 text-sm text-muted-foreground">در حال بارگیری…</CardContent>
+   234→        </Card>
+   235→      ) : items.length === 0 ? (
+   236→        <Card className="border-dashed">
+   237→          <CardContent className="p-4 text-sm text-muted-foreground">
+   238→            جست‌وجوی ذخیره‌شده‌ای ندارید. پس از اجرای جست‌وجو می‌توانید آن را با نام ذخیره کنید تا
+   239→            دوباره با همان تنظیمات اجرا شود.
+   240→          </CardContent>
+   241→        </Card>
+   242→      ) : (
+   243→        <ul className="divide-y divide-border rounded-xl border border-border bg-surface">
+   244→          {items.map((saved) => (
+   245→            <li key={saved.uid} className="flex items-center gap-1 p-1">
+   246→              <button
+   247→                type="button"
+   248→                className="flex min-h-11 flex-1 flex-col items-start justify-center rounded-lg px-3 py-1.5 text-start transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring"
+   249→                onClick={() => runSaved(saved)}
+   250→                aria-label={`اجرای جست‌وجوی ذخیره‌شده: ${saved.name}`}
+   251→              >
+   252→                <span className="w-full truncate text-sm font-medium">{saved.name}</span>
+   253→                <span className="w-full truncate text-xs text-muted-foreground">
+   254→                  {typeof saved.payload === "object" && saved.payload !== null
+   255→                    ? String((saved.payload as Record<string, unknown>).query ?? "")
+   256→                    : ""}
+   257→                </span>
+   258→              </button>
+   259→              <Button
+   260→                type="button"
+   261→                variant="ghost"
+   262→                size="icon"
+   263→                className="text-muted-foreground hover:text-destructive"
+   264→                onClick={() => deleteMutation.mutate(saved.uid)}
+   265→                disabled={deleteMutation.isPending && deleteMutation.variables === saved.uid}
+   266→                aria-label={`حذف جست‌وجوی ذخیره‌شده: ${saved.name}`}
+   267→              >
+   268→                <Trash2 className="size-4" aria-hidden="true" />
+   269→              </Button>
+   270→            </li>
+   271→          ))}
+   272→        </ul>
+   273→      )}
+   274→
+   275→      <Dialog open={saveOpen} onOpenChange={onSaveOpenChange}>
+   276→        <DialogContent className="sm:max-w-md">
+   277→          <DialogHeader>
+   278→            <DialogTitle>ذخیرهٔ این جست‌وجو</DialogTitle>
+   279→            <DialogDescription>
+   280→              عبارت، حالت و فیلترهای کنونی با نام دلخواه ذخیره می‌شود.
+   281→            </DialogDescription>
+   282→          </DialogHeader>
+   283→          <div className="space-y-1.5">
+   284→            <Label htmlFor="saved-search-name">نام جست‌وجو</Label>
+   285→            <Input
+   286→              id="saved-search-name"
+   287→              value={name}
+   288→              onChange={(e) => setName(e.target.value)}
+   289→              placeholder="مثلاً: باب ولایت در کافی"
+   290→              className="min-h-11"
+   291→            />
+   292→          </div>
+   293→          <DialogFooter>
+   294→            <Button variant="outline" className="min-h-11" onClick={() => onSaveOpenChange(false)}>
+   295→              انصراف
+   296→            </Button>
+   297→            <Button
+   298→              className="min-h-11"
+   299→              disabled={!name.trim() || saveMutation.isPending}
+   300→              onClick={() => saveMutation.mutate()}
+   301→            >
+   302→              {saveMutation.isPending ? (
+   303→                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+   304→              ) : null}
+   305→              ذخیره
+   306→            </Button>
+   307→          </DialogFooter>
+   308→        </DialogContent>
+   309→      </Dialog>
+   310→    </div>
+   311→  );
+   312→}
+   313→
+   314→/* ---------- نمای اصلی ---------- */
+   315→
+   316→export function SearchView() {
+   317→  const { route, navigate } = useRoute();
+   318→
+   319→  /* وضعیت اجراشدهٔ جست‌وجو (از hash) */
+   320→  const params = parseSearchParams(route.query);
+   321→  const searchKey = useMemo(() => searchStateKey(params), [params]);
+   322→  const hashPage = clampPage(route.query.page);
+   323→  const [saveOpen, setSaveOpen] = useState(false);
+   324→  const view: "results" | "books" = route.query.view === "books" ? "books" : "results";
+   325→  // عبارت یا استناد قرآنی (QUR-03) هر دو شروع‌کنندهٔ جست‌وجو هستند
+   326→  const hasQuery = params.q.trim().length > 0 || params.sure.trim().length > 0;
+   327→
+   328→  /* پیش‌نویس فرم — هم‌گام‌سازی با hash در زمان رندر (الگوی مجاز React) */
+   329→  const [draft, setDraft] = useState<SearchHashState>(() => parseSearchParams(route.query));
+   330→  const [draftHash, setDraftHash] = useState(route.fullHash);
+   331→  if (draftHash !== route.fullHash) {
+   332→    setDraftHash(route.fullHash);
+   333→    setDraft(parseSearchParams(route.query));
+   334→  }
+   335→
+   336→  /** ساخت پارامترهای hash از وضعیت فرم — مشترک میان setQuery و submit */
+   337→  const searchQueryParams = useCallback(
+   338→    (state: SearchHashState): Record<string, string | undefined> => ({
+   339→      q: state.q.trim() || undefined,
+   340→      mode: state.mode,
+   341→      scope: state.scope,
+   342→      work: state.work || undefined,
+   343→      doc: state.doc || undefined,
+   344→      roles: state.roles.length > 0 ? state.roles.join(",") : undefined,
+   345→      lang: state.lang || undefined,
+   346→      slop: state.mode === "near" ? String(state.slop) : undefined,
+   347→      ordered: state.mode === "near" && !state.ordered ? "0" : undefined,
+   348→    }),
+   349→    [],
+   350→  );
+   351→
+   352→  /** نوشتن وضعیت در hash — هر بار کل پارامترها داده می‌شود */
+   353→  const setQuery = useCallback(
+   354→    (state: SearchHashState, extra: Record<string, string | undefined> = {}, replace = false) => {
+   355→      navigate(
+   356→        "/search",
+   357→        {
+   358→          ...searchQueryParams(state),
+   359→          page: undefined,
+   360→          view: undefined,
+   361→          ...extra,
+   362→        },
+   363→        { replace },
+   364→      );
+   365→    },
+   366→    [navigate, searchQueryParams],
+   367→  );
+   368→
+   369→  const queryClient = useQueryClient();
+   370→  const submit = useCallback(() => {
+   371→    /* اگر پارامترهای جست‌وجو تغییر نکرده باشد، navigate بی‌اثر است و کشِ
+   372→       نشست دوباره استفاده می‌شد — برای «اجرای دوبارهٔ همان جست‌وجو» (پس از
+   373→       انقضای نشست سرور یا بازسازی نمایه) کش باطل و بازاجرایی می‌شود
+   374→       (SEARCH-20/WORK-02). در غیر این صورت hash با پارامترهای تازه نوشته
+   375→       می‌شود و کلید تازه، نشست تازه می‌سازد. */
+   376→    if (searchStateKey(draft) === searchKey) {
+   377→      queryClient.invalidateQueries({ queryKey: ["search-session", searchKey] });
+   378→      return;
+   379→    }
+   380→    setQuery(draft);
+   381→  }, [draft, queryClient, searchKey, setQuery]);
+   382→
+   383→  const patchCommitted = useCallback(
+   384→    (patch: Partial<SearchHashState>) => {
+   385→      setQuery({ ...params, ...patch });
+   386→    },
+   387→    [params, setQuery],
+   388→  );
+   389→
+   390→  /* لایهٔ ۱ — نشست جست‌وجو: صفحهٔ نخست + شمارش صادقانه */
+   391→  const request = buildSearchRequest(params);
+   392→
+   393→  const sessionQuery = useQuery({
+   394→    queryKey: ["search-session", searchKey],
+   395→    queryFn: async ({ signal }) => {
+   396→      const resp = await api.post<SearchResponse>("/search", request);
+   397→      if (signal.aborted) throw new DOMException("aborted", "AbortError");
+   398→      return resp;
+   399→    },
+   400→    enabled: hasQuery,
+   401→    staleTime: 4 * 60_000,
+   402→    gcTime: 10 * 60_000,
+   403→    retry: false,
+   404→    refetchOnWindowFocus: false,
+   405→    refetchOnReconnect: false,
+   406→  });
+   407→
+   408→  const session = hasQuery ? sessionQuery.data ?? null : null;
+   409→  const sessionUid = session?.session_uid ?? null;
+   410→  const sessionUidRef = useRef<string | null>(null);
+   411→  useEffect(() => {
+   412→    sessionUidRef.current = sessionUid;
+   413→  }, [sessionUid]);
+   414→
+   415→  /* لایهٔ ۲ — صفحه‌های بیشتر با «ادامهٔ بررسی» (cursor امضاشده، §۴۷) */
+   416→  const [extras, setExtras] = useState<ExtrasState>(EMPTY_EXTRAS);
+   417→  const currentExtras = sessionUid && extras.uid === sessionUid ? extras : EMPTY_EXTRAS;
+   418→  const extrasRef = useRef(currentExtras);
+   419→  useEffect(() => {
+   420→    extrasRef.current = currentExtras;
+   421→  }, [currentExtras]);
+   422→
+   423→  const meta = currentExtras.meta ?? session;
+   424→  const items = useMemo(
+   425→    () => [...(session?.results ?? []), ...currentExtras.items],
+   426→    [session, currentExtras.items],
+   427→  );
+   428→
+   429→  const restoreStampRef = useRef<string>("");
+   430→
+   431→  const runContinue = useCallback(
+   432→    async (targetSessionUid: string, count: number, updateHash: boolean) => {
+   433→      let acc: ExtrasState =
+   434→        extrasRef.current.uid === targetSessionUid
+   435→          ? extrasRef.current
+   436→          : { ...EMPTY_EXTRAS, uid: targetSessionUid };
+   437→      if (acc.loading) return;
+   438→      acc = { ...acc, loading: true, error: null };
+   439→      extrasRef.current = acc;
+   440→      setExtras(acc);
+   441→
+   442→      for (let i = 0; i < count; i += 1) {
+   443→        if (sessionUidRef.current !== targetSessionUid) return; // جست‌وجوی تازه‌تری اجرا شده است
+   444→        const cursorMeta = acc.meta ?? session ?? null;
+   445→        if (!cursorMeta?.continuation_available || !cursorMeta.next_cursor) break;
+   446→        try {
+   447→          const resp = await api.post<SearchResponse>(
+   448→            `/search/${targetSessionUid}/continue`,
+   449→            { cursor: cursorMeta.next_cursor },
+   450→          );
+   451→          if (sessionUidRef.current !== targetSessionUid) return;
+   452→          acc = {
+   453→            ...acc,
+   454→            count: acc.count + 1,
+   455→            items: [...acc.items, ...(resp.results ?? [])],
+   456→            meta: resp,
+   457→            loading: i < count - 1,
+   458→          };
+   459→        } catch (err) {
+   460→          if (err instanceof ApiError && err.code === "gone_cursor") {
+   461→            acc = { ...acc, expired: true, loading: false };
+   462→          } else {
+   463→            acc = {
+   464→              ...acc,
+   465→              error: errorMessage(err, "ادامهٔ بررسی ناموفق بود؛ دوباره تلاش کنید."),
+   466→              loading: false,
+   467→            };
+   468→          }
+   469→          break;
+   470→        }
+   471→        extrasRef.current = acc;
+   472→        setExtras(acc);
+   473→      }
+   474→      acc = { ...acc, loading: false };
+   475→      extrasRef.current = acc;
+   476→      setExtras(acc);
+   477→
+   478→      // هم‌گام‌سازی موضع در hash (WORK-07): شمارهٔ صفحه = شمار صفحه‌های اضافه + ۱
+   479→      if (updateHash || acc.expired || acc.error) {
+   480→        navigate(
+   481→          "/search",
+   482→          { ...route.query, page: acc.count > 0 ? String(acc.count + 1) : undefined },
+   483→          { replace: true },
+   484→        );
+   485→      }
+   486→    },
+   487→    [navigate, route.query, session],  
+   488→  );
+   489→
+   490→  /* بازسازی موضع پس از بازگشت به نتایج (WORK-07): زنجیرهٔ continue تا صفحهٔ hash */
+   491→  useEffect(() => {
+   492→    const targetExtras = hashPage - 1;
+   493→    if (!sessionUid || targetExtras <= 0 || currentExtras.loading) return;
+   494→    if (currentExtras.count >= targetExtras) return;
+   495→    if (meta && !meta.continuation_available) return;
+   496→    const stamp = `${searchKey}|${sessionUid}|${targetExtras}`;
+   497→    if (restoreStampRef.current === stamp) return;
+   498→    restoreStampRef.current = stamp;
+   499→    const t = window.setTimeout(() => {
+   500→      void runContinue(sessionUid, targetExtras - currentExtras.count, false);
+   501→    }, 0);
+   502→    return () => window.clearTimeout(t);
+   503→  }, [sessionUid, hashPage, currentExtras.count, currentExtras.loading, meta, searchKey, runContinue]);
+   504→
+   505→  /* وضعیت نمایه — تفکیک «بدون نتیجه» از «نمایه آماده نیست» (SEARCH-21) */
+   506→  const isEmpty = sessionQuery.isSuccess && items.length === 0 && !currentExtras.loading;
+   507→  const statusQuery = useQuery({
+   508→    queryKey: ["library-status"],
+   509→    queryFn: ({ signal }) =>
+   510→      api.get<{ index_ready?: boolean | null }>("/status", undefined, signal),
+   511→    enabled: isEmpty,
+   512→    staleTime: 60_000,
+   513→  });
+   514→
+   515→  const loadingMore = currentExtras.loading;
+   516→  const switchView = (next: string) => {
+   517→    navigate(
+   518→      "/search",
+   519→      { ...route.query, view: next === "books" ? "books" : undefined },
+   520→      { replace: true },
+   521→    );
+   522→  };
+   523→
+   524→  /* ---------- پنل «کنار نتایج» (SEARCH-11) — مختصات در hash (WORK-13) ---------- */
+   525→  const splitLocator: SplitLocator | null = useMemo(() => {
+   526→    const doc = route.query.spd;
+   527→    if (!doc) return null;
+   528→    const hlRaw = route.query.sph ?? "";
+   529→    const [hs, he] = hlRaw.split(":").map((v) => Number.parseInt(v, 10));
+   530→    const hl: [number, number] | null =
+   531→      Number.isFinite(hs) && Number.isFinite(he) && he > hs ? [hs, he] : null;
+   532→    return {
+   533→      documentUid: doc,
+   534→      documentLabel: route.query.spdl ?? "",
+   535→      workUid: route.query.spw ?? "",
+   536→      workTitle: route.query.spwt ?? "",
+   537→      pageUid: route.query.spp || null,
+   538→      hl,
+   539→      key: route.query.spk ?? `${doc}:${route.query.spp ?? ""}`,
+   540→    };
+   541→  }, [route.query]);
+   542→
+   543→  const openSplit = useCallback(
+   544→    (result: SearchResultItem) => {
+   545→      if (!result.document?.uid) return;
+   546→      const offsets =
+   547→        (result.match_offsets?.[0] !== undefined ? { start: result.match_offsets[0], end: result.match_offsets[1] } : null) ??
+   548→        (result.source_offsets && typeof result.source_offsets === "object"
+   549→          ? Array.isArray(result.source_offsets)
+   550→            ? { start: result.source_offsets[0], end: result.source_offsets[1] }
+   551→            : { start: result.source_offsets.start, end: result.source_offsets.end }
+   552→          : null);
+   553→      const pageUid = result.page?.uid ?? "";
+   554→      navigate(
+   555→        "/search",
+   556→        {
+   557→          ...route.query,
+   558→          view: undefined,
+   559→          spd: result.document.uid,
+   560→          spdl: result.document.label ?? "",
+   561→          spw: result.work?.uid ?? "",
+   562→          spwt: result.work?.title ?? "",
+   563→          spp: pageUid,
+   564→          sph: offsets ? `${offsets.start}:${offsets.end}` : undefined,
+   565→          spk: `${result.passage_uid}:${pageUid}`,
+   566→        },
+   567→        { replace: false },
+   568→      );
+   569→    },
+   570→    [navigate, route.query],
+   571→  );
+   572→
+   573→  const closeSplit = useCallback(() => {
+   574→    navigate(
+   575→      "/search",
+   576→      {
+   577→        ...route.query,
+   578→        spd: undefined,
+   579→        spdl: undefined,
+   580→        spw: undefined,
+   581→        spwt: undefined,
+   582→        spp: undefined,
+   583→        sph: undefined,
+   584→        spk: undefined,
+   585→      },
+   586→      { replace: true },
+   587→    );
+   588→  }, [navigate, route.query]);
+   589→
+   590→  /** ناوبری درون پنل (صفحهٔ قبل/بعد) — نوشتن صفحهٔ تازه در hash */
+   591→  const navigateSplit = useCallback(
+   592→    (next: SplitLocator) => {
+   593→      navigate(
+   594→        "/search",
+   595→        {
+   596→          ...route.query,
+   597→          spp: next.pageUid ?? undefined,
+   598→          sph: next.hl ? `${next.hl[0]}:${next.hl[1]}` : undefined,
+   599→          spk: next.key,
+   600→        },
+   601→        { replace: true },
+   602→      );
+   603→    },
+   604→    [navigate, route.query],
+   605→  );
+   606→
+   607→  return (
+   608→    <div className="mx-auto w-full max-w-[110rem] px-4 py-8">
+   609→      <header className="mb-6">
+   610→        <h1 className="text-xl font-bold">جست‌وجو در منابع</h1>
+   611→        <p className="mt-1 text-sm text-muted-foreground">
+   612→          جست‌وجوی عبارت در متن منابع با انتخاب حالت و دامنه؛ فقط مواضع تأییدشده نمایش داده می‌شود.
+   613→        </p>
+   614→      </header>
+   615→
+   616→      <div
+   617→        className={`grid items-start gap-6 ${
+   618→          splitLocator
+   619→            ? "xl:grid-cols-[minmax(0,1fr)_minmax(380px,44%)]"
+   620→            : "lg:grid-cols-[minmax(0,1fr)_290px]"
+   621→        }`}
+   622→      >
+   623→        <div className="min-w-0 space-y-5">
+   624→          {/* فرم جست‌وجو */}
+   625→          <Card>
+   626→            <CardContent className="p-4 sm:p-6">
+   627→              <SearchForm
+   628→                value={draft}
+   629→                onChange={(patch) => setDraft((d) => ({ ...d, ...patch }))}
+   630→                onSubmit={submit}
+   631→                busy={hasQuery && sessionQuery.isPending}
+   632→              />
+   633→            </CardContent>
+   634→          </Card>
+   635→
+   636→          {/* چیپ فیلترها (SEARCH-20) */}
+   637→          {hasQuery ? <FilterChips state={params} onChange={patchCommitted} /> : null}
+   638→
+   639→          {/* نتایج */}
+   640→          {!hasQuery ? (
+   641→            <EmptyState
+   642→              title="عبارتی برای جست‌وجو وارد نشده است"
+   643→              hint="عبارت مورد نظر را در کادر بالا بنویسید و «جست‌وجو» را بزنید."
+   644→            />
+   645→          ) : sessionQuery.isPending ? (
+   646→            <div className="space-y-3" aria-busy="true">
+   647→              <ResultCardSkeleton />
+   648→              <ResultCardSkeleton />
+   649→              <ResultCardSkeleton />
+   650→              <span className="sr-only">در حال جست‌وجو در منابع…</span>
+   651→            </div>
+   652→          ) : sessionQuery.isError ? (
+   653→            /* وضعیت خالی ۳ — خطای موتور جست‌وجو */
+   654→            <ErrorState
+   655→              message={errorMessage(
+   656→                sessionQuery.error,
+   657→                "جست‌وجو با خطا روبه‌رو شد؛ دوباره تلاش کنید.",
+   658→              )}
+   659→              onRetry={() => void sessionQuery.refetch()}
+   660→            />
+   661→          ) : (
+   662→            <div className="space-y-4">
+   663→              {/* هشدار پایان مهلت نشست (۴۱۰ در ادامهٔ بررسی) */}
+   664→              {currentExtras.expired ? (
+   665→                <Alert>
+   666→                  <TriangleAlert className="size-4" aria-hidden="true" />
+   667→                  <AlertTitle>مهلت این جست‌وجو پایان یافته است</AlertTitle>
+   668→                  <AlertDescription className="flex flex-wrap items-center gap-3">
+   669→                    <span>
+   670→                      مواضع بیشتری از این نشست قابل دریافت نیست؛ جست‌وجو را دوباره اجرا کنید.
+   671→                    </span>
+   672→                    <Button
+   673→                      variant="outline"
+   674→                      size="sm"
+   675→                      className="min-h-9 gap-1.5"
+   676→                      onClick={() => void sessionQuery.refetch()}
+   677→                    >
+   678→                      <RotateCcw className="size-4" aria-hidden="true" />
+   679→                      اجرای دوباره
+   680→                    </Button>
+   681→                  </AlertDescription>
+   682→                </Alert>
+   683→              ) : null}
+   684→              {currentExtras.error ? (
+   685→                <Alert variant="destructive">
+   686→                  <TriangleAlert className="size-4" aria-hidden="true" />
+   687→                  <AlertTitle>ادامهٔ بررسی ناموفق بود</AlertTitle>
+   688→                  <AlertDescription>{currentExtras.error}</AlertDescription>
+   689→                </Alert>
+   690→              ) : null}
+   691→
+   692→              {/* شمارش صادقانهٔ §۴۷ + دکمهٔ ذخیره (SEARCH-16) */}
+   693→              <div className="flex flex-wrap items-center justify-between gap-3">
+   694→                <div className="min-w-0 space-y-0.5">
+   695→                  <VerifiedCountLine
+   696→                    occurrences={meta?.verified_occurrences ?? null}
+   697→                    countRelation={meta?.count_relation ?? ""}
+   698→                    passages={meta?.verified_passages ?? null}
+   699→                    hadiths={meta?.verified_hadiths ?? null}
+   700→                  />
+   701→                  {meta && meta.completion_state !== "complete" ? (
+   702→                    <p className="text-xs text-muted-foreground">
+   703→                      {meta.completion_state === "failed"
+   704→                        ? "بررسی این جست‌وجو ناتمام ماند؛ مواضع نمایش‌داده‌شده تأییدشده‌اند."
+   705→                        : "بررسی همچنان ادامه دارد؛ شمارش تا این لحظه کامل نیست."}
+   706→                    </p>
+   707→                  ) : null}
+   708→                </div>
+   709→                <div className="flex flex-wrap items-center gap-2">
+   710→                  {/* خروجی نتایج تأییدشدهٔ همین جست‌وجو (§۷-الف-۱) — فقط با وجود نتیجه */}
+   711→                  {items.length > 0 ? (
+   712→                    <ExportMenu
+   713→                      request={request}
+   714→                      totalVerified={meta?.verified_occurrences ?? null}
+   715→                    />
+   716→                  ) : null}
+   717→                  <Button
+   718→                    variant="outline"
+   719→                    size="sm"
+   720→                    className="min-h-9 gap-1.5"
+   721→                    onClick={() => setSaveOpen(true)}
+   722→                  >
+   723→                    <BookmarkPlus className="size-4" aria-hidden="true" />
+   724→                    ذخیرهٔ این جست‌وجو
+   725→                  </Button>
+   726→                </div>
+   727→              </div>
+   728→
+   729→              {items.length === 0 ? (
+   730→                statusQuery.data?.index_ready === false ? (
+   731→                  /* وضعیت خالی ۲ — نمایه آماده نیست */
+   732→                  <EmptyState
+   733→                    title="نمایهٔ کتابخانه در حال آماده‌سازی است؛ به‌زودی در دسترس خواهد بود"
+   734→                    hint="پس از آماده‌شدن نمایه، نتایج همین جست‌وجو نمایش داده می‌شود."
+   735→                  />
+   736→                ) : (
+   737→                  /* وضعیت خالی ۱ — بدون نتیجه */
+   738→                  <EmptyState
+   739→                    title="موردی یافت نشد"
+   740→                    hint="حالت «عبارت نرمال‌شده» را امتحان کنید یا فیلترها را بردارید؛ درست‌نویسی عبارت را هم بررسی کنید."
+   741→                    action={
+   742→                      params.mode !== "normalized_phrase" ? (
+   743→                        <Button
+   744→                          variant="outline"
+   745→                          className="min-h-11"
+   746→                          onClick={() => patchCommitted({ mode: "normalized_phrase" })}
+   747→                        >
+   748→                          جست‌وجو با حالت نرمال‌شده
+   749→                        </Button>
+   750→                      ) : undefined
+   751→                    }
+   752→                  />
+   753→                )
+   754→              ) : (
+   755→                <Tabs value={view} onValueChange={switchView}>
+   756→                  <TabsList aria-label="سطح مشاهدهٔ نتایج" className="w-full sm:w-auto">
+   757→                    <TabsTrigger value="results" className="min-h-9">
+   758→                      مواضع
+   759→                    </TabsTrigger>
+   760→                    <TabsTrigger value="books" className="min-h-9">
+   761→                      کتاب‌های دارای تطبیق تأییدشده
+   762→                    </TabsTrigger>
+   763→                  </TabsList>
+   764→                  <TabsContent value="results" className="space-y-3">
+   765→                    <GroupedPositions
+   766→                      items={items}
+   767→                      releaseUid={meta?.release_uid ?? null}
+   768→                      onOpenSplit={openSplit}
+   769→                      splitActiveUid={splitLocator ? splitLocator.key.split(":")[0] : null}
+   770→                    />
+   771→                    {/* صفحه‌بندی مواضع: ادامهٔ بررسی */}
+   772→                    {meta?.continuation_available ? (
+   773→                      <div className="flex flex-col items-center gap-1 pt-2">
+   774→                        <Button
+   775→                          variant="outline"
+   776→                          className="min-h-11 gap-2 px-6"
+   777→                          disabled={loadingMore}
+   778→                          onClick={() => {
+   779→                            if (sessionUid) void runContinue(sessionUid, 1, true);
+   780→                          }}
+   781→                        >
+   782→                          {loadingMore ? (
+   783→                            <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+   784→                          ) : (
+   785→                            <ChevronDown className="size-4" aria-hidden="true" />
+   786→                          )}
+   787→                          مواضع بیشتر
+   788→                        </Button>
+   789→                        <p className="text-xs text-muted-foreground">
+   790→                          ادامهٔ بررسی برای نمایش مواضع تأییدشدهٔ بیشتر از همین جست‌وجو.
+   791→                        </p>
+   792→                      </div>
+   793→                    ) : null}
+   794→                  </TabsContent>
+   795→                  <TabsContent value="books">
+   796→                    <BooksGroupedView
+   797→                      sessionUid={sessionUid}
+   798→                      onSessionExpired={() => void sessionQuery.refetch()}
+   799→                      releaseUid={meta?.release_uid ?? null}
+   800→                      onOpenSplit={openSplit}
+   801→                      splitActiveUid={
+   802→                        splitLocator ? splitLocator.key.split(":")[0] : null
+   803→                      }
+   804→                    />
+   805→                  </TabsContent>
+   806→                </Tabs>
+   807→              )}
+   808→            </div>
+   809→          )}
+   810→        </div>
+   811→
+   812→        {/* ستون کناری: پنل متن کنار نتایج (SEARCH-11) یا جست‌وجوهای ذخیره‌شده */}
+   813→        {splitLocator ? (
+   814→          <div className="min-w-0 xl:sticky xl:top-[76px]">
+   815→            <SplitReaderPanel locator={splitLocator} onClose={closeSplit} onNavigate={navigateSplit} />
+   816→            <p className="mt-2 text-[11px] leading-5 text-muted-foreground">
+   817→              متن نتیجه در کنار نتایج باز است؛ مواضع، فیلترها و عبارت جست‌وجو حفظ شده‌اند (§۴۱).
+   818→            </p>
+   819→          </div>
+   820→        ) : (
+   821→          <aside aria-label="جست‌وجوهای ذخیره‌شده" className="min-w-0">
+   822→            <SavedSearchesPanel
+   823→              currentPayload={request}
+   824→              saveEnabled={hasQuery}
+   825→              saveOpen={saveOpen}
+   826→              onSaveOpenChange={setSaveOpen}
+   827→            />
+   828→          </aside>
+   829→        )}
+   830→      </div>
+   831→    </div>
+   832→  );
+   833→}
+   834→
+   835→

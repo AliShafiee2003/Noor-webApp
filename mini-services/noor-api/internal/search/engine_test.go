@@ -129,5 +129,5 @@ func TestFileStatHelpers(t *testing.T) {
 }
 
 // پوشش توابع norm برای تست
-func normNorm(s string) string { out, _ := norm.Normalize(s); return out }
+func normNorm(s string) string               { out, _ := norm.Normalize(s); return out }
 func normNormalize(s string) (string, []int) { return norm.Normalize(s) }

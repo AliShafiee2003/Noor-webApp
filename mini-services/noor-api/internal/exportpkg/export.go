@@ -9,18 +9,18 @@ import (
 
 // Clip ورودی خروجی (از research).
 type Clip struct {
-	Kind          string          `json:"kind"`
-	QuoteOriginal string          `json:"quote_original"`
-	QuoteAsRead   *string         `json:"quote_as_read"`
-	Note          *string         `json:"note"`
-	Tags          []string        `json:"tags"`
-	Project       string          `json:"project"`
-	Work          string          `json:"work"`
-	Document      string          `json:"document"`
-	PageLabel     string          `json:"page_label"`
-	Release       string          `json:"release_uid"`
-	OverlayStatus string          `json:"overlay_status"`
-	CreatedAt     string          `json:"created_at"`
+	Kind          string   `json:"kind"`
+	QuoteOriginal string   `json:"quote_original"`
+	QuoteAsRead   *string  `json:"quote_as_read"`
+	Note          *string  `json:"note"`
+	Tags          []string `json:"tags"`
+	Project       string   `json:"project"`
+	Work          string   `json:"work"`
+	Document      string   `json:"document"`
+	PageLabel     string   `json:"page_label"`
+	Release       string   `json:"release_uid"`
+	OverlayStatus string   `json:"overlay_status"`
+	CreatedAt     string   `json:"created_at"`
 }
 
 // Markdown خروجی خوانا.
@@ -142,5 +142,3 @@ func esc(s string) string {
 	s = strings.ReplaceAll(s, "\"", "&quot;")
 	return s
 }
-
-

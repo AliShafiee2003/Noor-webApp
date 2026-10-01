@@ -3,8 +3,11 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -14,6 +17,7 @@ import (
 	"noor/internal/catalog"
 	"noor/internal/config"
 	"noor/internal/index"
+	"noor/internal/norm"
 )
 
 func main() {
@@ -138,6 +142,16 @@ func runIndexRebuild(cfg *config.Config, api string, job map[string]any) {
 		return
 	}
 	idxDB.Close()
+
+	// نمایه‌سازی OpenSearch (الف-۱): وقتی NOOR_ENGINE=opensearch است، سندها با bulk
+	// کنترل‌نرخ‌شده به OpenSearch نیز منتقل می‌شوند؛ شکست = شکست کار (نسل نیم‌بنا منتشر نمی‌شود).
+	if cfg.Engine == "opensearch" {
+		if err := bulkIndexOpenSearch(cfg, tmp, releaseUID, titles, func(p int, note string) { progress(api, uid, p, note) }); err != nil {
+			fail(api, uid, "نمایه‌سازی OpenSearch ناموفق بود: "+err.Error())
+			return
+		}
+	}
+
 	active, _ := indexFile(cfg.DataDir)
 	// جابه‌سازی اتمیک
 	if active != "" {
@@ -157,7 +171,7 @@ func runIndexRebuild(cfg *config.Config, api string, job map[string]any) {
 	} else {
 		resp.Body.Close()
 	}
-	complete(api, uid, map[string]any{"passages": n, "release_uid": releaseUID, "docs": len(docs)})
+	complete(api, uid, map[string]any{"passages": n, "release_uid": releaseUID, "docs": len(docs), "opensearch_indexed": cfg.Engine == "opensearch"})
 	log.Println("index rebuilt & published:", n, "passages, release", releaseUID)
 }
 
@@ -173,3 +187,176 @@ func active2(dataDir string) string {
 	return filepath.Join(dataDir, "index.sqlite")
 }
 
+// bulkIndexOpenSearch خواندن passages/titles از نمایهٔ تازه‌ساخته و ارسال bulk به OpenSearch
+// (اندازهٔ دسته و مکث ثابت برای نرخ کنترل‌شده؛ _source سمت OpenSearch حداقلی نگه داشته می‌شود).
+func bulkIndexOpenSearch(cfg *config.Config, idxPath, releaseUID string, titles []index.TitleRow, progress func(int, string)) error {
+	db, err := sql.Open("sqlite", "file:"+idxPath+"?mode=ro")
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	client := newOSWorkerClient(cfg)
+	ctx := context.Background()
+	indexName := os.Getenv("NOOR_OS_INDEX")
+	if indexName == "" {
+		indexName = "noor-passages"
+	}
+	if err := client.ensureMapping(ctx, indexName); err != nil {
+		return err
+	}
+	rows, err := db.Query(`SELECT passage_uid, release_uid, collection_uid, work_uid, document_uid, section_uid, page_uid, page_label, language, local_hadith_uid, revayat_index, text_original, text_n1, n1_map, source_start, source_end, role_ranges, citations, fingerprint, block_start, block_end FROM passages WHERE release_uid=?`, releaseUID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	var items []map[string]any
+	var ids []string
+	sent := 0
+	flush := func() error {
+		if len(items) == 0 {
+			return nil
+		}
+		if err := client.bulk(ctx, indexName, items, ids); err != nil {
+			return err
+		}
+		sent += len(ids)
+		progress(40, fmt.Sprintf("نمایه‌سازی OpenSearch: %d موضع ارسال شد", sent))
+		items = items[:0]
+		ids = ids[:0]
+		time.Sleep(100 * time.Millisecond) // نرخ کنترل‌شده
+		return nil
+	}
+	for rows.Next() {
+		var passageUID, relUID, collectionUID, workUID, documentUID, sectionUID, pageUID, pageLabel, language, localHadith, revayatIdx, textOriginal, textN1, n1Map, roleRanges, citations, fingerprint string
+		var sourceStart, sourceEnd, blockStart, blockEnd int
+		if err := rows.Scan(&passageUID, &relUID, &collectionUID, &workUID, &documentUID, &sectionUID, &pageUID, &pageLabel, &language, &localHadith, &revayatIdx, &textOriginal, &textN1, &n1Map, &sourceStart, &sourceEnd, &roleRanges, &citations, &fingerprint, &blockStart, &blockEnd); err != nil {
+			return err
+		}
+		items = append(items, map[string]any{
+			"kind": "passage", "passage_uid": passageUID, "release_uid": relUID,
+			"collection_uid": collectionUID, "work_uid": workUID, "document_uid": documentUID,
+			"section_uid": sectionUID, "page_uid": pageUID, "page_label": pageLabel,
+			"language": language, "local_hadith_uid": localHadith, "revayat_index": revayatIdx,
+			"text_original": textOriginal, "text_n1": textN1, "n1_map": n1Map,
+			"source_start": sourceStart, "source_end": sourceEnd,
+			"role_ranges": roleRanges, "citations": citations, "fingerprint": fingerprint,
+			"block_start": blockStart, "block_end": blockEnd,
+		})
+		ids = append(ids, passageUID)
+		if len(items) >= 500 {
+			if err := flush(); err != nil {
+				return err
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if err := flush(); err != nil {
+		return err
+	}
+	// عنوان‌ها (kind=title) — جست‌وجوی نام کتاب روی OpenSearch
+	var tItems []map[string]any
+	var tIDs []string
+	for _, t := range titles {
+		tn := norm.Fold(t.Title)
+		sn := norm.Fold(t.ShortTitle)
+		tItems = append(tItems, map[string]any{
+			"kind": "title", "work_uid": t.WorkUID, "title": t.Title, "short_title": t.ShortTitle,
+			"author": t.Author, "title_search": tn + " " + sn,
+		})
+		tIDs = append(tIDs, "title-"+t.WorkUID)
+	}
+	if len(tItems) > 0 {
+		if err := client.bulk(ctx, indexName, tItems, tIDs); err != nil {
+			return err
+		}
+	}
+	progress(60, "نمایه‌سازی OpenSearch کامل شد")
+	return nil
+}
+
+// osWorkerClient کلاینت حداقلی worker برای OpenSearch (PUT index + bulk).
+type osWorkerClient struct {
+	base string
+	user string
+	pass string
+	http *http.Client
+}
+
+func newOSWorkerClient(cfg *config.Config) *osWorkerClient {
+	return &osWorkerClient{base: cfg.OpenSearchURL, user: cfg.OpenSearchUser, pass: cfg.OpenSearchPass, http: &http.Client{Timeout: 60 * time.Second}}
+}
+
+func (c *osWorkerClient) do(ctx context.Context, method, path string, body []byte) ([]byte, int, error) {
+	rdr := bytes.NewReader(body)
+	req, err := http.NewRequestWithContext(ctx, method, c.base+path, rdr)
+	if err != nil {
+		return nil, 0, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.user != "" {
+		req.SetBasicAuth(c.user, c.pass)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
+	return raw, resp.StatusCode, nil
+}
+
+func (c *osWorkerClient) ensureMapping(ctx context.Context, index string) error {
+	_, code, err := c.do(ctx, "HEAD", "/"+index, nil)
+	if err == nil && code == 200 {
+		return nil
+	}
+	// mapping هم‌ارز آداپتور (internal/search/opensearch.go) — بدون stemming/stopword، tokenizer واژه‌محور
+	body := `{"settings":{"number_of_shards":1,"number_of_replicas":0,"index.max_ngram_diff":22,"analysis":{"char_filter":{"noor_strip":{"type":"mapping","mappings":["\\u0610 => ","\\u0611 => ","\\u0612 => ","\\u064B => ","\\u064C => ","\\u064E => ","\\u064F => ","\\u0650 => ","\\u0651 => ","\\u0652 => ","\\u0653 => ","\\u0654 => ","\\u0655 => ","\\u0656 => ","\\u0670 => ","\\u0674 => ","\\u06D6 => ","\\u06D7 => ","\\u06D8 => ","\\u06D9 => ","\\u06DA => ","\\u06DB => ","\\u06DC => ","\\u06DF => ","\\u06E0 => ","\\u06E1 => ","\\u06E2 => ","\\u06E3 => ","\\u06E4 => ","\\u06E7 => ","\\u06E8 => ","\\u06EA => ","\\u06EB => ","\\u06EC => ","\\u06ED => ","\\u0640 => "]},"noor_fold":{"type":"mapping","mappings":["أ => ا","إ => ا","آ => ا","ٱ => ا","ؤ => و","ئ => ی","ة => ه","ى => ی","ي => ی","ك => ک"]}},"tokenizer":{"noor_tok":{"type":"pattern","pattern":"([\\p{L}\\p{Nd}\\-\\u200C]+)","group":1}},"filter":{"title_ngram":{"type":"ngram","min_gram":2,"max_gram":24}},"analyzer":{"noor_n1":{"type":"custom","char_filter":["noor_strip"],"tokenizer":"noor_tok","filter":["lowercase"]},"noor_title":{"type":"custom","char_filter":["noor_fold"],"tokenizer":"noor_tok","filter":["lowercase","title_ngram"]},"noor_title_q":{"type":"custom","char_filter":["noor_fold"],"tokenizer":"noor_tok","filter":["lowercase"]}}}},"mappings":{"_source":{"excludes":["text_original","text_n1","n1_map","role_ranges","citations"]},"properties":{"kind":{"type":"keyword"},"passage_uid":{"type":"keyword"},"release_uid":{"type":"keyword"},"collection_uid":{"type":"keyword"},"work_uid":{"type":"keyword"},"document_uid":{"type":"keyword"},"section_uid":{"type":"keyword"},"page_uid":{"type":"keyword"},"page_label":{"type":"keyword"},"language":{"type":"keyword"},"local_hadith_uid":{"type":"keyword"},"revayat_index":{"type":"keyword"},"fingerprint":{"type":"keyword"},"source_start":{"type":"integer"},"source_end":{"type":"integer"},"block_start":{"type":"integer"},"block_end":{"type":"integer"},"text_original":{"type":"text","analyzer":"noor_n1"},"text_n1":{"type":"text","analyzer":"noor_n1","fields":{"raw":{"type":"keyword"}}},"title":{"type":"keyword"},"short_title":{"type":"keyword"},"author":{"type":"keyword"},"title_search":{"type":"text","analyzer":"noor_title"}}}}`
+	raw, code, err := c.do(ctx, "PUT", "/"+index, []byte(body))
+	if err != nil {
+		return err
+	}
+	if code >= 300 {
+		return fmt.Errorf("ساخت index OpenSearch ناموفق (HTTP %d): %s", code, truncateStr(string(raw), 300))
+	}
+	return nil
+}
+
+func (c *osWorkerClient) bulk(ctx context.Context, index string, items []map[string]any, ids []string) error {
+	var buf bytes.Buffer
+	for i := range items {
+		meta, _ := json.Marshal(map[string]any{"index": map[string]any{"_index": index, "_id": ids[i]}})
+		buf.Write(meta)
+		buf.WriteByte('\n')
+		doc, err := json.Marshal(items[i])
+		if err != nil {
+			return err
+		}
+		buf.Write(doc)
+		buf.WriteByte('\n')
+	}
+	raw, code, err := c.do(ctx, "POST", "/_bulk", buf.Bytes())
+	if err != nil {
+		return err
+	}
+	if code >= 300 {
+		return fmt.Errorf("bulk ناموفق (HTTP %d): %s", code, truncateStr(string(raw), 300))
+	}
+	var out struct {
+		Errors bool `json:"errors"`
+	}
+	if json.Unmarshal(raw, &out) == nil && out.Errors {
+		return fmt.Errorf("bulk با خطای آیتمی مواجه شد: %s", truncateStr(string(raw), 300))
+	}
+	return nil
+}
+
+func truncateStr(s string, n int) string {
+	r := []rune(s)
+	if len(r) > n {
+		return string(r[:n]) + "…"
+	}
+	return s
+}

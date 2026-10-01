@@ -1,13 +1,16 @@
 import type { NextRequest } from "next/server";
 import { readFileSync, rmSync } from "node:fs";
-import { db } from "@/lib/db";
-import { resolveGoUser, unauthorized } from "@/lib/bff-auth";
+import path from "node:path";
+import { goFetch, resolveGoUser, unauthorized } from "@/lib/bff-auth";
+import { PDF_EXPORT_DIR, failPdfJob } from "@/lib/pdf-jobs-runner";
+import type { PdfJob } from "@/lib/types";
 
 /**
- * دانلود خصوصی خروجی PDF (§۷-الف-۲):
- * - فقط مالک کار؛ فقط وقتی کار done است؛ فقط با توکن معتبر و منقضی‌نشده (۲۴ ساعت).
- * - فایل از دیسک خوانده و با Content-Disposition مناسب فارسی برمی‌گردد.
- * - توکن منقضی یا نامعتبر → 410/403 با پیام فارسی.
+ * دانلود خصوصی خروجی PDF (§۷-الف-۲) — ج-۷:
+ * - احراز مالکیت از GET /pdf-jobs/{uid} سامانهٔ Go با کوکی کاربر (فقط مالک توکن را می‌بیند)؛
+ *   غیرمالک/ناموجود → همان 404 فارسی Go. منقضی/نامعتبر → 410/403 با پیام دقیق قبلی.
+ * - فایل روی دیسک سمت Next نوشته می‌شود (PDF_EXPORT_DIR/{uid}.pdf) و همین‌جا سرو می‌شود؛
+ *   فایل غایب → کار مردود اعلام و 500 فارسی برمی‌گردد.
  */
 export const dynamic = "force-dynamic";
 
@@ -42,67 +45,59 @@ export async function GET(
   if (!user) return unauthorized();
 
   const { uid } = await ctx.params;
-  const row = await db.pdfJob.findUnique({ where: { id: uid } });
-  if (!row || row.userUid !== user.uid) {
-    return apiError(404, "not_found", "کار خروجی یافت نشد.");
-  }
 
-  if (row.status !== "done") {
+  /* احراز مالکیت/توکن از رکورد Go — غیرمالک یا ناموجود همان پاسخ Go (404) */
+  const resp = await goFetch(`/pdf-jobs/${encodeURIComponent(uid)}`, { cookie });
+  if (!resp.ok) {
+    const text = await resp.text();
+    return new Response(text, {
+      status: resp.status,
+      headers: { "content-type": resp.headers.get("content-type") ?? "application/json" },
+    });
+  }
+  const job = (await resp.json()) as PdfJob & { download_token?: string | null };
+
+  if (job.status !== "done") {
     return apiError(
       409,
       "invalid_query",
-      row.status === "failed"
+      job.status === "failed"
         ? "این کار ناموفق بوده است؛ خروجی تازه بگیرید."
         : "خروجی هنوز آماده نیست؛ پس از پایان کار دوباره تلاش کنید.",
     );
   }
 
   const token = req.nextUrl.searchParams.get("token") ?? "";
-  if (!row.downloadToken || token !== row.downloadToken) {
+  if (!job.download_token || token !== job.download_token) {
     return apiError(403, "forbidden", "توکن دانلود معتبر نیست.");
   }
-  if (!row.tokenExpiresAt || row.tokenExpiresAt.getTime() <= Date.now()) {
+  if (!job.token_expires_at || Date.parse(job.token_expires_at) <= Date.now()) {
     return apiError(410, "gone", "لینک دانلود منقضی شده است؛ خروجی تازه بگیرید.");
   }
 
-  if (!row.filePath) {
-    return apiError(500, "internal", "فایل خروجی در دسترس نیست؛ خروجی تازه بگیرید.");
-  }
-
+  const filePath = path.join(PDF_EXPORT_DIR, `${uid}.pdf`);
   let buf: Buffer;
   try {
-    buf = readFileSync(row.filePath);
+    buf = readFileSync(filePath);
   } catch {
-    // فایل از دست رفته → کار مردود اعلام می‌شود
-    await db.pdfJob
-      .update({
-        where: { id: row.id },
-        data: {
-          status: "failed",
-          statusNote: "فایل خروجی روی دیسک یافت نشد؛ خروجی تازه بگیرید.",
-        },
-      })
-      .catch(() => undefined);
+    // فایل از دست رفته → کار مردود اعلام می‌شود (رکورد سمت Go)
+    await failPdfJob(uid, "فایل خروجی روی دیسک یافت نشد؛ خروجی تازه بگیرید.");
     try {
-      rmSync(row.filePath, { force: true });
+      rmSync(filePath, { force: true });
     } catch {
       /* بی‌اهمیت */
     }
     return apiError(500, "internal", "فایل خروجی در دسترس نیست؛ خروجی تازه بگیرید.");
   }
 
-  const title = safeFileNamePart(row.workTitle || row.documentLabel || "کتاب");
-  const date = row.finishedAt
-    ? new Intl.DateTimeFormat("fa-IR-u-nu-latn", {
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-      }).format(row.finishedAt)
-    : new Intl.DateTimeFormat("fa-IR-u-nu-latn", {
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-      }).format(new Date());
+  const title = safeFileNamePart(job.work_title || job.document_label || "کتاب");
+  const fmt = new Intl.DateTimeFormat("fa-IR-u-nu-latn", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  const finishedMs = job.finished_at ? Date.parse(job.finished_at) : NaN;
+  const date = fmt.format(Number.isNaN(finishedMs) ? new Date() : new Date(finishedMs));
   const faName = `کتاب-${title}-${date}.pdf`;
 
   const bytes = new Uint8Array(buf.buffer as ArrayBuffer, buf.byteOffset, buf.byteLength);

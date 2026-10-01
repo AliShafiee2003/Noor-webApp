@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -39,96 +40,133 @@ func (s *DB) migrate() error {
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT DEFAULT (datetime('now')))`,
 		`CREATE TABLE IF NOT EXISTS users(
-			uid TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, username_norm TEXT NOT NULL UNIQUE,
-			display_name TEXT NOT NULL, password_hash TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN ('admin','reader')),
-			totp_secret TEXT, totp_enabled INTEGER NOT NULL DEFAULT 0, disabled INTEGER NOT NULL DEFAULT 0,
-			created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
+                        uid TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, username_norm TEXT NOT NULL UNIQUE,
+                        display_name TEXT NOT NULL, password_hash TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN ('admin','reader')),
+                        totp_secret TEXT, totp_enabled INTEGER NOT NULL DEFAULT 0, disabled INTEGER NOT NULL DEFAULT 0,
+                        created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
 		`CREATE TABLE IF NOT EXISTS sessions(
-			uid TEXT PRIMARY KEY, user_uid TEXT NOT NULL REFERENCES users(uid), token_digest TEXT NOT NULL UNIQUE,
-			created_at TEXT NOT NULL DEFAULT (datetime('now')), last_seen TEXT NOT NULL DEFAULT (datetime('now')),
-			expires_at TEXT NOT NULL, idle_expires_at TEXT NOT NULL, ip TEXT, user_agent TEXT,
-			pending_mfa INTEGER NOT NULL DEFAULT 0, revoked_at TEXT)`,
+                        uid TEXT PRIMARY KEY, user_uid TEXT NOT NULL REFERENCES users(uid), token_digest TEXT NOT NULL UNIQUE,
+                        created_at TEXT NOT NULL DEFAULT (datetime('now')), last_seen TEXT NOT NULL DEFAULT (datetime('now')),
+                        expires_at TEXT NOT NULL, idle_expires_at TEXT NOT NULL, ip TEXT, user_agent TEXT,
+                        pending_mfa INTEGER NOT NULL DEFAULT 0, revoked_at TEXT)`,
 		`CREATE TABLE IF NOT EXISTS invitations(
-			code_digest TEXT PRIMARY KEY, role TEXT NOT NULL CHECK(role IN ('admin','reader')),
-			created_by TEXT NOT NULL REFERENCES users(uid), created_at TEXT NOT NULL DEFAULT (datetime('now')),
-			expires_at TEXT NOT NULL, used_at TEXT, used_by TEXT)`,
+                        code_digest TEXT PRIMARY KEY, role TEXT NOT NULL CHECK(role IN ('admin','reader')),
+                        created_by TEXT NOT NULL REFERENCES users(uid), created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                        expires_at TEXT NOT NULL, used_at TEXT, used_by TEXT)`,
 		`CREATE TABLE IF NOT EXISTS projects(
-			uid TEXT PRIMARY KEY, owner_user_id TEXT NOT NULL REFERENCES users(uid),
-			name TEXT NOT NULL, archived INTEGER NOT NULL DEFAULT 0, deleted_at TEXT,
-			version INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT (datetime('now')),
-			updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
+                        uid TEXT PRIMARY KEY, owner_user_id TEXT NOT NULL REFERENCES users(uid),
+                        name TEXT NOT NULL, archived INTEGER NOT NULL DEFAULT 0, deleted_at TEXT,
+                        version INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                        updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
 		`CREATE INDEX IF NOT EXISTS idx_projects_owner ON projects(owner_user_id, updated_at)`,
 		`CREATE TABLE IF NOT EXISTS clips(
-			uid TEXT PRIMARY KEY, owner_user_id TEXT NOT NULL REFERENCES users(uid), project_uid TEXT NOT NULL REFERENCES projects(uid),
-			kind TEXT NOT NULL CHECK(kind IN ('original','as_read','note')),
-			quote_original TEXT NOT NULL, quote_as_read TEXT, prefix_context TEXT, suffix_context TEXT,
-			note TEXT, tags TEXT, deleted_at TEXT, version INTEGER NOT NULL DEFAULT 1,
-			work_uid TEXT, document_uid TEXT, page_uid TEXT, page_label TEXT, section_uid TEXT,
-			source_offsets_start INTEGER, source_offsets_end INTEGER, offset_unit TEXT DEFAULT 'codepoint',
-			source_version_uid TEXT, release_uid TEXT, overlay_revision_uid TEXT, local_hadith_uid TEXT,
-			created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
+                        uid TEXT PRIMARY KEY, owner_user_id TEXT NOT NULL REFERENCES users(uid), project_uid TEXT NOT NULL REFERENCES projects(uid),
+                        kind TEXT NOT NULL CHECK(kind IN ('original','as_read','note')),
+                        quote_original TEXT NOT NULL, quote_as_read TEXT, prefix_context TEXT, suffix_context TEXT,
+                        note TEXT, tags TEXT, deleted_at TEXT, version INTEGER NOT NULL DEFAULT 1,
+                        work_uid TEXT, document_uid TEXT, page_uid TEXT, page_label TEXT, section_uid TEXT,
+                        source_offsets_start INTEGER, source_offsets_end INTEGER, offset_unit TEXT DEFAULT 'codepoint',
+                        source_version_uid TEXT, release_uid TEXT, overlay_revision_uid TEXT, local_hadith_uid TEXT,
+                        created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
 		`CREATE INDEX IF NOT EXISTS idx_clips_owner ON clips(owner_user_id, updated_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_clips_project ON clips(project_uid, deleted_at)`,
 		`CREATE TABLE IF NOT EXISTS clip_revisions(
-			id INTEGER PRIMARY KEY AUTOINCREMENT, clip_uid TEXT NOT NULL REFERENCES clips(uid),
-			owner_user_id TEXT NOT NULL, body TEXT NOT NULL, version INTEGER NOT NULL,
-			created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
+                        id INTEGER PRIMARY KEY AUTOINCREMENT, clip_uid TEXT NOT NULL REFERENCES clips(uid),
+                        owner_user_id TEXT NOT NULL, body TEXT NOT NULL, version INTEGER NOT NULL,
+                        created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
 		`CREATE TABLE IF NOT EXISTS notes(
-			uid TEXT PRIMARY KEY, owner_user_id TEXT NOT NULL REFERENCES users(uid),
-			document_uid TEXT NOT NULL, page_uid TEXT, section_uid TEXT, local_hadith_uid TEXT,
-			body TEXT NOT NULL, deleted_at TEXT, version INTEGER NOT NULL DEFAULT 1,
-			created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
+                        uid TEXT PRIMARY KEY, owner_user_id TEXT NOT NULL REFERENCES users(uid),
+                        document_uid TEXT NOT NULL, page_uid TEXT, section_uid TEXT, local_hadith_uid TEXT,
+                        body TEXT NOT NULL, deleted_at TEXT, version INTEGER NOT NULL DEFAULT 1,
+                        created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
 		`CREATE INDEX IF NOT EXISTS idx_notes_owner ON notes(owner_user_id, updated_at)`,
 		`CREATE TABLE IF NOT EXISTS bookmarks(
-			uid TEXT PRIMARY KEY, owner_user_id TEXT NOT NULL REFERENCES users(uid),
-			document_uid TEXT NOT NULL, page_uid TEXT NOT NULL, label TEXT NOT NULL,
-			created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
+                        uid TEXT PRIMARY KEY, owner_user_id TEXT NOT NULL REFERENCES users(uid),
+                        document_uid TEXT NOT NULL, page_uid TEXT NOT NULL, label TEXT NOT NULL,
+                        created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
 		`CREATE TABLE IF NOT EXISTS saved_searches(
-			uid TEXT PRIMARY KEY, owner_user_id TEXT NOT NULL REFERENCES users(uid),
-			name TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
+                        uid TEXT PRIMARY KEY, owner_user_id TEXT NOT NULL REFERENCES users(uid),
+                        name TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
 		`CREATE TABLE IF NOT EXISTS workspace_states(
-			owner_user_id TEXT PRIMARY KEY REFERENCES users(uid),
-			prefs TEXT NOT NULL DEFAULT '{}', positions TEXT NOT NULL DEFAULT '{}',
-			updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
+                        owner_user_id TEXT PRIMARY KEY REFERENCES users(uid),
+                        prefs TEXT NOT NULL DEFAULT '{}', positions TEXT NOT NULL DEFAULT '{}',
+                        updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
 		`CREATE TABLE IF NOT EXISTS source_registry(
-			uid TEXT PRIMARY KEY, source_series_id TEXT, source_document_id TEXT,
-			file_path TEXT NOT NULL, size_bytes INTEGER, checksum TEXT, status TEXT NOT NULL DEFAULT 'pending',
-			doc_uid TEXT, work_uid TEXT, language TEXT, label TEXT, kind TEXT,
-			last_error TEXT, updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
+                        uid TEXT PRIMARY KEY, source_series_id TEXT, source_document_id TEXT,
+                        file_path TEXT NOT NULL, size_bytes INTEGER, checksum TEXT, status TEXT NOT NULL DEFAULT 'pending',
+                        doc_uid TEXT, work_uid TEXT, language TEXT, label TEXT, kind TEXT,
+                        last_error TEXT, updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
 		`CREATE TABLE IF NOT EXISTS content_releases(
-			uid TEXT PRIMARY KEY, created_at TEXT NOT NULL DEFAULT (datetime('now')),
-			created_by TEXT, status TEXT NOT NULL DEFAULT 'building',
-			manifest TEXT, notes TEXT)`,
+                        uid TEXT PRIMARY KEY, created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                        created_by TEXT, status TEXT NOT NULL DEFAULT 'building',
+                        manifest TEXT, notes TEXT)`,
 		`CREATE TABLE IF NOT EXISTS overlay_revisions(
-			uid TEXT PRIMARY KEY, document_uid TEXT NOT NULL, owner_user TEXT NOT NULL,
-			change_type TEXT NOT NULL, target_json TEXT NOT NULL, base_hash TEXT NOT NULL,
-			reason TEXT NOT NULL, old_value TEXT, new_value TEXT NOT NULL,
-			status TEXT NOT NULL DEFAULT 'draft', release_uid TEXT,
-			created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
+                        uid TEXT PRIMARY KEY, document_uid TEXT NOT NULL, owner_user TEXT NOT NULL,
+                        change_type TEXT NOT NULL, target_json TEXT NOT NULL, base_hash TEXT NOT NULL,
+                        reason TEXT NOT NULL, old_value TEXT, new_value TEXT NOT NULL,
+                        status TEXT NOT NULL DEFAULT 'draft', release_uid TEXT,
+                        created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
 		`CREATE TABLE IF NOT EXISTS mapping_revisions(
-			uid TEXT PRIMARY KEY, kind TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL,
-			created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
+                        uid TEXT PRIMARY KEY, kind TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL,
+                        created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
 		`CREATE TABLE IF NOT EXISTS jobs(
-			uid TEXT PRIMARY KEY, kind TEXT NOT NULL, payload TEXT, status TEXT NOT NULL DEFAULT 'queued',
-			priority INTEGER NOT NULL DEFAULT 5, progress INTEGER NOT NULL DEFAULT 0, progress_note TEXT,
-			claimed_at TEXT, heartbeat_at TEXT, lease_until TEXT, retries INTEGER NOT NULL DEFAULT 0,
-			created_by TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')),
-			started_at TEXT, finished_at TEXT, result TEXT, error TEXT)`,
+                        uid TEXT PRIMARY KEY, kind TEXT NOT NULL, payload TEXT, status TEXT NOT NULL DEFAULT 'queued',
+                        priority INTEGER NOT NULL DEFAULT 5, progress INTEGER NOT NULL DEFAULT 0, progress_note TEXT,
+                        claimed_at TEXT, heartbeat_at TEXT, lease_until TEXT, retries INTEGER NOT NULL DEFAULT 0,
+                        created_by TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                        started_at TEXT, finished_at TEXT, result TEXT, error TEXT)`,
 		`CREATE TABLE IF NOT EXISTS outbox(
-			id INTEGER PRIMARY KEY AUTOINCREMENT, topic TEXT NOT NULL, payload TEXT NOT NULL,
-			created_at TEXT NOT NULL DEFAULT (datetime('now')), processed_at TEXT)`,
+                        id INTEGER PRIMARY KEY AUTOINCREMENT, topic TEXT NOT NULL, payload TEXT NOT NULL,
+                        created_at TEXT NOT NULL DEFAULT (datetime('now')), processed_at TEXT)`,
 		`CREATE TABLE IF NOT EXISTS audit_events(
-			id INTEGER PRIMARY KEY AUTOINCREMENT, actor TEXT NOT NULL, action TEXT NOT NULL,
-			object_type TEXT, object_uid TEXT, detail TEXT, ip TEXT,
-			created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
+                        id INTEGER PRIMARY KEY AUTOINCREMENT, actor TEXT NOT NULL, action TEXT NOT NULL,
+                        object_type TEXT, object_uid TEXT, detail TEXT, ip TEXT,
+                        created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
 		`CREATE TABLE IF NOT EXISTS export_jobs(
-			uid TEXT PRIMARY KEY, owner_user_id TEXT NOT NULL REFERENCES users(uid),
-			project_uid TEXT NOT NULL, format TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'queued',
-			file_path TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), finished_at TEXT, error TEXT)`,
+                        uid TEXT PRIMARY KEY, owner_user_id TEXT NOT NULL REFERENCES users(uid),
+                        project_uid TEXT NOT NULL, format TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'queued',
+                        file_path TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), finished_at TEXT, error TEXT)`,
 		`CREATE TABLE IF NOT EXISTS kv(k TEXT PRIMARY KEY, v TEXT NOT NULL)`,
+		// نشست جست‌وجو (§۴۷): فقط درخواست + release — نتایج هرگز ذخیره نمی‌شود؛
+		// ادامهٔ صفحه‌بندی با re-execute قطعی همان پرس‌وجو انجام می‌شود (ب-۶).
+		`CREATE TABLE IF NOT EXISTS search_sessions(
+                        uid TEXT PRIMARY KEY, release_uid TEXT NOT NULL, request TEXT NOT NULL,
+                        created_at TEXT NOT NULL DEFAULT (datetime('now')), expire_at TEXT NOT NULL)`,
+		`CREATE INDEX IF NOT EXISTS idx_search_sessions_exp ON search_sessions(expire_at)`,
+		// ---- دادهٔ خصوصی کاربر (§۷-الف) — ج-۷: مالکیت داده از Prisma/Next BFF به Go منتقل شد ----
+		// همهٔ تاریخ‌ها UTC RFC3339 با مقداردهی از Go در INSERT (فرمت یکنواخت، بدون datetime('now')).
+		// هایلایت شخصی — لنگر پایدار: شناسهٔ بلوک + بازهٔ code point
+		`CREATE TABLE IF NOT EXISTS highlights(
+                        uid TEXT PRIMARY KEY, user_uid TEXT NOT NULL, document_uid TEXT NOT NULL,
+                        page_uid TEXT NOT NULL, block_id TEXT NOT NULL,
+                        start_cp INTEGER NOT NULL, end_cp INTEGER NOT NULL,
+                        text TEXT NOT NULL, color TEXT NOT NULL DEFAULT 'yellow', note TEXT,
+                        created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+		`CREATE INDEX IF NOT EXISTS idx_highlights_owner ON highlights(user_uid, document_uid, created_at)`,
+		// اشتراک صریح و لغوشدنی — مقصد snapshot تا لغو واقعاً دسترسی را قطع کند
+		`CREATE TABLE IF NOT EXISTS share_links(
+                        uid TEXT PRIMARY KEY, user_uid TEXT NOT NULL,
+                        kind TEXT NOT NULL CHECK(kind IN ('note','highlight')),
+                        item_id TEXT NOT NULL, document_uid TEXT NOT NULL,
+                        page_uid TEXT, page_label TEXT, work_title TEXT,
+                        payload TEXT NOT NULL, meta TEXT,
+                        revoked INTEGER NOT NULL DEFAULT 0, expires_at TEXT, created_at TEXT NOT NULL)`,
+		`CREATE INDEX IF NOT EXISTS idx_share_links_owner ON share_links(user_uid, revoked, created_at)`,
+		// کار تولید PDF — رکورد فقط در Go؛ فایل خروجی سمت runner (Next) روی دیسک می‌ماند.
+		// title = document_label (برچسب نمایشی جلد). work_title و finished_at برای
+		// پاریتی کامل قرارداد JSON PdfJob اضافه شدند (انحراف مستند در گزارش ج-۷).
+		`CREATE TABLE IF NOT EXISTS pdf_jobs(
+                        uid TEXT PRIMARY KEY, user_uid TEXT NOT NULL, work_uid TEXT, document_uid TEXT NOT NULL,
+                        title TEXT NOT NULL DEFAULT '', work_title TEXT,
+                        page_from TEXT, page_to TEXT, include_notes INTEGER NOT NULL DEFAULT 0,
+                        overlay_note TEXT, status TEXT NOT NULL DEFAULT 'queued',
+                        progress INTEGER NOT NULL DEFAULT 0, status_note TEXT,
+                        download_token TEXT, token_expires_at TEXT, file_size INTEGER,
+                        created_at TEXT NOT NULL, updated_at TEXT NOT NULL, finished_at TEXT)`,
+		`CREATE INDEX IF NOT EXISTS idx_pdf_jobs_owner ON pdf_jobs(user_uid, created_at)`,
 		// کاربر سیستمی برای bootstrap و jobهای سیستمی — غیرفعال، بدون ورود
 		`INSERT OR IGNORE INTO users(uid, username, username_norm, display_name, password_hash, role, disabled)
-			VALUES('usr-system', 'system', 'system', 'سیستم', '$argon2id$v=19$m=65536,t=3,p=1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', 'admin', 1)`,
+                        VALUES('usr-system', 'system', 'system', 'سیستم', '$argon2id$v=19$m=65536,t=3,p=1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', 'admin', 1)`,
 	}
 	for _, st := range stmts {
 		if _, err := s.Exec(st); err != nil {
@@ -171,6 +209,37 @@ func (s *DB) ActiveRelease() (string, error) {
 func (s *DB) Audit(actor, action, objectType, objectUID, detail, ip string) {
 	_, _ = s.Exec(`INSERT INTO audit_events(actor,action,object_type,object_uid,detail,ip) VALUES(?,?,?,?,?,?)`,
 		actor, action, objectType, objectUID, detail, ip)
+}
+
+// ---- نشست جست‌وجو (پیاده‌سازی search.SessionStore روی app.sqlite) ----
+
+// SaveSearchSession ذخیره/تمدید نشست با TTL؛ ردیف‌های منقضی به‌صورت تنبل پاک می‌شوند.
+func (s *DB) SaveSearchSession(uid, releaseUID string, reqJSON []byte, ttl time.Duration) error {
+	_, _ = s.Exec(`DELETE FROM search_sessions WHERE expire_at < datetime('now')`)
+	_, err := s.Exec(`INSERT INTO search_sessions(uid, release_uid, request, expire_at)
+                VALUES(?,?,?, datetime('now', ?))
+                ON CONFLICT(uid) DO UPDATE SET release_uid=excluded.release_uid, request=excluded.request, expire_at=excluded.expire_at`,
+		uid, releaseUID, string(reqJSON), fmt.Sprintf("+%d seconds", int(ttl.Seconds())))
+	return err
+}
+
+// LoadSearchSession اگر نشست نبود یا منقضی بود → search.ErrSearchSessionGone معادل.
+// برای پرهیز از وابستگی store→search، خطای استاندارد sql.ErrNoRows برمی‌گردد؛
+// لایهٔ موتور هر خطای غیر صفر را Gone تفسیر می‌کند.
+func (s *DB) LoadSearchSession(uid string) (string, []byte, error) {
+	var release, req string
+	err := s.QueryRow(`SELECT release_uid, request FROM search_sessions WHERE uid=? AND expire_at >= datetime('now')`, uid).Scan(&release, &req)
+	if err != nil {
+		return "", nil, err
+	}
+	return release, []byte(req), nil
+}
+
+// TouchSearchSession تمدید TTL نشست (ادامهٔ موفق صفحه‌بندی نشست را زنده نگه می‌دارد).
+func (s *DB) TouchSearchSession(uid string, ttl time.Duration) error {
+	_, err := s.Exec(`UPDATE search_sessions SET expire_at=datetime('now', ?) WHERE uid=?`,
+		fmt.Sprintf("+%d seconds", int(ttl.Seconds())), uid)
+	return err
 }
 
 // Backup پشتیبان سازگار با VACUUM INTO (§۵۴).

@@ -77,7 +77,7 @@ func (s *Service) List(status string) ([]Revision, error) {
 	if status != "" {
 		rows, err = s.db.Query(q+` WHERE status=? ORDER BY created_at DESC LIMIT 100`, status)
 	} else {
-		rows, err = s.db.Query(q+` ORDER BY created_at DESC LIMIT 100`)
+		rows, err = s.db.Query(q + ` ORDER BY created_at DESC LIMIT 100`)
 	}
 	if err != nil {
 		return nil, err

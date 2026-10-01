@@ -1,0 +1,4081 @@
+[
+  {
+    "id": "g-001",
+    "group": "strict",
+    "note": "عبارت طلایی تکرارشونده در کتاب الحج",
+    "request": {
+      "query": "الكعبة بيت الله",
+      "mode": "strict_phrase",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 300,
+      "books": 1,
+      "passages": 60,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-hajj",
+          "match": [
+            54,
+            69
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-hajj",
+          "match": [
+            122,
+            137
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-hajj",
+          "match": [
+            190,
+            205
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-002",
+    "group": "strict",
+    "note": "عبارت دقیق با ادامهٔ جمله",
+    "request": {
+      "query": "الكعبة بيت الله قبلة الناس",
+      "mode": "strict_phrase",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 300,
+      "books": 1,
+      "passages": 60,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-hajj",
+          "match": [
+            54,
+            80
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-hajj",
+          "match": [
+            122,
+            148
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-hajj",
+          "match": [
+            190,
+            216
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-003",
+    "group": "strict",
+    "note": "واژهٔ اعراب‌دار در متن (الحجِّ)",
+    "request": {
+      "query": "الحجِّ",
+      "mode": "strict_phrase",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 300,
+      "books": 1,
+      "passages": 60,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-hajj",
+          "match": [
+            36,
+            42
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-hajj",
+          "match": [
+            104,
+            110
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-hajj",
+          "match": [
+            172,
+            178
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-004",
+    "group": "strict",
+    "note": "عبارت با اعراب کامل",
+    "request": {
+      "query": "في كتابِ الحجِّ نُقلَ أنَّ الكعبة",
+      "mode": "strict_phrase",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 300,
+      "books": 1,
+      "passages": 60,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-hajj",
+          "match": [
+            27,
+            60
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-hajj",
+          "match": [
+            95,
+            128
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-hajj",
+          "match": [
+            163,
+            196
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-005",
+    "group": "strict",
+    "note": "بدون تطبیق — عبارت غیرواقعی",
+    "request": {
+      "query": "طائرة فضائية في الكعبة",
+      "mode": "strict_phrase",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 0,
+      "books": 0,
+      "passages": 0,
+      "count_relation": "exact",
+      "first": null
+    }
+  },
+  {
+    "id": "g-006",
+    "group": "strict",
+    "note": "ی فارسی نباید در متن عربیِ ی‌دار دقیق بخورد",
+    "request": {
+      "query": "الكعبة بيت الله",
+      "mode": "strict_phrase",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 300,
+      "books": 1,
+      "passages": 60,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-hajj",
+          "match": [
+            54,
+            69
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-hajj",
+          "match": [
+            122,
+            137
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-hajj",
+          "match": [
+            190,
+            205
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-007",
+    "group": "strict",
+    "note": "عبارت دقیق بین‌کتابی (عن أبي أبيه)",
+    "request": {
+      "query": "عن أبي أبيه",
+      "mode": "strict_phrase",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 3,
+      "books": 2,
+      "passages": 3,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-bahar-2",
+          "match": [
+            119,
+            130
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-bahar-2",
+          "match": [
+            530,
+            541
+          ],
+          "page": "p-001"
+        },
+        {
+          "doc": "doc-safina",
+          "match": [
+            186,
+            197
+          ],
+          "page": "p-001"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-008",
+    "group": "strict",
+    "note": "عبارت دقیق با شیخ الطبرسی",
+    "request": {
+      "query": "قال الشيخ الطبرسي في بحار الأنوار",
+      "mode": "strict_phrase",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-bahar-2",
+          "match": [
+            37,
+            70
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-009",
+    "group": "strict",
+    "note": "فرق الرسول والنبي",
+    "request": {
+      "query": "الفرق بين الرسول والنبي",
+      "mode": "strict_phrase",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-bahar-2",
+          "match": [
+            76,
+            99
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-010",
+    "group": "strict",
+    "note": "حدیث العلم با اعراب",
+    "request": {
+      "query": "العلم خيرٌ من المال",
+      "mode": "strict_phrase",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-bahar-2",
+          "match": [
+            546,
+            565
+          ],
+          "page": "p-001"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-011",
+    "group": "strict",
+    "note": "تک‌واژهٔ دقیق",
+    "request": {
+      "query": "قربان",
+      "mode": "strict_phrase",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-bahar-3",
+          "match": [
+            82,
+            87
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-012",
+    "group": "strict",
+    "note": "عبارت دوواژه‌ای متوالی",
+    "request": {
+      "query": "الصلاة قُربان",
+      "mode": "strict_phrase",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-bahar-3",
+          "match": [
+            45,
+            58
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-013",
+    "group": "strict",
+    "note": "مرز واژه — نیمهٔ واژه نباید بخورد",
+    "request": {
+      "query": "علم",
+      "mode": "strict_phrase",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 0,
+      "books": 0,
+      "passages": 0,
+      "count_relation": "exact",
+      "first": null
+    }
+  },
+  {
+    "id": "g-014",
+    "group": "strict",
+    "note": "عبارت با نیم‌فاصله در متن فارسی",
+    "request": {
+      "query": "هم‌نام صفحهٔ دیگر",
+      "mode": "strict_phrase",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-ambig",
+          "match": [
+            82,
+            99
+          ],
+          "page": "p-002"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-015",
+    "group": "strict",
+    "note": "متن فارسی سند آسمان",
+    "request": {
+      "query": "آفاق و انفس",
+      "mode": "strict_phrase",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-aseman",
+          "match": [
+            26,
+            37
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-016",
+    "group": "strict",
+    "note": "عبارت دقیق واژه‌های مرزی",
+    "request": {
+      "query": "يوسف وإخوته",
+      "mode": "strict_phrase",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-edge",
+          "match": [
+            61,
+            72
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-017",
+    "group": "strict",
+    "note": "متن بند شمارهٔ ۱ کتاب الحج",
+    "request": {
+      "query": "بند شمارهٔ 1",
+      "mode": "strict_phrase",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-hajj",
+          "match": [
+            14,
+            26
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-018",
+    "group": "strict",
+    "note": "عبارت دقیق در سند سفینه",
+    "request": {
+      "query": "الصادق عليه السلام",
+      "mode": "strict_phrase",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 2,
+      "books": 2,
+      "passages": 2,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-bahar-2",
+          "match": [
+            138,
+            156
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-safina",
+          "match": [
+            290,
+            308
+          ],
+          "page": "p-001"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-019",
+    "group": "strict",
+    "note": "عبارت دقیق با ارقام عربی",
+    "request": {
+      "query": "الرحمن: ٣٣–٤١",
+      "mode": "strict_phrase",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-aseman",
+          "match": [
+            63,
+            76
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-020",
+    "group": "strict",
+    "note": "پایان جمله",
+    "request": {
+      "query": "وأنت تَحرُسُ المال",
+      "mode": "strict_phrase",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 0,
+      "books": 0,
+      "passages": 0,
+      "count_relation": "exact",
+      "first": null
+    }
+  },
+  {
+    "id": "g-021",
+    "group": "strict",
+    "note": "عبارت دقیق صلاة",
+    "request": {
+      "query": "الصلاة قُربان كلُّ تقي",
+      "mode": "strict_phrase",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-bahar-3",
+          "match": [
+            45,
+            67
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-022",
+    "group": "strict",
+    "note": "کوته‌ترین عبارت دوحرفی (بدون پیش‌فیلتر trigram)",
+    "request": {
+      "query": "عن",
+      "mode": "strict_phrase",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 5,
+      "books": 2,
+      "passages": 5,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-bahar-2",
+          "match": [
+            119,
+            121
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-bahar-2",
+          "match": [
+            530,
+            532
+          ],
+          "page": "p-001"
+        },
+        {
+          "doc": "doc-bahar-3",
+          "match": [
+            12,
+            14
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-023",
+    "group": "strict",
+    "note": "عبارت دقیق سند مبهم‌صفحه",
+    "request": {
+      "query": "مقدمهٔ مصحح",
+      "mode": "strict_phrase",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 2,
+      "books": 1,
+      "passages": 2,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-ambig",
+          "match": [
+            0,
+            11
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-ambig",
+          "match": [
+            27,
+            38
+          ],
+          "page": "p-001"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-024",
+    "group": "strict",
+    "note": "متن صفحهٔ دوازدهم سند مبهم",
+    "request": {
+      "query": "متن صفحهٔ دوازدهم",
+      "mode": "strict_phrase",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-ambig",
+          "match": [
+            112,
+            129
+          ],
+          "page": "p-003"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-025",
+    "group": "normalized",
+    "note": "ی فارسی به جای ي عربی — نرمال یکی می‌کند",
+    "request": {
+      "query": "الكعبة بيت الله",
+      "mode": "normalized_phrase",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 300,
+      "books": 1,
+      "passages": 60,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-hajj",
+          "match": [
+            54,
+            69
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-hajj",
+          "match": [
+            122,
+            137
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-hajj",
+          "match": [
+            190,
+            205
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-026",
+    "group": "normalized",
+    "note": "بدون اعراب بر متن اعراب‌دار",
+    "request": {
+      "query": "العلم خير من المال",
+      "mode": "normalized_phrase",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-bahar-2",
+          "match": [
+            546,
+            565
+          ],
+          "page": "p-001"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-027",
+    "group": "normalized",
+    "note": "بدون اعراب صلاة",
+    "request": {
+      "query": "الصلاة قربان كل تقي",
+      "mode": "normalized_phrase",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-bahar-3",
+          "match": [
+            45,
+            67
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-028",
+    "group": "normalized",
+    "note": "ك عربی به جای ک فارسی در متن فارسی",
+    "request": {
+      "query": "در نرمال یکی‌اند اما در دقیق فرق دارند",
+      "mode": "normalized_phrase",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-edge",
+          "match": [
+            110,
+            148
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-029",
+    "group": "normalized",
+    "note": "نقل وَهُوَ مَعَكُم بدون اعراب",
+    "request": {
+      "query": "وهو معكم أين ما كنتم",
+      "mode": "normalized_phrase",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-aseman",
+          "match": [
+            91,
+            120
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-030",
+    "group": "normalized",
+    "note": "عبارت نرمال با متن با اعراب کامل",
+    "request": {
+      "query": "في كتاب الحج نقل أن الكعبة بيت الله قبلة الناس",
+      "mode": "normalized_phrase",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 300,
+      "books": 1,
+      "passages": 60,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-hajj",
+          "match": [
+            27,
+            80
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-hajj",
+          "match": [
+            95,
+            148
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-hajj",
+          "match": [
+            163,
+            216
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-031",
+    "group": "normalized",
+    "note": "ارقام فارسی به جای عربی",
+    "request": {
+      "query": "الرحمن: 33–41",
+      "mode": "normalized_phrase",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-aseman",
+          "match": [
+            63,
+            76
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-032",
+    "group": "normalized",
+    "note": "عبارت نرمال با فاصله‌های چندگانه",
+    "request": {
+      "query": "الكعبة  بيت   الله",
+      "mode": "normalized_phrase",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 300,
+      "books": 1,
+      "passages": 60,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-hajj",
+          "match": [
+            54,
+            69
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-hajj",
+          "match": [
+            122,
+            137
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-hajj",
+          "match": [
+            190,
+            205
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-033",
+    "group": "normalized",
+    "note": "عبارت نرمالِ ایمان",
+    "request": {
+      "query": "باب ما الرسول وما النبي",
+      "mode": "normalized_phrase",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-bahar-2",
+          "match": [
+            13,
+            36
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-034",
+    "group": "normalized",
+    "note": "عبارت نرمال بدون تطبیق",
+    "request": {
+      "query": "النبی والرسول فرق معروف",
+      "mode": "normalized_phrase",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 0,
+      "books": 0,
+      "passages": 0,
+      "count_relation": "exact",
+      "first": null
+    }
+  },
+  {
+    "id": "g-035",
+    "group": "normalized",
+    "note": "یوسف با ی فارسی (نرمال)",
+    "request": {
+      "query": "یوسف واخوته",
+      "mode": "normalized_phrase",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 0,
+      "books": 0,
+      "passages": 0,
+      "count_relation": "exact",
+      "first": null
+    }
+  },
+  {
+    "id": "g-036",
+    "group": "normalized",
+    "note": "تطبیق در مقدمهٔ مؤلف",
+    "request": {
+      "query": "به قرآن شرح داده می‌شود",
+      "mode": "normalized_phrase",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-aseman",
+          "match": [
+            38,
+            61
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-037",
+    "group": "normalized",
+    "note": "عبارت نرمال در مقدمهٔ مصحح",
+    "request": {
+      "query": "این صفحهٔ الف مقدمهٔ مصحح است",
+      "mode": "normalized_phrase",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-ambig",
+          "match": [
+            12,
+            42
+          ],
+          "page": "p-001"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-038",
+    "group": "normalized",
+    "note": "نقل اشارهٔ مؤلف",
+    "request": {
+      "query": "قربان یعنی نزدیک‌کننده",
+      "mode": "normalized_phrase",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-bahar-3",
+          "match": [
+            82,
+            104
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-039",
+    "group": "normalized",
+    "note": "عبارت نرمال در حاشیهٔ کتاب",
+    "request": {
+      "query": "اشارهٔ مؤلف",
+      "mode": "normalized_phrase",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-bahar-3",
+          "match": [
+            69,
+            80
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-040",
+    "group": "normalized",
+    "note": "عبارت نرمالِ سند مربوط به ابی‌ابیه",
+    "request": {
+      "query": "عن ابي ابيه",
+      "mode": "normalized_phrase",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 0,
+      "books": 0,
+      "passages": 0,
+      "count_relation": "exact",
+      "first": null
+    }
+  },
+  {
+    "id": "g-041",
+    "group": "all_words",
+    "note": "هر سه واژه در یک passage",
+    "request": {
+      "query": "الكعبة بيت الله",
+      "mode": "all_words",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 60,
+      "books": 1,
+      "passages": 60,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-hajj",
+          "match": [
+            54,
+            341
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-hajj",
+          "match": [
+            394,
+            682
+          ],
+          "page": "p-001"
+        },
+        {
+          "doc": "doc-hajj",
+          "match": [
+            736,
+            1027
+          ],
+          "page": "p-002"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-042",
+    "group": "all_words",
+    "note": "واژه‌های پراکنده",
+    "request": {
+      "query": "الرسول النبي الفرق",
+      "mode": "all_words",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-bahar-2",
+          "match": [
+            20,
+            424
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-043",
+    "group": "all_words",
+    "note": "واژه‌ای که نیست → بدون نتیجه",
+    "request": {
+      "query": "الكعبة الزمرد",
+      "mode": "all_words",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 0,
+      "books": 0,
+      "passages": 0,
+      "count_relation": "exact",
+      "first": null
+    }
+  },
+  {
+    "id": "g-044",
+    "group": "all_words",
+    "note": "چهار واژه",
+    "request": {
+      "query": "العلم خير المال حرس",
+      "mode": "all_words",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 0,
+      "books": 0,
+      "passages": 0,
+      "count_relation": "exact",
+      "first": null
+    }
+  },
+  {
+    "id": "g-045",
+    "group": "all_words",
+    "note": "واژهٔ تکراری در پرس‌وجو (رگرسیون)",
+    "request": {
+      "query": "الرسول ما الرسول",
+      "mode": "all_words",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 2,
+      "books": 2,
+      "passages": 2,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-bahar-2",
+          "match": [
+            17,
+            424
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-safina",
+          "match": [
+            351,
+            367
+          ],
+          "page": "p-001"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-046",
+    "group": "all_words",
+    "note": "واژه‌های متن فارسی",
+    "request": {
+      "query": "قرآن شرح داده",
+      "mode": "all_words",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-aseman",
+          "match": [
+            41,
+            160
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-047",
+    "group": "all_words",
+    "note": "مخلوط فارسی/عربی",
+    "request": {
+      "query": "الكعبة قبلة",
+      "mode": "all_words",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 60,
+      "books": 1,
+      "passages": 60,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-hajj",
+          "match": [
+            54,
+            346
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-hajj",
+          "match": [
+            394,
+            687
+          ],
+          "page": "p-001"
+        },
+        {
+          "doc": "doc-hajj",
+          "match": [
+            736,
+            1032
+          ],
+          "page": "p-002"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-048",
+    "group": "all_words",
+    "note": "سه واژهٔ حديث صلاة",
+    "request": {
+      "query": "الصلاة قربان تقي",
+      "mode": "all_words",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-bahar-3",
+          "match": [
+            5,
+            87
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-049",
+    "group": "all_words",
+    "note": "بدون نتیجه در فارسی",
+    "request": {
+      "query": "قورباغه سبز",
+      "mode": "all_words",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 0,
+      "books": 0,
+      "passages": 0,
+      "count_relation": "exact",
+      "first": null
+    }
+  },
+  {
+    "id": "g-050",
+    "group": "all_words",
+    "note": "ترکیب نقش‌دار",
+    "request": {
+      "query": "الطبرسي بحار الأنوار",
+      "mode": "all_words",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-bahar-2",
+          "match": [
+            47,
+            70
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-051",
+    "group": "all_words",
+    "note": "واژه‌های صفحهٔ الف متن اصلی",
+    "request": {
+      "query": "الف متن اصلی متفاوت",
+      "mode": "all_words",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-ambig",
+          "match": [
+            63,
+            110
+          ],
+          "page": "p-002"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-052",
+    "group": "all_words",
+    "note": "واژه‌های سند مرزی",
+    "request": {
+      "query": "ی ک نرمال دقیق",
+      "mode": "all_words",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-edge",
+          "match": [
+            74,
+            311
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-053",
+    "group": "all_words",
+    "note": "واژه‌های نادر",
+    "request": {
+      "query": "الصادق الباقر",
+      "mode": "all_words",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 0,
+      "books": 0,
+      "passages": 0,
+      "count_relation": "exact",
+      "first": null
+    }
+  },
+  {
+    "id": "g-054",
+    "group": "all_words",
+    "note": "تک‌واژهٔ پرتکرار",
+    "request": {
+      "query": "الناس",
+      "mode": "all_words",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 61,
+      "books": 2,
+      "passages": 61,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-bahar-2",
+          "match": [
+            298,
+            324
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-hajj",
+          "match": [
+            75,
+            352
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-hajj",
+          "match": [
+            415,
+            693
+          ],
+          "page": "p-001"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-055",
+    "group": "any_words",
+    "note": "یکی از دو واژه کافی است",
+    "request": {
+      "query": "الكعبة الصلاة",
+      "mode": "any_words",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 0,
+      "books": 0,
+      "passages": 0,
+      "count_relation": "exact",
+      "first": null
+    }
+  },
+  {
+    "id": "g-056",
+    "group": "any_words",
+    "note": "ترکیب بی‌ربط",
+    "request": {
+      "query": "الزمرد الفيروزه",
+      "mode": "any_words",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 0,
+      "books": 0,
+      "passages": 0,
+      "count_relation": "exact",
+      "first": null
+    }
+  },
+  {
+    "id": "g-057",
+    "group": "any_words",
+    "note": "سه واژهٔ متفاوت",
+    "request": {
+      "query": "العلم الصلاة الحج",
+      "mode": "any_words",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 0,
+      "books": 0,
+      "passages": 0,
+      "count_relation": "exact",
+      "first": null
+    }
+  },
+  {
+    "id": "g-058",
+    "group": "any_words",
+    "note": "واژهٔ واحد",
+    "request": {
+      "query": "بحار",
+      "mode": "any_words",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 3,
+      "books": 2,
+      "passages": 3,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-bahar-2",
+          "match": [
+            58,
+            62
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-safina",
+          "match": [
+            124,
+            128
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-safina",
+          "match": [
+            267,
+            271
+          ],
+          "page": "p-001"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-059",
+    "group": "any_words",
+    "note": "فارسی و عربی",
+    "request": {
+      "query": "متن العلم",
+      "mode": "any_words",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 0,
+      "books": 0,
+      "passages": 0,
+      "count_relation": "exact",
+      "first": null
+    }
+  },
+  {
+    "id": "g-060",
+    "group": "any_words",
+    "note": "بدون هیچ تطبیقی",
+    "request": {
+      "query": "غزال آهو",
+      "mode": "any_words",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 0,
+      "books": 0,
+      "passages": 0,
+      "count_relation": "exact",
+      "first": null
+    }
+  },
+  {
+    "id": "g-061",
+    "group": "any_words",
+    "note": "واژه‌های مرزی سند edge",
+    "request": {
+      "query": "يُوسُفُ عربی",
+      "mode": "any_words",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 0,
+      "books": 0,
+      "passages": 0,
+      "count_relation": "exact",
+      "first": null
+    }
+  },
+  {
+    "id": "g-062",
+    "group": "any_words",
+    "note": "واژهٔ تکراری پرس‌وجو",
+    "request": {
+      "query": "الله الله",
+      "mode": "any_words",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 0,
+      "books": 0,
+      "passages": 0,
+      "count_relation": "exact",
+      "first": null
+    }
+  },
+  {
+    "id": "g-063",
+    "group": "near",
+    "note": "دو واژهٔ نزدیک با slop=2",
+    "request": {
+      "query": "الفرق الرسول",
+      "mode": "near",
+      "scope": {
+        "target": "library"
+      },
+      "near": {
+        "slop": 2,
+        "ordered": false
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-bahar-2",
+          "match": [
+            76,
+            92
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-064",
+    "group": "near",
+    "note": "سه واژه با ترتیب",
+    "request": {
+      "query": "الفرق الرسول النبي",
+      "mode": "near",
+      "scope": {
+        "target": "library"
+      },
+      "near": {
+        "slop": 3,
+        "ordered": true
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 0,
+      "books": 0,
+      "passages": 0,
+      "count_relation": "exact",
+      "first": null
+    }
+  },
+  {
+    "id": "g-065",
+    "group": "near",
+    "note": "با ترتیب غلط → بی‌نتیجه",
+    "request": {
+      "query": "النبي الفرق",
+      "mode": "near",
+      "scope": {
+        "target": "library"
+      },
+      "near": {
+        "slop": 2,
+        "ordered": true
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 0,
+      "books": 0,
+      "passages": 0,
+      "count_relation": "exact",
+      "first": null
+    }
+  },
+  {
+    "id": "g-066",
+    "group": "near",
+    "note": "بدون ترتیب → تطبیق",
+    "request": {
+      "query": "النبي الفرق",
+      "mode": "near",
+      "scope": {
+        "target": "library"
+      },
+      "near": {
+        "slop": 2,
+        "ordered": false
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 0,
+      "books": 0,
+      "passages": 0,
+      "count_relation": "exact",
+      "first": null
+    }
+  },
+  {
+    "id": "g-067",
+    "group": "near",
+    "note": "slop بزرگ",
+    "request": {
+      "query": "العلم المال",
+      "mode": "near",
+      "scope": {
+        "target": "library"
+      },
+      "near": {
+        "slop": 6,
+        "ordered": false
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 4,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-bahar-2",
+          "match": [
+            524,
+            562
+          ],
+          "page": "p-001"
+        },
+        {
+          "doc": "doc-bahar-2",
+          "match": [
+            546,
+            562
+          ],
+          "page": "p-001"
+        },
+        {
+          "doc": "doc-bahar-2",
+          "match": [
+            560,
+            568
+          ],
+          "page": "p-001"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-068",
+    "group": "near",
+    "note": "slop صفر (مجاورت کامل)",
+    "request": {
+      "query": "بيت الله",
+      "mode": "near",
+      "scope": {
+        "target": "library"
+      },
+      "near": {
+        "slop": 0,
+        "ordered": false
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 60,
+      "books": 1,
+      "passages": 60,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-hajj",
+          "match": [
+            61,
+            341
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-hajj",
+          "match": [
+            401,
+            682
+          ],
+          "page": "p-001"
+        },
+        {
+          "doc": "doc-hajj",
+          "match": [
+            743,
+            1027
+          ],
+          "page": "p-002"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-069",
+    "group": "near",
+    "note": "واژه‌های دور در متن فارسی",
+    "request": {
+      "query": "آفاق انفس قرآن",
+      "mode": "near",
+      "scope": {
+        "target": "library"
+      },
+      "near": {
+        "slop": 4,
+        "ordered": false
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-aseman",
+          "match": [
+            26,
+            43
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-070",
+    "group": "near",
+    "note": "بدون نتیجه",
+    "request": {
+      "query": "الكعبة الصلاة",
+      "mode": "near",
+      "scope": {
+        "target": "library"
+      },
+      "near": {
+        "slop": 1,
+        "ordered": false
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 0,
+      "books": 0,
+      "passages": 0,
+      "count_relation": "exact",
+      "first": null
+    }
+  },
+  {
+    "id": "g-071",
+    "group": "near",
+    "note": "عبارت قرآنی نزدیک",
+    "request": {
+      "query": "معكم أين",
+      "mode": "near",
+      "scope": {
+        "target": "library"
+      },
+      "near": {
+        "slop": 1,
+        "ordered": true
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-aseman",
+          "match": [
+            98,
+            107
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-072",
+    "group": "near",
+    "note": "slop منفی معتبر نیست → رفتار پیش‌فرض",
+    "request": {
+      "query": "العلم المال",
+      "mode": "near",
+      "scope": {
+        "target": "library"
+      },
+      "near": {
+        "slop": 0,
+        "ordered": false
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-bahar-2",
+          "match": [
+            524,
+            600
+          ],
+          "page": "p-001"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-073",
+    "group": "linguistic",
+    "note": "ة به جای ه",
+    "request": {
+      "query": "مدينة",
+      "mode": "linguistic",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-edge",
+          "match": [
+            150,
+            156
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-074",
+    "group": "linguistic",
+    "note": "ه به جای ة",
+    "request": {
+      "query": "مدينه",
+      "mode": "linguistic",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-edge",
+          "match": [
+            150,
+            156
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-075",
+    "group": "linguistic",
+    "note": "ا به جای أ (الأنبياء)",
+    "request": {
+      "query": "الانبياء",
+      "mode": "linguistic",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 0,
+      "books": 0,
+      "passages": 0,
+      "count_relation": "exact",
+      "first": null
+    }
+  },
+  {
+    "id": "g-076",
+    "group": "linguistic",
+    "note": "أ اصلی در حالت زبانی",
+    "request": {
+      "query": "الأنبياء",
+      "mode": "linguistic",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 0,
+      "books": 0,
+      "passages": 0,
+      "count_relation": "exact",
+      "first": null
+    }
+  },
+  {
+    "id": "g-077",
+    "group": "linguistic",
+    "note": "ی/ي در حالت زبانی",
+    "request": {
+      "query": "يوسف",
+      "mode": "linguistic",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 2,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-edge",
+          "match": [
+            28,
+            34
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-edge",
+          "match": [
+            61,
+            65
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-078",
+    "group": "linguistic",
+    "note": "عبارت زبانی با ه/ة",
+    "request": {
+      "query": "قربان كل تقي",
+      "mode": "linguistic",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-bahar-3",
+          "match": [
+            52,
+            67
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-079",
+    "group": "linguistic",
+    "note": "نزدیک‌کننده (نیم‌فاصله + زبانی)",
+    "request": {
+      "query": "نزديک کننده",
+      "mode": "linguistic",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-bahar-3",
+          "match": [
+            93,
+            104
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-080",
+    "group": "linguistic",
+    "note": "واژهٔ بدون همزه",
+    "request": {
+      "query": "احمد",
+      "mode": "linguistic",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 0,
+      "books": 0,
+      "passages": 0,
+      "count_relation": "exact",
+      "first": null
+    }
+  },
+  {
+    "id": "g-081",
+    "group": "linguistic",
+    "note": "عبارت دقیق‌خواهی در حالت زبانی",
+    "request": {
+      "query": "الكعبة بيت الله",
+      "mode": "linguistic",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 0,
+      "books": 0,
+      "passages": 0,
+      "count_relation": "exact",
+      "first": null
+    }
+  },
+  {
+    "id": "g-082",
+    "group": "linguistic",
+    "note": "کلمهٔ مرزی ي فارسی",
+    "request": {
+      "query": "كلمه",
+      "mode": "linguistic",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 0,
+      "books": 0,
+      "passages": 0,
+      "count_relation": "exact",
+      "first": null
+    }
+  },
+  {
+    "id": "g-083",
+    "group": "long_quote",
+    "note": "نقل بلند کامل بند الحج",
+    "request": {
+      "query": "في كتابِ الحجِّ نُقلَ أنَّ الكعبة بيت الله قبلة الناس",
+      "mode": "long_quote",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 300,
+      "books": 1,
+      "passages": 60,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-hajj",
+          "match": [
+            27,
+            80
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-hajj",
+          "match": [
+            95,
+            148
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-hajj",
+          "match": [
+            163,
+            216
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-084",
+    "group": "long_quote",
+    "note": "نقل بلند روایت الرسول والنبي",
+    "request": {
+      "query": "إنَّ الفرق بين الرسول والنبي في الاصطلاح معروف",
+      "mode": "long_quote",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-bahar-2",
+          "match": [
+            71,
+            117
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-085",
+    "group": "long_quote",
+    "note": "نقل بلند حدیث علم",
+    "request": {
+      "query": "العلم خيرٌ من المال العلم يَحرُسُك و أنت تَحرُسُ المال",
+      "mode": "long_quote",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-bahar-2",
+          "match": [
+            546,
+            600
+          ],
+          "page": "p-001"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-086",
+    "group": "long_quote",
+    "note": "نقل بلند قرآنی",
+    "request": {
+      "query": "وَهُوَ مَعَكُم أينَ ما كُنتُم",
+      "mode": "long_quote",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-aseman",
+          "match": [
+            91,
+            120
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-087",
+    "group": "long_quote",
+    "note": "نقل بلند ناموجود",
+    "request": {
+      "query": "جمله‌ای که هرگز در هیچ کتابی نیامده است به هیچ روی",
+      "mode": "long_quote",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 0,
+      "books": 0,
+      "passages": 0,
+      "count_relation": "exact",
+      "first": null
+    }
+  },
+  {
+    "id": "g-088",
+    "group": "long_quote",
+    "note": "نقل بلند سند صلاة",
+    "request": {
+      "query": "الصلاة قُربان كلُّ تقي",
+      "mode": "long_quote",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-bahar-3",
+          "match": [
+            45,
+            67
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-089",
+    "group": "quran",
+    "note": "استناد صرف: سورهٔ الرحمن (۵۵)",
+    "request": {
+      "query": "",
+      "mode": "normalized_phrase",
+      "scope": {
+        "target": "library",
+        "quran": {
+          "sure": "55"
+        }
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-aseman",
+          "match": [
+            0,
+            160
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-090",
+    "group": "quran",
+    "note": "استناد: الرحمن آیهٔ ۳۵ (درون بازهٔ ۳۳–۴۱)",
+    "request": {
+      "query": "",
+      "mode": "normalized_phrase",
+      "scope": {
+        "target": "library",
+        "quran": {
+          "sure": "55",
+          "aya": "35"
+        }
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-aseman",
+          "match": [
+            0,
+            160
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-091",
+    "group": "quran",
+    "note": "استناد: الرحمن آیهٔ ۵۰ (بیرون بازه)",
+    "request": {
+      "query": "",
+      "mode": "normalized_phrase",
+      "scope": {
+        "target": "library",
+        "quran": {
+          "sure": "55",
+          "aya": "50"
+        }
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 0,
+      "books": 0,
+      "passages": 0,
+      "count_relation": "exact",
+      "first": null
+    }
+  },
+  {
+    "id": "g-092",
+    "group": "quran",
+    "note": "استناد: البقرة ۲۱۳",
+    "request": {
+      "query": "",
+      "mode": "normalized_phrase",
+      "scope": {
+        "target": "library",
+        "quran": {
+          "sure": "2",
+          "aya": "213"
+        }
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-bahar-2",
+          "match": [
+            0,
+            160
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-093",
+    "group": "quran",
+    "note": "استناد: الحدید ۴",
+    "request": {
+      "query": "",
+      "mode": "normalized_phrase",
+      "scope": {
+        "target": "library",
+        "quran": {
+          "sure": "57",
+          "aya": "4"
+        }
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-aseman",
+          "match": [
+            0,
+            160
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-094",
+    "group": "quran",
+    "note": "استناد + عبارت (هر دو باید بخورد)",
+    "request": {
+      "query": "الكعبة بيت الله",
+      "mode": "normalized_phrase",
+      "scope": {
+        "target": "library",
+        "quran": {
+          "sure": "2",
+          "aya": "213"
+        }
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 0,
+      "books": 0,
+      "passages": 0,
+      "count_relation": "exact",
+      "first": null
+    }
+  },
+  {
+    "id": "g-095",
+    "group": "quran",
+    "note": "استناد ناموجود: نوح ۹۹۹",
+    "request": {
+      "query": "",
+      "mode": "normalized_phrase",
+      "scope": {
+        "target": "library",
+        "quran": {
+          "sure": "71",
+          "aya": "999"
+        }
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 0,
+      "books": 0,
+      "passages": 0,
+      "count_relation": "exact",
+      "first": null
+    }
+  },
+  {
+    "id": "g-096",
+    "group": "quran",
+    "note": "استناد سورهٔ کامل ناموجود",
+    "request": {
+      "query": "",
+      "mode": "normalized_phrase",
+      "scope": {
+        "target": "library",
+        "quran": {
+          "sure": "114"
+        }
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 0,
+      "books": 0,
+      "passages": 0,
+      "count_relation": "exact",
+      "first": null
+    }
+  },
+  {
+    "id": "g-097",
+    "group": "roles",
+    "note": "تطبیق داخل سند راوی (sanad)",
+    "request": {
+      "query": "عن أبي أبيه",
+      "mode": "strict_phrase",
+      "scope": {
+        "target": "library",
+        "roles": [
+          "sanad"
+        ]
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 3,
+      "books": 2,
+      "passages": 3,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-bahar-2",
+          "match": [
+            119,
+            130
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-bahar-2",
+          "match": [
+            530,
+            541
+          ],
+          "page": "p-001"
+        },
+        {
+          "doc": "doc-safina",
+          "match": [
+            186,
+            197
+          ],
+          "page": "p-001"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-098",
+    "group": "roles",
+    "note": "تطبیق داخل گوینده (G)",
+    "request": {
+      "query": "الصادق",
+      "mode": "all_words",
+      "scope": {
+        "target": "library",
+        "roles": [
+          "G"
+        ]
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 2,
+      "books": 2,
+      "passages": 2,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-bahar-2",
+          "match": [
+            138,
+            144
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-safina",
+          "match": [
+            290,
+            296
+          ],
+          "page": "p-001"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-099",
+    "group": "roles",
+    "note": "فیلتر نقش معصوم",
+    "request": {
+      "query": "الإمام",
+      "mode": "all_words",
+      "scope": {
+        "target": "library",
+        "roles": [
+          "maasoom"
+        ]
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 4,
+      "books": 2,
+      "passages": 4,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-bahar-2",
+          "match": [
+            131,
+            137
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-bahar-3",
+          "match": [
+            15,
+            21
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-safina",
+          "match": [
+            7,
+            13
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-100",
+    "group": "roles",
+    "note": "فیلتر نقش مأخذ (K)",
+    "request": {
+      "query": "الخصال",
+      "mode": "all_words",
+      "scope": {
+        "target": "library",
+        "roles": [
+          "K"
+        ]
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 0,
+      "books": 0,
+      "passages": 0,
+      "count_relation": "exact",
+      "first": null
+    }
+  },
+  {
+    "id": "g-101",
+    "group": "roles",
+    "note": "فیلتر نقش بدنه (b)",
+    "request": {
+      "query": "اصطلاح",
+      "mode": "all_words",
+      "scope": {
+        "target": "library",
+        "roles": [
+          "b"
+        ]
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 0,
+      "books": 0,
+      "passages": 0,
+      "count_relation": "exact",
+      "first": null
+    }
+  },
+  {
+    "id": "g-102",
+    "group": "roles",
+    "note": "نقش غلط → بی‌نتیجه",
+    "request": {
+      "query": "الكعبة",
+      "mode": "strict_phrase",
+      "scope": {
+        "target": "library",
+        "roles": [
+          "sanad"
+        ]
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 0,
+      "books": 0,
+      "passages": 0,
+      "count_relation": "exact",
+      "first": null
+    }
+  },
+  {
+    "id": "g-103",
+    "group": "roles",
+    "note": "چند نقش (sanad یا maasoom)",
+    "request": {
+      "query": "قال",
+      "mode": "all_words",
+      "scope": {
+        "target": "library",
+        "roles": [
+          "sanad",
+          "maasoom"
+        ]
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 5,
+      "books": 2,
+      "passages": 5,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-bahar-2",
+          "match": [
+            37,
+            160
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-bahar-2",
+          "match": [
+            542,
+            545
+          ],
+          "page": "p-001"
+        },
+        {
+          "doc": "doc-bahar-3",
+          "match": [
+            41,
+            44
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-104",
+    "group": "roles",
+    "note": "تطبیق بیرون نقش‌های درخواستی حذف می‌شود",
+    "request": {
+      "query": "الرسول",
+      "mode": "all_words",
+      "scope": {
+        "target": "library",
+        "roles": [
+          "sharh"
+        ]
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-bahar-2",
+          "match": [
+            20,
+            424
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-105",
+    "group": "scope",
+    "note": "دامنهٔ یک اثر: الحج",
+    "request": {
+      "query": "الكعبة بيت الله",
+      "mode": "strict_phrase",
+      "scope": {
+        "target": "work",
+        "work_uid": "w-hajj"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 300,
+      "books": 1,
+      "passages": 60,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-hajj",
+          "match": [
+            54,
+            69
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-hajj",
+          "match": [
+            122,
+            137
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-hajj",
+          "match": [
+            190,
+            205
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-106",
+    "group": "scope",
+    "note": "دامنهٔ اثر بی‌تطبیق",
+    "request": {
+      "query": "الكعبة بيت الله",
+      "mode": "strict_phrase",
+      "scope": {
+        "target": "work",
+        "work_uid": "w-edge"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 0,
+      "books": 0,
+      "passages": 0,
+      "count_relation": "exact",
+      "first": null
+    }
+  },
+  {
+    "id": "g-107",
+    "group": "scope",
+    "note": "دامنهٔ یک سند: doc-bahar-2",
+    "request": {
+      "query": "الرسول",
+      "mode": "any_words",
+      "scope": {
+        "target": "document",
+        "document_uids": [
+          "doc-bahar-2"
+        ]
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 6,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-bahar-2",
+          "match": [
+            20,
+            26
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-bahar-2",
+          "match": [
+            86,
+            92
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-bahar-2",
+          "match": [
+            192,
+            198
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-108",
+    "group": "scope",
+    "note": "دامنهٔ دو سند",
+    "request": {
+      "query": "العلم",
+      "mode": "any_words",
+      "scope": {
+        "target": "document",
+        "document_uids": [
+          "doc-bahar-2",
+          "doc-bahar-3"
+        ]
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 3,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-bahar-2",
+          "match": [
+            524,
+            529
+          ],
+          "page": "p-001"
+        },
+        {
+          "doc": "doc-bahar-2",
+          "match": [
+            546,
+            551
+          ],
+          "page": "p-001"
+        },
+        {
+          "doc": "doc-bahar-2",
+          "match": [
+            566,
+            571
+          ],
+          "page": "p-001"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-109",
+    "group": "scope",
+    "note": "دامنهٔ سند فارسی",
+    "request": {
+      "query": "قرآن",
+      "mode": "any_words",
+      "scope": {
+        "target": "document",
+        "document_uids": [
+          "doc-aseman"
+        ]
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 2,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-aseman",
+          "match": [
+            41,
+            45
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-aseman",
+          "match": [
+            156,
+            160
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-110",
+    "group": "scope",
+    "note": "دامنهٔ سند مرزی",
+    "request": {
+      "query": "يوسف",
+      "mode": "normalized_phrase",
+      "scope": {
+        "target": "document",
+        "document_uids": [
+          "doc-edge"
+        ]
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 2,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-edge",
+          "match": [
+            28,
+            34
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-edge",
+          "match": [
+            61,
+            65
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-111",
+    "group": "scope",
+    "note": "زبان عربی",
+    "request": {
+      "query": "العلم",
+      "mode": "any_words",
+      "scope": {
+        "target": "library",
+        "language": "ar"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 4,
+      "books": 2,
+      "passages": 2,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-bahar-2",
+          "match": [
+            524,
+            529
+          ],
+          "page": "p-001"
+        },
+        {
+          "doc": "doc-bahar-2",
+          "match": [
+            546,
+            551
+          ],
+          "page": "p-001"
+        },
+        {
+          "doc": "doc-bahar-2",
+          "match": [
+            566,
+            571
+          ],
+          "page": "p-001"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-112",
+    "group": "scope",
+    "note": "زبان فارسی",
+    "request": {
+      "query": "قرآن",
+      "mode": "any_words",
+      "scope": {
+        "target": "library",
+        "language": "fa"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 2,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-aseman",
+          "match": [
+            41,
+            45
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-aseman",
+          "match": [
+            156,
+            160
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-113",
+    "group": "scope",
+    "note": "زبان غلط",
+    "request": {
+      "query": "العلم",
+      "mode": "any_words",
+      "scope": {
+        "target": "library",
+        "language": "fr"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 0,
+      "books": 0,
+      "passages": 0,
+      "count_relation": "exact",
+      "first": null
+    }
+  },
+  {
+    "id": "g-114",
+    "group": "scope",
+    "note": "عنوان کتاب: بحار",
+    "request": {
+      "query": "بحار",
+      "mode": "strict_phrase",
+      "scope": {
+        "target": "titles"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 2,
+      "books": 2,
+      "passages": 0,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "",
+          "match": [
+            0,
+            0
+          ],
+          "page": "نام کتاب"
+        },
+        {
+          "doc": "",
+          "match": [
+            0,
+            0
+          ],
+          "page": "نام کتاب"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-115",
+    "group": "scope",
+    "note": "عنوان کتاب: الحج",
+    "request": {
+      "query": "الحج",
+      "mode": "strict_phrase",
+      "scope": {
+        "target": "titles"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 0,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "",
+          "match": [
+            0,
+            0
+          ],
+          "page": "نام کتاب"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-116",
+    "group": "scope",
+    "note": "عنوان: آسمان (فارسی)",
+    "request": {
+      "query": "آسمان",
+      "mode": "strict_phrase",
+      "scope": {
+        "target": "titles"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 0,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "",
+          "match": [
+            0,
+            0
+          ],
+          "page": "نام کتاب"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-117",
+    "group": "scope",
+    "note": "عنوان ناموجود",
+    "request": {
+      "query": "الغزیة",
+      "mode": "strict_phrase",
+      "scope": {
+        "target": "titles"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 0,
+      "books": 0,
+      "passages": 0,
+      "count_relation": "exact",
+      "first": null
+    }
+  },
+  {
+    "id": "g-118",
+    "group": "scope",
+    "note": "عنوان: سفینة (با ة)",
+    "request": {
+      "query": "سفينة",
+      "mode": "strict_phrase",
+      "scope": {
+        "target": "titles"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 0,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "",
+          "match": [
+            0,
+            0
+          ],
+          "page": "نام کتاب"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-119",
+    "group": "scope",
+    "note": "عنوان با عبارت نرمال",
+    "request": {
+      "query": "تجربی",
+      "mode": "normalized_phrase",
+      "scope": {
+        "target": "titles"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 1,
+      "books": 1,
+      "passages": 0,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "",
+          "match": [
+            0,
+            0
+          ],
+          "page": "نام کتاب"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-120",
+    "group": "scope",
+    "note": "دامنهٔ اثر بحار",
+    "request": {
+      "query": "العلم",
+      "mode": "any_words",
+      "scope": {
+        "target": "work",
+        "work_uid": "w-bahar"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 3,
+      "books": 1,
+      "passages": 1,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-bahar-2",
+          "match": [
+            524,
+            529
+          ],
+          "page": "p-001"
+        },
+        {
+          "doc": "doc-bahar-2",
+          "match": [
+            546,
+            551
+          ],
+          "page": "p-001"
+        },
+        {
+          "doc": "doc-bahar-2",
+          "match": [
+            566,
+            571
+          ],
+          "page": "p-001"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-121",
+    "group": "paging",
+    "note": "صفحه‌بندی: عبارت طلایی با page_size=5",
+    "request": {
+      "query": "الكعبة بيت الله",
+      "mode": "strict_phrase",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 5
+    },
+    "expect": {
+      "occurrences": 300,
+      "books": 1,
+      "passages": 60,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-hajj",
+          "match": [
+            54,
+            69
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-hajj",
+          "match": [
+            122,
+            137
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-hajj",
+          "match": [
+            190,
+            205
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-122",
+    "group": "paging",
+    "note": "صفحه‌بندی: page_size=50 (سقف مجاز)",
+    "request": {
+      "query": "الكعبة بيت الله",
+      "mode": "strict_phrase",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 50
+    },
+    "expect": {
+      "occurrences": 300,
+      "books": 1,
+      "passages": 60,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-hajj",
+          "match": [
+            54,
+            69
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-hajj",
+          "match": [
+            122,
+            137
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-hajj",
+          "match": [
+            190,
+            205
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-123",
+    "group": "paging",
+    "note": "page_size خارج از بازه → پیش‌فرض ۲۰",
+    "request": {
+      "query": "الكعبة بيت الله",
+      "mode": "strict_phrase",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 300,
+      "books": 1,
+      "passages": 60,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-hajj",
+          "match": [
+            54,
+            69
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-hajj",
+          "match": [
+            122,
+            137
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-hajj",
+          "match": [
+            190,
+            205
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  },
+  {
+    "id": "g-124",
+    "group": "paging",
+    "note": "نتیجهٔ کمتر از یک صفحه",
+    "request": {
+      "query": "الصلاة قربان كل تقي",
+      "mode": "strict_phrase",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 0,
+      "books": 0,
+      "passages": 0,
+      "count_relation": "exact",
+      "first": null
+    }
+  },
+  {
+    "id": "g-125",
+    "group": "paging",
+    "note": "نتیجهٔ صفر",
+    "request": {
+      "query": "ژانوال",
+      "mode": "strict_phrase",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 0,
+      "books": 0,
+      "passages": 0,
+      "count_relation": "exact",
+      "first": null
+    }
+  },
+  {
+    "id": "g-126",
+    "group": "paging",
+    "note": "متن کوتاه تک‌حرفی",
+    "request": {
+      "query": "و",
+      "mode": "any_words",
+      "scope": {
+        "target": "library"
+      },
+      "sort": "",
+      "page_size": 20
+    },
+    "expect": {
+      "occurrences": 18,
+      "books": 4,
+      "passages": 5,
+      "count_relation": "exact",
+      "first": [
+        {
+          "doc": "doc-aseman",
+          "match": [
+            31,
+            32
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-aseman",
+          "match": [
+            78,
+            79
+          ],
+          "page": "p-front"
+        },
+        {
+          "doc": "doc-aseman",
+          "match": [
+            141,
+            142
+          ],
+          "page": "p-front"
+        }
+      ]
+    }
+  }
+]

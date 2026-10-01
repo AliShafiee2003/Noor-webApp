@@ -1,5 +1,6 @@
 # Docker Compose — استقرار تولید روی Linux (PRD §۵۲)
-# این فایل در سندباکس توسعه اجرا/آزمون نشده است (Docker در دسترس نیست) — وضعیت در docs/RTM.md
+# وضعیت: در سندباکس Docker نصب نیست (بدون دسترسی root)؛ از بند د-۱۰ گزارش، مانع دقیق ثبت شده است.
+# پس از ج-۷: Next دیگر DATABASE_URL/Prisma ندارد — همهٔ داده‌ها در api (app.sqlite) است.
 # پیش‌نیازها: میزبان linux/amd64، RAM ۱۶–۲۴ گیگ، فضای کافی طبق فرمول §۳۷ (منابع ~۱۰۰GB در ۱۰GB جا نمی‌شوند — §۱)
 services:
   proxy:
@@ -20,6 +21,16 @@ services:
     mem_limit: 1g
     environment:
       - NODE_ENV=production
+      # د-۹: نشانی داخلی Go API و مسیر خروجی PDF (روی volume) — بدون secret در کد
+      - NOOR_API_INTERNAL_URL=http://api:8080
+      - NOOR_PDF_EXPORT_DIR=/data/pdf-exports
+      - NOOR_CHROME_PATH=/usr/bin/chromium-browser
+      - NOOR_FONT_DIR=/app/fonts-pdf
+      # توکن سرویس برای runner PDF (از env میزبان؛ §۳۹ بدون secret در کد)
+      - NOOR_SERVICE_TOKEN=${NOOR_SERVICE_TOKEN:?service token الزامی است}
+    volumes:
+      # د-۹: خروجی PDF روی volume — با read_only rootfs سازگار است
+      - pdf_out:/data/pdf-exports
     read_only: true
     tmpfs: ["/tmp:size=64m"]
     depends_on: [api]
@@ -98,3 +109,4 @@ volumes:
   app_data:
   derived_data:
   os_data:
+  pdf_out:

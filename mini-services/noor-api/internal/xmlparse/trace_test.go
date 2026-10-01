@@ -1,8 +1,8 @@
 package xmlparse
 
 import (
-	_ "modernc.org/sqlite"
 	"fmt"
+	_ "modernc.org/sqlite"
 	"testing"
 
 	"noor/internal/noordb"
@@ -49,5 +49,10 @@ func TestTraceBaharItem4(t *testing.T) {
 	t.Log(out)
 }
 
-
-func runeCut(s string, n int) string { r := []rune(s); if len(r) > n { return string(r[:n]) }; return s }
+func runeCut(s string, n int) string {
+	r := []rune(s)
+	if len(r) > n {
+		return string(r[:n])
+	}
+	return s
+}

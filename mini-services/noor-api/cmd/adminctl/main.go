@@ -17,6 +17,7 @@ func main() {
 	cmd := flag.String("cmd", "", "bootstrap-admin | invite | backup")
 	role := flag.String("role", "reader", "نقش دعوت")
 	username := flag.String("username", "", "نام کاربری")
+	by := flag.String("by", "", "ایجادکنندهٔ دعوت (uid ادمین؛ پیش‌فرض: اولین ادمین فعال)")
 	out := flag.String("out", "./data/backups/app-backup.sqlite", "مسیر backup")
 	flag.Parse()
 	db, err := store.Open(cfg.DataDir + "/app.sqlite")
@@ -31,7 +32,15 @@ func main() {
 		exitIf(err)
 		fmt.Println("کد دعوت یک‌بارمصرف ادمین (۲۴ ساعت):", code)
 	case "invite":
-		code, err := am.CreateInvitation("cmd", *role, 24*time.Hour)
+		createdBy := *by
+		if createdBy == "" {
+			// ایجادکننده باید کاربر واقعی باشد (قید FOREIGN KEY) — اولین ادمین فعال
+			if err := db.QueryRow(`SELECT uid FROM users WHERE role='admin' AND disabled=0 AND uid != 'usr-system' ORDER BY created_at LIMIT 1`).Scan(&createdBy); err != nil {
+				fmt.Fprintln(os.Stderr, "خطا: ادمین فعالی برای ایجاد دعوت یافت نشد (اول با bootstrap-admin حساب بسازید)")
+				os.Exit(1)
+			}
+		}
+		code, err := am.CreateInvitation(createdBy, *role, 24*time.Hour)
 		exitIf(err)
 		fmt.Println("کد دعوت", *role, ":", code)
 	case "backup":

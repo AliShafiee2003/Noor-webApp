@@ -396,8 +396,6 @@ func (s *Server) handleInternalFail(w http.ResponseWriter, r *http.Request) {
 	s.ok(w, map[string]any{"ok": true})
 }
 
-
-
 // handleInternalPublishRelease انتشار نسل پس از ساخت موفق نمایه (pointer اتمیک + audit).
 func (s *Server) handleInternalPublishRelease(w http.ResponseWriter, r *http.Request) {
 	var body struct {

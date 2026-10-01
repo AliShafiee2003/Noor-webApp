@@ -16,14 +16,14 @@ type Service struct{ db *store.DB }
 func New(db *store.DB) *Service { return &Service{db: db} }
 
 type Job struct {
-	UID      string          `json:"uid"`
-	Kind     string          `json:"kind"`
-	Payload  json.RawMessage `json:"payload"`
-	Status   string          `json:"status"`
-	Progress int             `json:"progress"`
-	Note     string          `json:"progress_note"`
-	Error    string          `json:"error,omitempty"`
-	CreatedAt string         `json:"created_at"`
+	UID       string          `json:"uid"`
+	Kind      string          `json:"kind"`
+	Payload   json.RawMessage `json:"payload"`
+	Status    string          `json:"status"`
+	Progress  int             `json:"progress"`
+	Note      string          `json:"progress_note"`
+	Error     string          `json:"error,omitempty"`
+	CreatedAt string          `json:"created_at"`
 }
 
 // Enqueue افزودن کار؛ جلوگیری از تکرار با کلید kind فعال (import/reindex یک فعال).

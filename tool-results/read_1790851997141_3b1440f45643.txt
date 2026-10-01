@@ -1,0 +1,649 @@
+     1→package httpapi
+     2→
+     3→import (
+     4→        "sort"
+     5→
+     6→        "encoding/json"
+     7→        "net/http"
+     8→        "net/url"
+     9→        "strings"
+    10→
+    11→        "github.com/go-chi/chi/v5"
+    12→
+    13→        "noor/internal/search"
+    14→        "noor/internal/xmlparse"
+    15→)
+    16→
+    17→// PassagesCounter شمارش passageهای نمایهٔ فعال (تزریق از main).
+    18→var PassagesCounter = func() int { return 0 }
+    19→
+    20→// ---- کتابخانه (§۱۰) ----
+    21→
+    22→func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
+    23→        release, _ := s.DB.ActiveRelease()
+    24→        works := s.Catalog.Works()
+    25→        passages := PassagesCounter()
+    26→        engine := s.EngineName
+    27→        if engine == "" {
+    28→                engine = "local"
+    29→        }
+    30→        s.ok(w, map[string]any{
+    31→                "library_ready":  passages > 0,
+    32→                "index_ready":    passages > 0,
+    33→                "works_count":    len(works),
+    34→                "passages_count": passages,
+    35→                "release_uid":    release,
+    36→                "engine":         engine, // موتور واقعی فعال (الف-۲) — همیشه همان چیزی که جست‌وجو اجرا می‌کند
+    37→                "note":           "پوشش فعلی نمونهٔ آزمون است؛ کل کتابخانه پس از import منابع واقعی در دسترس خواهد بود.",
+    38→        })
+    39→}
+    40→
+    41→func (s *Server) handleWorks(w http.ResponseWriter, r *http.Request) {
+    42→        q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+    43→        lang := r.URL.Query().Get("language")
+    44→        author := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("author")))
+    45→        var out []map[string]any
+    46→        for _, w := range s.Catalog.Works() {
+    47→                if q != "" && !strings.Contains(strings.ToLower(w.Title), q) && !strings.Contains(strings.ToLower(w.ShortTitle), q) && w.UID != q {
+    48→                        continue
+    49→                }
+    50→                if lang != "" && w.Language != lang {
+    51→                        continue
+    52→                }
+    53→                if author != "" && !strings.Contains(strings.ToLower(w.Author), author) {
+    54→                        continue
+    55→                }
+    56→                feats := s.Catalog.WorkFeatures(&w)
+    57→                out = append(out, map[string]any{
+    58→                        "uid": w.UID, "title": w.Title, "short_title": w.ShortTitle, "author": w.Author,
+    59→                        "publisher": w.Publisher, "year": w.Year, "language": w.Language,
+    60→                        "documents_count": len(w.Documents), "topics": w.Topics, "features": feats,
+    61→                        "published": true,
+    62→                })
+    63→        }
+    64→        if out == nil {
+    65→                out = []map[string]any{}
+    66→        }
+    67→        s.ok(w, map[string]any{"items": out, "total": len(out)})
+    68→}
+    69→
+    70→func (s *Server) handleWork(w http.ResponseWriter, r *http.Request) {
+    71→        uid := chi.URLParam(r, "uid")
+    72→        wk, ok := s.Catalog.Work(uid)
+    73→        if !ok {
+    74→                s.fail(w, r, 404, "not_found", "این اثر در کتابخانهٔ موجود نیست.", false)
+    75→                return
+    76→        }
+    77→        feats := s.Catalog.WorkFeatures(wk)
+    78→        var docs []map[string]any
+    79→        for _, d := range wk.Documents {
+    80→                var cov map[string]string
+    81→                if m, err := s.Catalog.Model(d.UID); err == nil {
+    82→                        cov = map[string]string{
+    83→                                "pages": statusOf(len(m.Pages) > 0), "toc": statusOf(len(m.Sections) > 0),
+    84→                                "hadith": statusOf(len(m.Hadiths) > 0), "quran": statusOf(len(m.Citations) > 0),
+    85→                                "footnotes": statusOf(len(m.Footnotes) > 0), "searchable_text": statusOf(len(m.Blocks) > 0),
+    86→                                "topics": "absent",
+    87→                        }
+    88→                        for i := range m.Blocks {
+    89→                                if len(m.Blocks[i].Links) > 0 {
+    90→                                        cov["links"] = "supported"
+    91→                                }
+    92→                        }
+    93→                        if cov["links"] == "" {
+    94→                                cov["links"] = "absent"
+    95→                        }
+    96→                } else {
+    97→                        cov = map[string]string{"searchable_text": "failed"}
+    98→                }
+    99→                docs = append(docs, map[string]any{
+   100→                        "uid": d.UID, "label": d.Label, "kind": d.Kind, "language": d.Language, "coverage": cov,
+   101→                })
+   102→        }
+   103→        s.ok(w, map[string]any{
+   104→                "uid": wk.UID, "title": wk.Title, "short_title": wk.ShortTitle, "author": wk.Author,
+   105→                "publisher": wk.Publisher, "year": wk.Year, "language": wk.Language, "topics": wk.Topics,
+   106→                "documents": docs, "features": feats,
+   107→                "volumes_count": countVolumes(docs),
+   108→        })
+   109→}
+   110→
+   111→func countVolumes(docs []map[string]any) int {
+   112→        n := 0
+   113→        for _, d := range docs {
+   114→                if d["kind"] == "volume" {
+   115→                        n++
+   116→                }
+   117→        }
+   118→        return n
+   119→}
+   120→
+   121→func statusOf(b bool) string {
+   122→        if b {
+   123→                return "supported"
+   124→        }
+   125→        return "absent"
+   126→}
+   127→
+   128→func (s *Server) handleWorkRelated(w http.ResponseWriter, r *http.Request) {
+   129→        uid := chi.URLParam(r, "uid")
+   130→        wk, ok := s.Catalog.Work(uid)
+   131→        if !ok {
+   132→                s.fail(w, r, 404, "not_found", "این اثر در کتابخانهٔ موجود نیست.", false)
+   133→                return
+   134→        }
+   135→        var out []map[string]any
+   136→        for _, rel := range wk.Related {
+   137→                target, exists := s.Catalog.Work(rel.Target)
+   138→                title := rel.Target
+   139→                if exists {
+   140→                        title = target.Title
+   141→                }
+   142→                out = append(out, map[string]any{
+   143→                        "relation_type": rel.RelationType, "target_work_uid": rel.Target,
+   144→                        "target_title": title, "resolved": exists, "note": rel.Note,
+   145→                })
+   146→        }
+   147→        if out == nil {
+   148→                out = []map[string]any{}
+   149→        }
+   150→        s.ok(w, map[string]any{"items": out})
+   151→}
+   152→
+   153→// ---- مطالعه (§۱۱) ----
+   154→
+   155→func (s *Server) handleTOC(w http.ResponseWriter, r *http.Request) {
+   156→        uid := chi.URLParam(r, "uid")
+   157→        m, err := s.Catalog.Model(uid)
+   158→        if err != nil {
+   159→                s.fail(w, r, 404, "not_found", "این سند در دسترس نیست.", false)
+   160→                return
+   161→        }
+   162→        secs := m.Sections
+   163→        if secs == nil {
+   164→                secs = []*xmlparse.SectionRec{}
+   165→        }
+   166→        s.ok(w, map[string]any{"sections": secs, "release_uid": s.activeReleaseSafe()})
+   167→}
+   168→
+   169→func (s *Server) activeReleaseSafe() string {
+   170→        rel, err := s.DB.ActiveRelease()
+   171→        if err != nil {
+   172→                return "rel-genesis"
+   173→        }
+   174→        return rel
+   175→}
+   176→
+   177→func (s *Server) handlePagesByLabel(w http.ResponseWriter, r *http.Request) {
+   178→        uid := chi.URLParam(r, "uid")
+   179→        label := r.URL.Query().Get("label")
+   180→        m, err := s.Catalog.Model(uid)
+   181→        if err != nil {
+   182→                s.fail(w, r, 404, "not_found", "این سند در دسترس نیست.", false)
+   183→                return
+   184→        }
+   185→        var out []map[string]any
+   186→        for _, p := range m.Pages {
+   187→                if label == "" || p.Label == label {
+   188→                        out = append(out, map[string]any{"page_uid": p.UID, "label": p.Label, "serial": p.Serial, "num": p.Num, "ambiguous": countLabel(m, label) > 1})
+   189→                }
+   190→        }
+   191→        // اگر سند بلوک پیش از نخستین صفحه دارد، p-front هم یک مقصد واقعی است
+   192→        // (در جست‌وجو به‌عنوان صفحهٔ آغاز سند نشانی می‌شود)
+   193→        if label == "" && len(m.Blocks) > 0 && (len(m.Pages) == 0 || m.Pages[0].StartBlock > 0) {
+   194→                out = append(out, map[string]any{"page_uid": "p-front", "label": "—", "serial": 0, "num": "", "ambiguous": false})
+   195→        }
+   196→        sort.Slice(out, func(i, j int) bool {
+   197→                si, _ := out[i]["serial"].(int)
+   198→                sj, _ := out[j]["serial"].(int)
+   199→                return si < sj
+   200→        })
+   201→        if out == nil {
+   202→                out = []map[string]any{}
+   203→        }
+   204→        s.ok(w, map[string]any{"items": out})
+   205→}
+   206→
+   207→func countLabel(m *xmlparse.DocModel, label string) int {
+   208→        n := 0
+   209→        for _, p := range m.Pages {
+   210→                if p.Label == label {
+   211→                        n++
+   212→                }
+   213→        }
+   214→        return n
+   215→}
+   216→
+   217→// handlePage صفحهٔ ساخت‌یافته را برمی‌گرداند (قواعد §۱۱/§۱۹).
+   218→func (s *Server) handlePage(w http.ResponseWriter, r *http.Request) {
+   219→        docUID := chi.URLParam(r, "uid")
+   220→        pageUID := chi.URLParam(r, "pageUID")
+   221→        m, err := s.Catalog.Model(docUID)
+   222→        if err != nil {
+   223→                s.fail(w, r, 404, "not_found", "این سند در دسترس نیست.", false)
+   224→                return
+   225→        }
+   226→        var page *xmlparse.PageRec
+   227→        for i := range m.Pages {
+   228→                if m.Pages[i].UID == pageUID {
+   229→                        page = &m.Pages[i]
+   230→                        break
+   231→                }
+   232→        }
+   233→        if page == nil && pageUID == "p-front" {
+   234→                // صفحهٔ آغازین مصنوعی: بلوک‌های پیش از نخستین صفحهٔ چاپی (یا کل سند بی‌صفحه)
+   235→                // نشانیِ واقعیِ مواضع جست‌وجوی «پیش از صفحهٔ اول» است — ساختگی نیست.
+   236→                if len(m.Pages) == 0 || m.Pages[0].StartBlock > 0 {
+   237→                        to := len(m.Blocks) - 1
+   238→                        if len(m.Pages) > 0 {
+   239→                                to = m.Pages[0].StartBlock - 1
+   240→                        }
+   241→                        if to >= 0 && len(m.Blocks) > 0 {
+   242→                                page = &xmlparse.PageRec{UID: "p-front", Label: "—", Serial: 0, StartBlock: 0, EndBlock: to}
+   243→                        }
+   244→                }
+   245→        }
+   246→        if page == nil {
+   247→                s.fail(w, r, 404, "not_found", "این صفحه در سند موجود نیست.", false)
+   248→                return
+   249→        }
+   250→        from := page.StartBlock
+   251→        to := page.EndBlock
+   252→        if to >= len(m.Blocks) {
+   253→                to = len(m.Blocks) - 1
+   254→        }
+   255→        blocks := []xmlparse.Block{}
+   256→        if from >= 0 && to >= from && from < len(m.Blocks) {
+   257→                blocks = append(blocks, m.Blocks[from:to+1]...)
+   258→        }
+   259→        // فوترهای مربوط به همین صفحه (شناسه در ارجاع‌های بلوک‌ها)
+   260→        needFootnotes := map[string]bool{}
+   261→        for _, b := range blocks {
+   262→                for _, fr := range b.FootnoteRefs {
+   263→                        needFootnotes[fr.Ref] = true
+   264→                }
+   265→        }
+   266→        fns := []xmlparse.Footnote{}
+   267→        for _, f := range m.Footnotes {
+   268→                if needFootnotes[f.UID] || pageContainsFootnote(m, page, f) {
+   269→                        fns = append(fns, f)
+   270→                }
+   271→        }
+   272→        if fns == nil {
+   273→                fns = []xmlparse.Footnote{}
+   274→        }
+   275→        overlayUID := s.overlayForDocument(docUID)
+   276→        s.ok(w, map[string]any{
+   277→                "page_uid": page.UID, "label": page.Label, "serial": page.Serial,
+   278→                "blocks": blocks, "footnotes": fns,
+   279→                "release_uid":          s.activeReleaseSafe(),
+   280→                "overlay_revision_uid": overlayUID,
+   281→                "overlay_applied":      overlayUID != "",
+   282→                "offset_unit":          "codepoint",
+   283→        })
+   284→}
+   285→
+   286→func pageContainsFootnote(m *xmlparse.DocModel, page *xmlparse.PageRec, f xmlparse.Footnote) bool {
+   287→        for i := page.StartBlock; i <= page.EndBlock && i < len(m.Blocks); i++ {
+   288→                if strings.Contains(m.Blocks[i].Text, f.Text) {
+   289→                        return true
+   290→                }
+   291→        }
+   292→        return false
+   293→}
+   294→
+   295→// handleAnchor حل anchor (پاورقی/ارجاع) — بدون هدایت حدسی (REL-10).
+   296→// overlayForDocument آخرین overlay منتشرشدهٔ سند (برای badge نسخهٔ اصلاح‌شده).
+   297→func (s *Server) overlayForDocument(docUID string) string {
+   298→        var uid string
+   299→        err := s.DB.QueryRow(`SELECT uid FROM overlay_revisions WHERE document_uid=? AND status='published' ORDER BY updated_at DESC LIMIT 1`, docUID).Scan(&uid)
+   300→        if err != nil {
+   301→                return ""
+   302→        }
+   303→        return uid
+   304→}
+   305→
+   306→func (s *Server) handleAnchor(w http.ResponseWriter, r *http.Request) {
+   307→        uid := chi.URLParam(r, "uid")
+   308→        // uid فرمت: docUID:anchor یا footnote uid
+   309→        parts := strings.SplitN(uid, ":", 2)
+   310→        if len(parts) == 2 {
+   311→                m, err := s.Catalog.Model(parts[0])
+   312→                if err == nil {
+   313→                        for _, f := range m.Footnotes {
+   314→                                if f.UID == parts[1] {
+   315→                                        s.ok(w, map[string]any{"kind": "footnote", "uid": f.UID, "label": f.Label, "text": f.Text, "document_uid": parts[0]})
+   316→                                        return
+   317→                                }
+   318→                        }
+   319→                        for _, h := range m.Hadiths {
+   320→                                if h.LocalUID == parts[1] {
+   321→                                        s.ok(w, map[string]any{"kind": "hadith", "uid": h.LocalUID, "index": h.Index, "body_blocks": h.BodyBlocks, "sanad_blocks": h.SanadBlocks, "document_uid": parts[0]})
+   322→                                        return
+   323→                                }
+   324→                        }
+   325→                }
+   326→        }
+   327→        s.fail(w, r, 404, "not_found", "مقصد این ارجاع در مجموعهٔ موجود قابل حل نیست؛ نشانی اصلی حفظ شده است.", false)
+   328→}
+   329→
+   330→// ---- جست‌وجو (§۱۲/§۴۴–۴۷) ----
+   331→
+   332→func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
+   333→        var req search.Request
+   334→        if !decodeBody(w, r, &req) {
+   335→                return
+   336→        }
+   337→        release, _ := s.DB.ActiveRelease()
+   338→        resp, err := s.Engine.Search(r.Context(), &req, release)
+   339→        if err != nil {
+   340→                var gone *search.GoneError
+   341→                if errorsAs(err, &gone) {
+   342→                        s.fail(w, r, 410, "gone_cursor", gone.Message, true)
+   343→                        return
+   344→                }
+   345→                s.fail(w, r, 422, "invalid_query", err.Error(), true)
+   346→                return
+   347→        }
+   348→        s.ok(w, resp)
+   349→}
+   350→
+   351→func (s *Server) handleSearchContinue(w http.ResponseWriter, r *http.Request) {
+   352→        var body struct {
+   353→                Cursor string `json:"cursor"`
+   354→        }
+   355→        if !decodeBody(w, r, &body) {
+   356→                return
+   357→        }
+   358→        release, _ := s.DB.ActiveRelease()
+   359→        resp, err := s.Engine.Continue(r.Context(), chi.URLParam(r, "sessionUID"), body.Cursor, release)
+   360→        if err != nil {
+   361→                var gone *search.GoneError
+   362→                if errorsAs(err, &gone) {
+   363→                        s.fail(w, r, 410, "gone_cursor", gone.Message, true)
+   364→                        return
+   365→                }
+   366→                s.fail(w, r, 422, "invalid_query", err.Error(), true)
+   367→                return
+   368→        }
+   369→        s.ok(w, resp)
+   370→}
+   371→
+   372→func (s *Server) handleSearchBooks(w http.ResponseWriter, r *http.Request) {
+   373→        resp, err := s.Engine.BooksGrouped(r.Context(), chi.URLParam(r, "sessionUID"))
+   374→        if err != nil {
+   375→                var gone *search.GoneError
+   376→                if errorsAs(err, &gone) {
+   377→                        s.fail(w, r, 410, "gone_cursor", gone.Message, true)
+   378→                        return
+   379→                }
+   380→                s.fail(w, r, 422, "invalid_query", err.Error(), true)
+   381→                return
+   382→        }
+   383→        s.ok(w, map[string]any{"groups": resp})
+   384→}
+   385→
+   386→func errorsAs(err error, target any) bool {
+   387→        if g, ok := err.(*search.GoneError); ok {
+   388→                if tp, ok2 := target.(**search.GoneError); ok2 {
+   389→                        *tp = g
+   390→                        return true
+   391→                }
+   392→        }
+   393→        return false
+   394→}
+   395→
+   396→// handleHadithLocations «این روایت در چه کتاب‌هایی آمده؟» (§۴۷، HAD).
+   397→// متن بدنهٔ روایت از بلوک‌های ثبت‌شدهٔ مدل سند ساخته می‌شود (بدون سند — HAD-02/03)
+   398→// و با حالت normalized_phrase روی کل کتابخانه جست‌وجو می‌شود؛ گروه‌بندی فقط
+   399→// تطبیق‌های تأییدشده را نشان می‌دهد. خروجی صادقانه «منابع دارای این عبارت» است —
+   400→// ادعای یکسانیِ کامل روایت بدون بررسی کارشناسی نمی‌شود (disclaimer در پاسخ).
+   401→func (s *Server) handleHadithLocations(w http.ResponseWriter, r *http.Request) {
+   402→        docUID := chi.URLParam(r, "uid")
+   403→        localUID := chi.URLParam(r, "localUID")
+   404→        // نتایج جست‌وجو شناسهٔ روایت را در شکل anchor (docUID:local) می‌دهند؛
+   405→        // شکل محلی (h-101) و کدگذاری %3A نیز پذیرفته می‌شود — هر دو همان روایت‌اند.
+   406→        if u, uerr := url.PathUnescape(localUID); uerr == nil {
+   407→                localUID = u
+   408→        }
+   409→        localUID = strings.TrimPrefix(localUID, docUID+":")
+   410→        m, err := s.Catalog.Model(docUID)
+   411→        if err != nil {
+   412→                s.fail(w, r, 404, "not_found", "این سند در دسترس نیست.", false)
+   413→                return
+   414→        }
+   415→        var piece *xmlparse.HadithPiece
+   416→        for i := range m.Hadiths {
+   417→                if m.Hadiths[i].LocalUID == localUID {
+   418→                        piece = &m.Hadiths[i] // نخستین قطعه با این شناسه محلی (قطعه‌های هم‌شناسه — HAD-01)
+   419→                        break
+   420→                }
+   421→        }
+   422→        if piece == nil {
+   423→                s.fail(w, r, 404, "not_found", "این شناسهٔ روایت در سند ثبت نشده است.", false)
+   424→                return
+   425→        }
+   426→        hadithInfo := map[string]any{
+   427→                "document_uid":  docUID,
+   428→                "local_uid":     localUID,
+   429→                "piece_index":   piece.Index,
+   430→                "revayat_index": piece.RevayatIndex,
+   431→                "body_blocks":   len(piece.BodyBlocks),
+   432→                "sanad_blocks":  len(piece.SanadBlocks),
+   433→        }
+   434→        blockByID := make(map[string]string, len(m.Blocks))
+   435→        for _, b := range m.Blocks {
+   436→                blockByID[b.ID] = b.Text
+   437→        }
+   438→        var parts []string
+   439→        for _, id := range piece.BodyBlocks {
+   440→                if t, ok := blockByID[id]; ok && strings.TrimSpace(t) != "" {
+   441→                        parts = append(parts, t)
+   442→                }
+   443→        }
+   444→        body := strings.Join(strings.Fields(strings.Join(parts, " ")), " ")
+   445→        runes := []rune(body)
+   446→        hadithInfo["body_length"] = len(runes)
+   447→        if len(runes) == 0 {
+   448→                s.ok(w, map[string]any{
+   449→                        "hadith": hadithInfo, "groups": []any{}, "verified_occurrences": 0, "verified_books": 0,
+   450→                        "query_truncated": false,
+   451→                        "note":            "بدنهٔ متنی برای این روایت ثبت نشده است (فقط سند یا نشانه‌گذاری ناقص)؛ جست‌وجویی انجام نشد.",
+   452→                        "disclaimer":      "این فهرست «منابع دارای این عبارت» است؛ یکسانیِ کامل روایت بدون بررسی کارشناسی ادعا نمی‌شود.",
+   453→                })
+   454→                return
+   455→        }
+   456→        // سقف قرارداد §۴۴: normalized_phrase تا ۲۰۴۸ code point.
+   457→        // جست‌وجو پلکانی و صادقانه است: نخست بدنهٔ کامل (یا برش ۲۰۴۸ با پرچم)،
+   458→        // اگر هیچ تطبیق تأییدشده‌ای نیامد، بخش آغازین متن (نقل‌قول‌های جزئی در
+   459→        // کتاب‌های دیگر) — هر گذر با «query_excerpt» گزارش می‌شود تا UI صادق بماند.
+   460→        runFull := body
+   461→        truncated := false
+   462→        if len([]rune(runFull)) > 2048 {
+   463→                truncated = true
+   464→                runFull = strings.TrimSpace(string([]rune(runFull)[:2048]))
+   465→                if i := strings.LastIndex(runFull, " "); i > 512 {
+   466→                        runFull = runFull[:i]
+   467→                }
+   468→        }
+   469→        runesAll := []rune(body)
+   470→        cutAt := func(n int) string {
+   471→                if n > len(runesAll) {
+   472→                        n = len(runesAll)
+   473→                }
+   474→                s := strings.TrimSpace(string(runesAll[:n]))
+   475→                if i := strings.LastIndex(s, " "); i > n/3 {
+   476→                        s = s[:i]
+   477→                }
+   478→                return s
+   479→        }
+   480→        type passT struct {
+   481→                q    string
+   482→                note string
+   483→        }
+   484→        passes := []passT{{q: runFull, note: "متن کامل بدنهٔ روایت"}}
+   485→        if len([]rune(runesAll)) > 160 {
+   486→                passes = append(passes, passT{q: cutAt(160), note: "بخش آغازین متن روایت (نخستین ۱۶۰ نویسه)"})
+   487→        }
+   488→        if len([]rune(runesAll)) > 60 {
+   489→                passes = append(passes, passT{q: cutAt(60), note: "عبارت آغازین کوتاه (نخستین ۶۰ نویسه)"})
+   490→        }
+   491→        release, _ := s.DB.ActiveRelease()
+   492→        var groups []search.BookGroup
+   493→        // اجتماع کتاب‌ها روی همهٔ گذرها (§۴۶: کامل‌بودن پاسخ «در چه کتاب‌هایی»
+   494→        // مقدم بر صرفه است): کتابی که فقط بخش آغازین روایت را نقل کرده هم باید بیاید.
+   495→        // هر اثر فقط از نخستین گذری که پیدایش کرده، شمرده می‌شود (بدون دوبارشماری).
+   496→        seenWorks := map[string]bool{}
+   497→        type passMetaT struct {
+   498→                Note       string `json:"note"`
+   499→                Query      string `json:"query_excerpt"`
+   500→                WorksFound int    `json:"works_found"`
+   501→                WorksAdded int    `json:"works_added"`
+   502→        }
+   503→        passMeta := []passMetaT{}
+   504→        for _, p := range passes {
+   505→                if strings.TrimSpace(p.q) == "" {
+   506→                        continue
+   507→                }
+   508→                req := &search.Request{
+   509→                        Query:    p.q,
+   510→                        Mode:     search.NormalizedPhrase,
+   511→                        Scope:    search.Scope{Target: "library"},
+   512→                        Sort:     "source",
+   513→                        PageSize: 50,
+   514→                }
+   515→                r2, err := s.Engine.Search(r.Context(), req, release)
+   516→                if err != nil {
+   517→                        s.fail(w, r, 422, "invalid_query", err.Error(), true)
+   518→                        return
+   519→                }
+   520→                g2, err := s.Engine.BooksGrouped(r.Context(), r2.SessionUID)
+   521→                if err != nil {
+   522→                        var gone *search.GoneError
+   523→                        if errorsAs(err, &gone) {
+   524→                                s.fail(w, r, 410, "gone_cursor", gone.Message, true)
+   525→                                return
+   526→                        }
+   527→                        s.fail(w, r, 422, "invalid_query", err.Error(), true)
+   528→                        return
+   529→                }
+   530→                meta := passMetaT{Note: p.note, Query: p.q, WorksFound: len(g2)}
+   531→                for _, g := range g2 {
+   532→                        if seenWorks[g.Work.UID] {
+   533→                                continue
+   534→                        }
+   535→                        seenWorks[g.Work.UID] = true
+   536→                        groups = append(groups, g)
+   537→                        meta.WorksAdded++
+   538→                }
+   539→                passMeta = append(passMeta, meta)
+   540→        }
+   541→        // شمارش تجمیعی صادقانه: هر اثر/سند فقط از گذر کشفشده شمرده می‌شود
+   542→        totalOcc := 0
+   543→        for _, g := range groups {
+   544→                for _, d := range g.Documents {
+   545→                        totalOcc += d.VerifiedOccurrences
+   546→                }
+   547→        }
+   548→        excerpt := body
+   549→        if len([]rune(excerpt)) > 320 {
+   550→                excerpt = string([]rune(excerpt)[:320]) + "…"
+   551→        }
+   552→        hadithInfo["body_excerpt"] = excerpt
+   553→        /* «فیش‌های من» روی هر سند (RES): شمار فیش‌های فعالِ همین کاربر برای
+   554→           این روایت محلی، گروه‌شده بر سند؛ روی خروجی گروه‌ها لحاظ می‌شود
+   555→           تا کاربر ببیند کدام منبع را قبلاً فیش‌برداری کرده است. */
+   556→        clipCounts, cerr := s.Research.CountMyClipsForHadith(userOf(r).UID, localUID)
+   557→        if cerr != nil {
+   558→                s.fail(w, r, 500, "internal", "شمار فیش‌های این روایت در دسترس نیست.", true)
+   559→                return
+   560→        }
+   561→        type locDoc struct {
+   562→                search.DocEvidence
+   563→                MyClips int `json:"my_clips"`
+   564→        }
+   565→        type locGroup struct {
+   566→                Work      search.Ref `json:"work"`
+   567→                Documents []locDoc   `json:"documents"`
+   568→        }
+   569→        outGroups := make([]locGroup, 0, len(groups))
+   570→        for _, g := range groups {
+   571→                lg := locGroup{Work: g.Work, Documents: make([]locDoc, 0, len(g.Documents))}
+   572→                for _, d := range g.Documents {
+   573→                        lg.Documents = append(lg.Documents, locDoc{DocEvidence: d, MyClips: clipCounts[d.Document.UID]})
+   574→                }
+   575→                outGroups = append(outGroups, lg)
+   576→        }
+   577→        out := map[string]any{
+   578→                "hadith":               hadithInfo,
+   579→                "query_truncated":      truncated,
+   580→                "query_excerpt":        passes[0].q,
+   581→                "pass_note":            passes[0].note,
+   582→                "verified_occurrences": totalOcc,
+   583→                "verified_books":       len(groups),
+   584→                "groups":               outGroups,
+   585→                "disclaimer":           "این فهرست «منابع دارای این عبارت» است؛ یکسانیِ کامل روایت بدون بررسی کارشناسی ادعا نمی‌شود.",
+   586→        }
+   587→        if len(passMeta) > 1 {
+   588→                out["passes"] = passMeta
+   589→        }
+   590→        s.ok(w, out)
+   591→}
+   592→
+   593→// ---- موضوعات (§۱۵) — از کاتالوگ (TOP با پوشش صریح) ----
+   594→
+   595→func (s *Server) handleTopics(w http.ResponseWriter, r *http.Request) {
+   596→        q := r.URL.Query().Get("q")
+   597→        type topicRow struct {
+   598→                UID    string `json:"uid"`
+   599→                Title  string `json:"title"`
+   600→                Count  int    `json:"count"`
+   601→                Parent string `json:"parent"`
+   602→        }
+   603→        // موضوعات از کاتالوگ آثار جمع می‌شود؛ پوشش صریح اعلام می‌شود
+   604→        counts := map[string]int{}
+   605→        var all []topicRow
+   606→        for _, wk := range s.Catalog.Works() {
+   607→                for _, t := range wk.Topics {
+   608→                        counts[t]++
+   609→                }
+   610→        }
+   611→        for t, c := range counts {
+   612→                if q != "" && !strings.Contains(t, q) {
+   613→                        continue
+   614→                }
+   615→                all = append(all, topicRow{UID: "topic-" + t, Title: t, Count: c, Parent: ""})
+   616→        }
+   617→        if all == nil {
+   618→                all = []topicRow{}
+   619→        }
+   620→        s.ok(w, map[string]any{"items": all, "coverage_note": "فهرست موضوعی فقط منابع دارای نمایهٔ موضوعی را پوشش می‌دهد؛ نبود موضوع به معنی نبود محتوا نیست."})
+   621→}
+   622→
+   623→func (s *Server) handleTopicOccurrences(w http.ResponseWriter, r *http.Request) {
+   624→        // پیاده‌سازی ساده و صادقانه: مواضع از موضوع در کاتالوگ → آثار دارای موضوع
+   625→        uid := chi.URLParam(r, "uid")
+   626→        title := strings.TrimPrefix(uid, "topic-")
+   627→        var out []map[string]any
+   628→        for _, wk := range s.Catalog.Works() {
+   629→                for _, t := range wk.Topics {
+   630→                        if t == title {
+   631→                                out = append(out, map[string]any{
+   632→                                        "kind": "work", "work_uid": wk.UID, "work_title": wk.Title,
+   633→                                        "note": "این اثر در فهرست موضوعی ثبت شده است؛ برای مواضع دقیق، جست‌وجوی متنی در آن انجام دهید.",
+   634→                                })
+   635→                        }
+   636→                }
+   637→        }
+   638→        if out == nil {
+   639→                out = []map[string]any{}
+   640→        }
+   641→        s.ok(w, map[string]any{"items": out, "coverage_note": "پوشش موضوعی در این نسخه در سطح اثر است."})
+   642→}
+   643→
+   644→func (s *Server) handleKeyword(w http.ResponseWriter, r *http.Request) {
+   645→        s.ok(w, map[string]any{"items": []any{}, "note": "کلیدواژه‌های تفصیلی پس از نمایه‌سازی منابع دارای این نشانه‌گذاری فعال می‌شوند."})
+   646→}
+   647→
+   648→var _ = json.Marshal
+   649→

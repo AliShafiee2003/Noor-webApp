@@ -74,7 +74,31 @@ func main() {
 
 	am := auth.NewManager(db, cfg.SessionMaxAge, cfg.SessionIdle)
 	idxDB.Close()
-	eng := search.NewLocal(idxPath, []byte(secret), httpapi.MetaAdapter(cat))
+
+	// انتخاب صریح موتور (الف-۲): NOOR_ENGINE=local فقط با ثبت صریح؛
+	// NOOR_ENGINE=opensearch بدون سرویس در دسترس → استارت با خطای فهمیدنی شکست می‌خورد.
+	base := search.NewLocal(idxPath, []byte(secret), httpapi.MetaAdapter(cat),
+		search.WithLimits(cfg.MaxResults, cfg.SearchSessionTTL),
+		search.WithSessionStore(db))
+	var engineName string
+	var eng search.Engine
+	switch cfg.Engine {
+	case "", "local":
+		engineName = "local"
+		eng = base
+	case "opensearch":
+		osEng, err := search.NewOpenSearch(cfg.OpenSearchURL, cfg.OpenSearchUser, cfg.OpenSearchPass, os.Getenv("NOOR_OS_INDEX"), base)
+		if err != nil {
+			log.Fatalf("NOOR_ENGINE=opensearch است اما موتور OpenSearch آماده نیست: %v (سرویس opensearch را بالا بیاورید یا NOOR_ENGINE=local بگذارید)", err)
+		}
+		if err := osEng.EnsureIndex(); err != nil {
+			log.Fatalf("ساخت نمایهٔ OpenSearch ناموفق بود: %v", err)
+		}
+		engineName = "opensearch"
+		eng = osEng
+	default:
+		log.Fatalf("NOOR_ENGINE=%q شناخته شده نیست؛ مقادیر مجاز: local، opensearch", cfg.Engine)
+	}
 
 	// نمایهٔ خالی → خودکار نمایه‌سازی اولیه در صف (قابل اجرا توسط worker)
 	if countPassages(idxPath) == 0 {
@@ -88,12 +112,12 @@ func main() {
 	srv := &httpapi.Server{
 		Cfg: cfg, DB: db, Auth: am, Catalog: cat,
 		Engine: eng, Research: research.New(db), Overlay: overlay.New(db), Jobs: jobs.New(db),
-		Secret: []byte(secret),
+		Secret: []byte(secret), EngineName: engineName,
 	}
 	httpapi.PassagesCounter = func() int { return countPassages(idxPath) }
 
 	addr := ":" + cfg.HTTPPort
-	log.Println("noor-api listening on", addr, "| engine:", cfg.Engine, "| works:", len(cat.Works()))
+	log.Println("noor-api listening on", addr, "| engine:", engineName, "| max_results:", cfg.MaxResults, "| session_ttl:", cfg.SearchSessionTTL, "| works:", len(cat.Works()))
 	if err := http.ListenAndServe(addr, srv.Router()); err != nil {
 		log.Fatal(err)
 	}

@@ -13,10 +13,13 @@ import puppeteer from "puppeteer-core";
  * - هیچ متن پیکره‌ای بدون escape وارد HTML نمی‌شود؛ هیچ اسکریپتی اجرا نمی‌شود.
  */
 
+/* د-۹: همهٔ مسیرها با env قابل‌پیکربندی‌اند (Docker/web container) —
+   مقدار پیش‌فرض فقط برای محیط توسعهٔ همین سندباکس است. */
 export const CHROME_PATH =
+  process.env.NOOR_CHROME_PATH ??
   "/home/z/.agent-browser/browsers/chrome-153.0.8010.52/chrome";
 
-const FONT_DIR = "/home/z/my-project/node_modules/@fontsource";
+const FONT_DIR = process.env.NOOR_FONT_DIR ?? "/home/z/my-project/node_modules/@fontsource";
 
 /* ---------- تایپ‌های ورودی ---------- */
 

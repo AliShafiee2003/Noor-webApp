@@ -18,16 +18,16 @@ import (
 // WorkManifest و DocManifest از fixturegen می‌آیند (همان ساختار JSON).
 
 type Work struct {
-	UID        string           `json:"uid"`
-	Title      string           `json:"title"`
-	ShortTitle string           `json:"short_title"`
-	Author     string           `json:"author"`
-	Publisher  *string          `json:"publisher"`
-	Year       *string          `json:"year"`
-	Language   string           `json:"language"`
-	Topics     []string         `json:"topics"`
-	Documents  []DocumentMeta   `json:"documents"`
-	Related    []RelatedRecord  `json:"related"`
+	UID        string          `json:"uid"`
+	Title      string          `json:"title"`
+	ShortTitle string          `json:"short_title"`
+	Author     string          `json:"author"`
+	Publisher  *string         `json:"publisher"`
+	Year       *string         `json:"year"`
+	Language   string          `json:"language"`
+	Topics     []string        `json:"topics"`
+	Documents  []DocumentMeta  `json:"documents"`
+	Related    []RelatedRecord `json:"related"`
 }
 
 type DocumentMeta struct {

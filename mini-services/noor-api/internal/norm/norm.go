@@ -103,6 +103,28 @@ func Tokenize(s string) []string {
 	})
 }
 
+// Trigrams سه‌گانه‌های نویسه‌ای متمایز متن (بر پایهٔ code point).
+// برای پیش‌فیلتر «عبارت دقیق» روی text_n1: اگر عبارت خام در متن اصلی با مرز واژه
+// آمده باشد، شکل نرمال آن زیررشتهٔ n1 است و پس همهٔ سه‌گانه‌هایش در n1 هست
+// (صدا: پیش‌فیلتر شامل هر passage دارای تطبیق واقعی است — verifier نهایی روی متن اصلی می‌ماند).
+// متن کوتاه‌تر از ۳ نویسه خروجی ندارد (پیش‌فیلتر ممکن نیست؛ caller باید fallback داشته باشد).
+func Trigrams(s string) []string {
+	rs := []rune(s)
+	if len(rs) < 3 {
+		return nil
+	}
+	seen := make(map[string]bool, len(rs))
+	out := make([]string, 0, len(rs))
+	for i := 0; i+3 <= len(rs); i++ {
+		t := string(rs[i : i+3])
+		if !seen[t] {
+			seen[t] = true
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
 // WordBoundary بررسی مرز واژه در متن نرمال: نویسهٔ قبل/بعد حرف/رقم نباشند.
 func WordBoundary(s string, start, end int) bool {
 	rs := []rune(s)
