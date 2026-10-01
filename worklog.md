@@ -682,3 +682,24 @@ Stage Summary:
 - قرارداد API اکنون واقعاً برقرار است: tags همیشه آرایه (پاسخ‌های null دیگر غیرممکن است؛ ردیف‌های قدیمی هم در خواندن اصلاح می‌شوند). رفتار فعلی هیچ چیز سازگاری را نشکست — فقط null نقض‌قرارداد قبلی حذف شد.
 - فایل‌ها: mini-services/noor-api/internal/research/research.go (+helper و ۶ فراخوانی)، src/views/project-view.tsx (۲ گارد دفاعی)، باینری‌های bin/api و bin/worker بازساخت.
 - برای ایجنت بعدی: هر مسیر جدیدی که Clip/MyClip/HadithClip از DB می‌خواند باید normTags را صدا بزند (الگوی موجود). بازاجرا: `cd mini-services/noor-api && PATH=/home/z/sdk/go/bin:$PATH go build -o bin/api ./cmd/api && ./run-local.sh`.
+
+---
+Task ID: user-round-16 (گزارش ممیزی نسخهٔ ۲ — بستن یافته‌های اجرایی)
+Agent: main (coordinator) + 3 subagentهای نیمه‌کاره که کارشان بازیابی و تکمیل شد
+Task: بررسی و رفع یافته‌های گزارش ممیزی جدید (upload/Pasted Content_1790872336526.txt) — خوشهٔ صحت جست‌وجو + خوشه‌های parser/store
+
+Work Log:
+- گزارش ۹۰۶ خطی ممیزی v2 خوانده و ۱۵ شاهد اجرایی + یافته‌های ایستا با کد فعلی تطبیق داده شد (۵/۵ spot-check تأیید: LIMIT 20000، نبود U+064D، O(n²) addBlock، تجمیع RAM در worker، tags). بستهٔ audit/ خارجی در مخزن ما نبود — رگرسیون‌های محصول خودمان نوشته شد.
+- سه زیرعامل موازی (16-a/16-b/16-c) به‌دلیل خطای زیرساخت mid-work قطع شدند اما کارشان تقریباً کامل بود؛ من ادامه/تکمیل کردم:
+- **16-a (search/norm)**: NFC نسخه‌دار n1-1.1.0 (nfc.go/nfc_tables.go/nfc_vectors_test.go) + U+064D در norm.go ✅. ناتمام: refactor «runState» (SEARCH-01/07) → من کامل کردم: run()→runState{capped,candSaturated}، cap قابل‌تنظیم (NOOR_CANDIDATE_CAP/WithCandidateCap)، تشخیص اشباع زیرکوئری‌ها، صداقت buildResponse (اشباع→partial/lower_bound؛ بی‌توکن→complete/exact + Notice صادقانه)، OS: searchAll با ctx + truncated + timed_out/_shards.Failed → partial؛ sync فیلتر دیاکریتیک OS با 0x064D؛ SEARCH-03: between/ayaEq عددی + ayaNum (ارقام فارسی/عربی/لاتین؛ نامعتبر=رد نه صفر).
+- **16-b (parser/index)**: DB-02 شمار rune تجمعی (t.runes) ✅؛ DB-03 ثبت ParseErrors به‌ازای DocItem ✅؛ DB-05 ایندکس idx_passages_release ✅؛ DB-01 streaming iterator در worker ✅؛ SEARCH-02 overlap نیمه‌کاره که **دو باگ بنیادی** داشت → رفع من: (۱) SourceStart با offInPassage پیش‌رفته محاسبه می‌شد → آفست منفی و ۳۱۲ به‌جای ۳۰۰؛ (۲) لنگر tail برای جریان غیرپیوسته غلط بود → طراحی gap-aware: متن passage = tail + "\n"×gap + body با SourceStart = انتهای مطلق قطعهٔ قبلی − tail؛ ستون جدید overlap_runes + تشخیص ستون در dbHandle (نمایهٔ قدیمی = رفتار پیشین)؛ verifyInText: modeهای غیرعبارتی (all_words/any/near/linguistic) پوشاننده/رخداد فقط از بدنه (n1BodyStart)؛ modeهای عبارتی tail را نگه می‌دارند و dedupe مطلق تکرار را جمع می‌کند.
+- **16-c (store/research/httpapi)**: DB-04 BEGIN IMMEDIATE مهاجرت ✅؛ DB-07 workspace tx ✅؛ DB-08 RowsAffected→ErrConflict ✅؛ DB-09 ESCAPE '\' ✅؛ GO-08 تک‌WriteHeader ✅؛ GO-07 خطای موتور→503 engine_unavailable (retryable=true؛ فقط 422 برای اعتبارسنجی) ✅؛ GO-09/10 پرتابل‌سازی تست‌های auth/index/xmlparse ✅ (login_test، cite_test مسیر نسبی+skip، trace_test).
+- رگرسیون‌های جدید: internal/search/audit_regression_test.go — TestAuditE3NumericRange، TestAuditZeroTokenHonesty، TestAuditCandidateCapHonesty (با cap کوچک)، TestAuditAdjacentChunkBoundaryPhrase (۰ قبلی → دقیقاً ۱).
+- Integration: بیلد bin/api+worker → run-local → pwreset §۵۰ ادمین → POST /admin/index/rebuild (job-9acec62b، done) → نمایهٔ جدید با n1-1.1.0.
+- تأیید: go vet ./... پاک؛ go test ./internal/... **۹/۹ سبز**؛ HTTP: طلایی «الكعبة بيت الله»=۳۰۰ complete/exact؛ بی‌توکن=complete/exact با Notice درست؛ بقره ۲۱۳=۱؛ مرورگر: صفحهٔ نتایج «۳۰۰ (شمارش کامل) — ۶۰ قطعه» رندر، کنسول پاک.
+
+Stage Summary:
+- بسته‌شده از فهرست الف ممیزی: SEARCH-01 (صداقت)؛ SEARCH-02 (مرز، با طراحی gap-aware sound)؛ SEARCH-03؛ SEARCH-04؛ SEARCH-05؛ DB-02؛ DB-03؛ DB-05؛ DB-01 (streaming). از ب: DB-04/07/08/09، GO-07/08/09/10. SEARCH-06 (پاورقی) عمداً defer — نیاز به نقش/استریم مستقل پاورقی و تصمیم قراردادی دارد (جایگزین: اعلام صریح پوشش)؛ SEARCH-07✅ شد.
+- تغییر قراردادی اعلامی: (۱) اشباع کاندید/پاسخ ناقص OS اکنون partial/lower_bound (قبلاً complete/exact کاذب)؛ (۲) خطای موتور 422→503 engine_unavailable؛ (۳) ستون additive overlap_runes در index.sqlite (نمایهٔ قدیمی پشتیبانی می‌شود)؛ (۴) نسخهٔ نرمال n1-1.1.0 → نمایه حتماً بازسازی شود (انجام شد).
+- باقی (صادقانه): DEP-01 TLS client (نیازمند محیط OS واقعی)؛ SEARCH-08/09/11/12/13/14/15/16 جزئی؛ PERF-01/02/03؛ DB-13/14؛ GO-04/06 (trusted proxy)؛ پاورقی (SEARCH-06)؛ P1/P2/S1/S2 benchmarkهای سنگین audit (بستهٔ audit خارجی در مخزن نیست).
+- بازاجرا: `cd mini-services/noor-api && PATH=/home/z/sdk/go/bin:$PATH go test ./internal/...`؛ HTTP: ورود qa-reader (QaReader-2026-x9) → POST /search؛ رمز تازهٔ ادمین این دور: nhe9R-GXjKW-wUxgP (در پیام کاربر هم هست).

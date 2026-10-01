@@ -1,0 +1,634 @@
+     1→// Package search — آداپتور OpenSearch (§۴۶).
+     2→//
+     3→// معماری: بازیابی «کاندید» با OpenSearch (mapping بدون stemming/stopword،
+     4→// فیلد خام برای عبارت دقیق، _source حداقلی، bulk با نرخ کنترل‌شده،
+     5→// PIT + search_after برای پیمایش پایدار) و تأیید نهایی هر تطبیق روی
+     6→// «متن مؤثر همان نسخه» با همان verifier موتور محلی — قرارداد خروجی
+     7→// (modes، scope، فیلتر نقش روی محل تطبیق، شمارش‌های تأییدشده، cursor
+     8→// امضاشده، highlight map) دقیقاً همان LocalEngine است.
+     9→//
+    10→// درستی: پرس‌وجوی OpenSearch عمداً recall-محور است (ابرکاندید مجاز؛
+    11→// verifier حقیقت است) به‌طوری که هیچ تطبیق تأییدشدنی از دست نرود.
+    12→package search
+    13→
+    14→import (
+    15→        "bytes"
+    16→        "context"
+    17→        "encoding/json"
+    18→        "errors"
+    19→        "fmt"
+    20→        "io"
+    21→        "net/http"
+    22→        "net/url"
+    23→        "sort"
+    24→        "strings"
+    25→        "time"
+    26→
+    27→        "noor/internal/norm"
+    28→)
+    29→
+    30→// OpenSearchEngine موتور جست‌وجوی OpenSearch؛ دسترسی به متن و verifier را از
+    31→// LocalEngine همان نمایه می‌گیرد (منبع متن یکسان است — §۴۴: verifier روی متن مؤثر).
+    32→type OpenSearchEngine struct {
+    33→        base   *LocalEngine // متن + verifier + نشست + شمارش
+    34→        client *osClient
+    35→        index  string
+    36→}
+    37→
+    38→// NewOpenSearch ساخت آداپتور؛ با ping سرویس — در نبود سرویس خطای فهمیدنی می‌دهد (الف-۲).
+    39→func NewOpenSearch(baseURL, user, pass, indexName string, base *LocalEngine) (*OpenSearchEngine, error) {
+    40→        if strings.TrimSpace(baseURL) == "" {
+    41→                return nil, errors.New("آدرس OpenSearch خالی است؛ NOOR_OPENSEARCH_URL را تنظیم کنید")
+    42→        }
+    43→        c := &osClient{baseURL: strings.TrimRight(baseURL, "/"), user: user, pass: pass, http: &http.Client{Timeout: 30 * time.Second}}
+    44→        if err := c.ping(); err != nil {
+    45→                return nil, fmt.Errorf("سرویس OpenSearch در %s پاسخ نمی‌دهد: %w", baseURL, err)
+    46→        }
+    47→        if indexName == "" {
+    48→                indexName = "noor-passages"
+    49→        }
+    50→        return &OpenSearchEngine{base: base, client: c, index: indexName}, nil
+    51→}
+    52→
+    53→// EnsureIndex ساخت index با mapping مصوب در نبود آن (بدون stemming/stopword).
+    54→func (e *OpenSearchEngine) EnsureIndex() error {
+    55→        return e.client.ensureIndex(e.index)
+    56→}
+    57→
+    58→// EngineName نام موتور برای /status و لاگ.
+    59→func (e *OpenSearchEngine) EngineName() string { return "opensearch" }
+    60→
+    61→// ---- اجرای جست‌وجو ----
+    62→
+    63→func (e *OpenSearchEngine) Search(ctx context.Context, req *Request, releaseUID string) (*Response, error) {
+    64→        if err := validateRequest(req); err != nil {
+    65→                return nil, err
+    66→        }
+    67→        if req.Scope.Target == "titles" {
+    68→                hits, err := e.SearchTitles(ctx, req.Query, req.PageSize)
+    69→                if err != nil {
+    70→                        return nil, err
+    71→                }
+    72→                resp := &Response{ReleaseUID: releaseUID, CompletionState: "complete", CountRelation: "exact", Results: []Result{}}
+    73→                for _, h := range hits {
+    74→                        resp.Results = append(resp.Results, Result{
+    75→                                PassageUID: "title-" + h.WorkUID, MatchType: "exact",
+    76→                                Work: Ref{UID: h.WorkUID, Title: h.Title, Label: h.ShortTitle},
+    77→                                Page: Ref{Label: "نام کتاب"},
+    78→                        })
+    79→                }
+    80→                resp.VerifiedBooks = len(hits)
+    81→                resp.VerifiedOccurrences = len(hits)
+    82→                return resp, nil
+    83→        }
+    84→        verified, capped, err := e.runVerified(ctx, req, releaseUID)
+    85→        if err != nil {
+    86→                return nil, err
+    87→        }
+    88→        sid := newID("s")
+    89→        if err := e.base.saveSession(sid, releaseUID, req); err != nil {
+    90→                return nil, err
+    91→        }
+    92→        return e.base.buildResponse(sid, releaseUID, req, verified, 0, capped), nil
+    93→}
+    94→
+    95→func (e *OpenSearchEngine) Continue(ctx context.Context, sessionUID, cursor, releaseUID string) (*Response, error) {
+    96→        if !verifyCursor(cursor, e.base.Secret) {
+    97→                return nil, &GoneError{Message: "نشانهٔ ادامهٔ جست‌وجو معتبر نیست؛ دوباره اجرا کنید."}
+    98→        }
+    99→        payload, ok := parseCursorPayload(cursor)
+   100→        if !ok || payload.S != sessionUID {
+   101→                return nil, &GoneError{Message: "نشانهٔ ادامهٔ جست‌وجو معتبر نیست؛ دوباره اجرا کنید."}
+   102→        }
+   103→        release, req, err := e.base.loadSession(sessionUID)
+   104→        if err != nil {
+   105→                return nil, &GoneError{Message: "مهلت این جست‌وجو پایان یافته است؛ دوباره اجرا کنید."}
+   106→        }
+   107→        verified, capped, err := e.runVerified(ctx, req, release)
+   108→        if err != nil {
+   109→                return nil, err
+   110→        }
+   111→        _ = releaseUID
+   112→        return e.base.buildResponse(sessionUID, release, req, verified, payload.O, capped), nil
+   113→}
+   114→
+   115→func (e *OpenSearchEngine) BooksGrouped(ctx context.Context, sessionUID string) ([]BookGroup, error) {
+   116→        release, req, err := e.base.loadSession(sessionUID)
+   117→        if err != nil {
+   118→                return nil, &GoneError{Message: "مهلت این جست‌وجو پایان یافته است؛ دوباره اجرا کنید."}
+   119→        }
+   120→        verified, _, err := e.runVerified(ctx, req, release)
+   121→        if err != nil {
+   122→                return nil, err
+   123→        }
+   124→        return groupVerified(e.base.catalog, verified), nil
+   125→}
+   126→
+   127→// runVerified کاندید از OpenSearch → ترتیب قطعی → تأیید روی متن نمایه.
+   128→func (e *OpenSearchEngine) runVerified(ctx context.Context, req *Request, releaseUID string) ([]Result, bool, error) {
+   129→        qN, _ := norm.Normalize(req.Query)
+   130→        toks := norm.Tokenize(qN)
+   131→        citationOnly := req.Scope.Quran != nil && len(toks) == 0
+   132→        if len(toks) == 0 && !citationOnly {
+   133→                return nil, true, nil
+   134→        }
+   135→        db, err := e.base.dbHandle()
+   136→        if err != nil {
+   137→                return nil, false, err
+   138→        }
+   139→        db, err = e.base.ensureRelease(db, releaseUID)
+   140→        if err != nil {
+   141→                return nil, false, err
+   142→        }
+   143→        // ۱) کاندیدها از OpenSearch (پیمایش پایدار با PIT + search_after؛ _source حداقلی)
+   144→        hits, err := e.collectCandidates(ctx, req, toks, citationOnly)
+   145→        if err != nil {
+   146→                return nil, false, err
+   147→        }
+   148→        // ۲) ترتیب قطعی همان LocalEngine: work_uid, document_uid, block_start (+passage_uid برای قطعیت)
+   149→        sort.SliceStable(hits, func(i, j int) bool {
+   150→                a, b := hits[i].Source, hits[j].Source
+   151→                if str(a["work_uid"]) != str(b["work_uid"]) {
+   152→                        return str(a["work_uid"]) < str(b["work_uid"])
+   153→                }
+   154→                if str(a["document_uid"]) != str(b["document_uid"]) {
+   155→                        return str(a["document_uid"]) < str(b["document_uid"])
+   156→                }
+   157→                if num(a["block_start"]) != num(b["block_start"]) {
+   158→                        return num(a["block_start"]) < num(b["block_start"])
+   159→                }
+   160→                return str(a["passage_uid"]) < str(b["passage_uid"])
+   161→        })
+   162→        // ۳) متن کامل از نمایهٔ محلی (منبع واحد حقیقت) + همان verifier
+   163→        var out []Result
+   164→        cap := e.base.maxResults
+   165→        if cap <= 0 {
+   166→                cap = defaultMaxResults
+   167→        }
+   168→        seen := map[string]bool{}
+   169→        const batch = 200
+   170→        for start := 0; start < len(hits); start += batch {
+   171→                if ctx.Err() != nil {
+   172→                        return out, false, ctx.Err()
+   173→                }
+   174→                end := start + batch
+   175→                if end > len(hits) {
+   176→                        end = len(hits)
+   177→                }
+   178→                rows, err := fetchCandRows(db, releaseUID, hits[start:end])
+   179→                if err != nil {
+   180→                        return nil, false, err
+   181→                }
+   182→                for i := range rows {
+   183→                        r := &rows[i]
+   184→                        if !scopeAllows(req, r) {
+   185→                                continue
+   186→                        }
+   187→                        if !citationAllows(req, r) {
+   188→                                continue // استناد باید واقعاً در همین passage باشد
+   189→                        }
+   190→                        hitsV, matchType := verifyInText(req, r)
+   191→                        if req.Scope.Quran != nil && len([]rune(req.Query)) == 0 && len(hitsV) == 0 {
+   192→                                n1r := []rune(r.TextOriginal)
+   193→                                hi := clampInt(160, 0, len(n1r))
+   194→                                hitsV = []hit{{Range: [2]int{0, hi}}}
+   195→                                matchType = "exact"
+   196→                        }
+   197→                        for _, h := range hitsV {
+   198→                                key := r.DocumentUID + ":" + fmt.Sprint(r.SourceStart+h.Range[0]) + ":" + fmt.Sprint(r.SourceStart+h.Range[1])
+   199→                                if seen[key] {
+   200→                                        continue
+   201→                                }
+   202→                                seen[key] = true
+   203→                                if len(req.Scope.Roles) > 0 && !matchInsideRoles(r.RoleRanges, h.Range) {
+   204→                                        continue
+   205→                                }
+   206→                                out = append(out, e.base.toResult(r, h, matchType))
+   207→                                if len(out) >= cap {
+   208→                                        return out, true, nil
+   209→                                }
+   210→                        }
+   211→                }
+   212→        }
+   213→        return out, false, nil
+   214→}
+   215→
+   216→// collectCandidates پرس‌وجوی recall-محور per-mode با فیلتر scope؛ همهٔ کاندیدها
+   217→// در ترتیب قطعی PIT + search_after جمع می‌شوند.
+   218→func (e *OpenSearchEngine) collectCandidates(ctx context.Context, req *Request, toks []string, citationOnly bool) ([]osHit, error) {
+   219→        // پرس‌وجو باید دقیقاً همان‌طور که verifier می‌بیند نرمال شود (پاریتی با LocalEngine):
+   220→        // همهٔ حالت‌ها روی text_n1 با شکل نرمال عبارت؛ زبانی با Fold (هم‌سان با verifier).
+   221→        qN, _ := norm.Normalize(req.Query)
+   222→        osQuery := qN
+   223→        if req.Mode == Linguistic {
+   224→                osQuery = norm.Fold(req.Query)
+   225→        }
+   226→        var query map[string]any
+   227→        switch {
+   228→        case citationOnly:
+   229→                // مورد ۳ دور ممیزی: پرس‌وجوی استناد صرف دیگر match_all نیست؛
+   230→                // با کلیدهای ایندکس‌شدهٔ citation_keys محدود می‌شود (recall فقط باید superset باشد —
+   231→                // دقت نهایی همان citationAllows روی متن نمایهٔ SQLite است).
+   232→                keys := QuranScopeKeys(req.Scope.Quran)
+   233→                if len(keys) == 0 {
+   234→                        query = map[string]any{"match_all": map[string]any{}}
+   235→                } else {
+   236→                        query = map[string]any{"terms": map[string]any{"citation_keys": keys}}
+   237→                }
+   238→        case req.Mode == StrictPhrase:
+   239→                // ابرکاندید: عبارت نرمال روی text_n1 — تطبیق خامِ متن اصلی در verifier تأیید می‌شود
+   240→                query = map[string]any{"match_phrase": map[string]any{"text_n1": osQuery}}
+   241→        case req.Mode == NormalizedPhrase, req.Mode == LongQuote:
+   242→                query = map[string]any{"match_phrase": map[string]any{"text_n1": osQuery}}
+   243→        case req.Mode == AllWords:
+   244→                query = map[string]any{"match": map[string]any{"text_n1": map[string]any{"query": osQuery, "operator": "and"}}}
+   245→        case req.Mode == Near:
+   246→                // ابرکاندید «همهٔ واژه‌ها»؛ شرط فاصله/ترتیب در verifier اعمال می‌شود
+   247→                query = map[string]any{"match": map[string]any{"text_n1": map[string]any{"query": osQuery, "operator": "and"}}}
+   248→        case req.Mode == AnyWords:
+   249→                query = map[string]any{"match": map[string]any{"text_n1": map[string]any{"query": osQuery, "operator": "or"}}}
+   250→        case req.Mode == Linguistic:
+   251→                // OR واژه‌ها؛ دقت زبانی در verifier (Fold) اعمال می‌شود
+   252→                query = map[string]any{"match": map[string]any{"text_n1": map[string]any{"query": osQuery, "operator": "or"}}}
+   253→        default:
+   254→                return nil, errors.New("حالت جست‌وجو معتبر نیست")
+   255→        }
+   256→        // فیلتر scope روی فیلدهای keyword + kind
+   257→        filter := []any{map[string]any{"term": map[string]any{"kind": "passage"}}}
+   258→        if req.Scope.Target == "work" && req.Scope.WorkUID != nil {
+   259→                filter = append(filter, map[string]any{"term": map[string]any{"work_uid": *req.Scope.WorkUID}})
+   260→        }
+   261→        if req.Scope.Target == "document" || req.Scope.Target == "section" {
+   262→                if len(req.Scope.DocumentUIDs) > 0 {
+   263→                        filter = append(filter, map[string]any{"terms": map[string]any{"document_uid": req.Scope.DocumentUIDs}})
+   264→                } else {
+   265→                        return nil, nil // دامنهٔ خالی → هیچ کاندید
+   266→                }
+   267→        }
+   268→        if req.Scope.Target == "collection" && len(req.Scope.CollectionUIDs) > 0 {
+   269→                filter = append(filter, map[string]any{"terms": map[string]any{"collection_uid": req.Scope.CollectionUIDs}})
+   270→        }
+   271→        if req.Scope.Language != nil && *req.Scope.Language != "" {
+   272→                filter = append(filter, map[string]any{"term": map[string]any{"language": *req.Scope.Language}})
+   273→        }
+   274→        body := map[string]any{"query": map[string]any{"bool": map[string]any{"must": query, "filter": filter}}}
+   275→        sortKeys := []any{map[string]any{"work_uid": "asc"}, map[string]any{"document_uid": "asc"},
+   276→                map[string]any{"block_start": "asc"}, map[string]any{"passage_uid": "asc"}}
+   277→        maxCand := e.base.maxResults * 3
+   278→        if maxCand < 20000 {
+   279→                maxCand = 20000
+   280→        }
+   281→        return e.client.searchAll(e.index, body, sortKeys, maxCand)
+   282→}
+   283→
+   284→// SearchTitles جست‌وجوی نام کتاب روی نمایهٔ عنوان‌ها (kind=title) —
+   285→// تطبیق زیررشته با Fold در موتور محلی با n-gram بازتاب داده شده است.
+   286→func (e *OpenSearchEngine) SearchTitles(ctx context.Context, q string, pageSize int) ([]TitleHit, error) {
+   287→        body := map[string]any{
+   288→                "size":  pageSize,
+   289→                "query": map[string]any{"bool": map[string]any{"must": map[string]any{"match_phrase": map[string]any{"title_search": map[string]any{"query": q, "analyzer": "noor_title_q"}}}, "filter": map[string]any{"term": map[string]any{"kind": "title"}}}},
+   290→        }
+   291→        var out struct {
+   292→                Hits struct {
+   293→                        Hits []struct {
+   294→                                Source map[string]any `json:"_source"`
+   295→                        } `json:"hits"`
+   296→                } `json:"hits"`
+   297→        }
+   298→        if err := e.client.searchOnce(e.index, body, &out); err != nil {
+   299→                return nil, err
+   300→        }
+   301→        res := []TitleHit{}
+   302→        for _, h := range out.Hits.Hits {
+   303→                res = append(res, TitleHit{
+   304→                        WorkUID:    str(h.Source["work_uid"]),
+   305→                        Title:      str(h.Source["title"]),
+   306→                        ShortTitle: str(h.Source["short_title"]),
+   307→                        Author:     str(h.Source["author"]),
+   308→                })
+   309→        }
+   310→        return res, nil
+   311→}
+   312→
+   313→// ---- کلاینت HTTP OpenSearch (بدون وابستگی بیرونی) ----
+   314→type osClient struct {
+   315→        baseURL string
+   316→        user    string
+   317→        pass    string
+   318→        http    *http.Client
+   319→}
+   320→
+   321→func (c *osClient) do(ctx context.Context, method, path string, body any, out any) error {
+   322→        var rdr io.Reader
+   323→        if body != nil {
+   324→                b, err := json.Marshal(body)
+   325→                if err != nil {
+   326→                        return err
+   327→                }
+   328→                rdr = bytes.NewReader(b)
+   329→        }
+   330→        req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, rdr)
+   331→        if err != nil {
+   332→                return err
+   333→        }
+   334→        req.Header.Set("Content-Type", "application/json")
+   335→        if c.user != "" {
+   336→                req.SetBasicAuth(c.user, c.pass)
+   337→        }
+   338→        resp, err := c.http.Do(req)
+   339→        if err != nil {
+   340→                return err
+   341→        }
+   342→        defer resp.Body.Close()
+   343→        raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
+   344→        if resp.StatusCode >= 300 {
+   345→                return fmt.Errorf("opensearch %s %s → HTTP %d: %s", method, path, resp.StatusCode, truncate(string(raw), 300))
+   346→        }
+   347→        if out != nil && len(raw) > 0 {
+   348→                if err := json.Unmarshal(raw, out); err != nil {
+   349→                        return fmt.Errorf("پاسخ OpenSearch قابل تحلیل نیست: %w", err)
+   350→                }
+   351→        }
+   352→        return nil
+   353→}
+   354→
+   355→func (c *osClient) ping() error {
+   356→        ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+   357→        defer cancel()
+   358→        var out map[string]any
+   359→        if err := c.do(ctx, "GET", "/", nil, &out); err != nil {
+   360→                return err
+   361→        }
+   362→        if v, ok := out["version"].(map[string]any); ok {
+   363→                if d, ok := v["distribution"].(string); ok && d != "" && !strings.Contains(d, "opensearch") {
+   364→                        // موتور دیگری پاسخ داده — صادقانه رد می‌کنیم
+   365→                        return fmt.Errorf("سرویس پاسخ‌دهنده OpenSearch نیست (distribution=%s)", d)
+   366→                }
+   367→        }
+   368→        return nil
+   369→}
+   370→
+   371→// osDiacriticFilter حذف اعراب/تطویل — همان مجموعهٔ مصوب norm.ArabicDiacritics + تطویل.
+   372→func osDiacriticFilter() map[string]any {
+   373→        diacs := []rune{
+   374→                0x0610, 0x0611, 0x0612, 0x064B, 0x064C, 0x064E, 0x064F, 0x0650, 0x0651, 0x0652,
+   375→                0x0653, 0x0654, 0x0655, 0x0656, 0x0670, 0x0674, 0x06D6, 0x06D7, 0x06D8, 0x06D9,
+   376→                0x06DA, 0x06DB, 0x06DC, 0x06DF, 0x06E0, 0x06E1, 0x06E2, 0x06E3, 0x06E4, 0x06E7,
+   377→                0x06E8, 0x06EA, 0x06EB, 0x06EC, 0x06ED, 0x0640,
+   378→        }
+   379→        mappings := make([]string, 0, len(diacs))
+   380→        for _, d := range diacs {
+   381→                mappings = append(mappings, string(d)+" => ")
+   382→        }
+   383→        return map[string]any{"type": "mapping", "mappings": mappings}
+   384→}
+   385→
+   386→// ensureIndex ساخت index با mapping مصوب (الف-۱): بدون stemming/stopword؛
+   387→// tokenizer سفارشی هم‌ارز norm.Tokenize (حرف/رقم/خط‌تیره/نیم‌فاصله = نویسهٔ واژه)؛
+   388→// فیلد raw (keyword) برای عبارت دقیق؛ _source حداقلی (متن‌ها از نمایهٔ محلی خوانده می‌شوند).
+   389→func (c *osClient) ensureIndex(index string) error {
+   390→        ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+   391→        defer cancel()
+   392→        if err := c.do(ctx, "HEAD", "/"+index, nil, nil); err == nil {
+   393→                return nil // موجود است
+   394→        } else if !strings.Contains(err.Error(), "HTTP 404") {
+   395→                return err // خطای دیگر (اتصال/احراز) — گزارش صریح
+   396→        }
+   397→        mapping := map[string]any{
+   398→                "settings": map[string]any{
+   399→                        "number_of_shards": 1, "number_of_replicas": 0, "index.max_ngram_diff": 22,
+   400→                        "analysis": map[string]any{
+   401→                                "char_filter": map[string]any{
+   402→                                        "noor_strip": osDiacriticFilter(),
+   403→                                        "noor_fold": map[string]any{
+   404→                                                "type": "mapping",
+   405→                                                "mappings": []string{
+   406→                                                        "أ => ا", "إ => ا", "آ => ا", "ٱ => ا",
+   407→                                                        "ؤ => و", "ئ => ی", "ة => ه", "ى => ی",
+   408→                                                        "ي => ی", "ك => ک",
+   409→                                                },
+   410→                                        },
+   411→                                },
+   412→                                "tokenizer": map[string]any{
+   413→                                        // هم‌ارز norm.Tokenize: واژه = حرف/رقم/خط‌تیره/نیم‌فاصله
+   414→                                        "noor_tok": map[string]any{"type": "pattern", "pattern": "([\\p{L}\\p{Nd}\\-\\u200C]+)", "group": 1},
+   415→                                },
+   416→                                "filter": map[string]any{
+   417→                                        "title_ngram": map[string]any{"type": "ngram", "min_gram": 2, "max_gram": 24},
+   418→                                },
+   419→                                "analyzer": map[string]any{
+   420→                                        "noor_n1":      map[string]any{"type": "custom", "char_filter": []string{"noor_strip"}, "tokenizer": "noor_tok", "filter": []string{"lowercase"}},
+   421→                                        "noor_title":   map[string]any{"type": "custom", "char_filter": []string{"noor_fold"}, "tokenizer": "noor_tok", "filter": []string{"lowercase", "title_ngram"}},
+   422→                                        "noor_title_q": map[string]any{"type": "custom", "char_filter": []string{"noor_fold"}, "tokenizer": "noor_tok", "filter": []string{"lowercase"}},
+   423→                                },
+   424→                        },
+   425→                },
+   426→                "mappings": map[string]any{
+   427→                        // _source حداقلی: متن‌های کامل و نگاشت از _source حذف شده‌اند — از نمایهٔ SQLite خوانده می‌شوند
+   428→                        // citation_keys فقط برای terms filter است و در _source لازم نیست.
+   429→                        "_source": map[string]any{"excludes": []string{"text_original", "text_n1", "n1_map", "role_ranges", "citations", "citation_keys"}},
+   430→                        "properties": map[string]any{
+   431→                                "kind":             map[string]any{"type": "keyword"},
+   432→                                "passage_uid":      map[string]any{"type": "keyword"},
+   433→                                "release_uid":      map[string]any{"type": "keyword"},
+   434→                                "collection_uid":   map[string]any{"type": "keyword"},
+   435→                                "work_uid":         map[string]any{"type": "keyword"},
+   436→                                "document_uid":     map[string]any{"type": "keyword"},
+   437→                                "section_uid":      map[string]any{"type": "keyword"},
+   438→                                "page_uid":         map[string]any{"type": "keyword"},
+   439→                                "page_label":       map[string]any{"type": "keyword"},
+   440→                                "language":         map[string]any{"type": "keyword"},
+   441→                                "local_hadith_uid": map[string]any{"type": "keyword"},
+   442→                                "revayat_index":    map[string]any{"type": "keyword"},
+   443→                                "fingerprint":      map[string]any{"type": "keyword"},
+   444→                                // کلیدهای استناد قرآنی برای پرس‌وجوی استناد صرف (مورد ۳ دور ممیزی)
+   445→                                "citation_keys":    map[string]any{"type": "keyword"},
+   446→                                "source_start":     map[string]any{"type": "integer"},
+   447→                                "source_end":       map[string]any{"type": "integer"},
+   448→                                "block_start":      map[string]any{"type": "integer"},
+   449→                                "block_end":        map[string]any{"type": "integer"},
+   450→                                "text_original":    map[string]any{"type": "text", "analyzer": "noor_n1"},
+   451→                                "text_n1":          map[string]any{"type": "text", "analyzer": "noor_n1", "fields": map[string]any{"raw": map[string]any{"type": "keyword"}}},
+   452→                                "title":            map[string]any{"type": "keyword"},
+   453→                                "short_title":      map[string]any{"type": "keyword"},
+   454→                                "author":           map[string]any{"type": "keyword"},
+   455→                                "title_search":     map[string]any{"type": "text", "analyzer": "noor_title"},
+   456→                        },
+   457→                },
+   458→        }
+   459→        return c.do(ctx, "PUT", "/"+index, mapping, nil)
+   460→}
+   461→
+   462→// BulkIndex نمایه‌سازی bulk با نرخ کنترل‌شده (اندازهٔ دسته + مکث؛ §۳۸).
+   463→// src هر آیتم را به سند JSON و شناسه تبدیل می‌کند.
+   464→func (c *osClient) BulkIndex(ctx context.Context, index string, items []map[string]any, ids []string, batchSize int, pause time.Duration, progress func(done int)) error {
+   465→        if batchSize <= 0 {
+   466→                batchSize = 500
+   467→        }
+   468→        for start := 0; start < len(items); start += batchSize {
+   469→                if ctx.Err() != nil {
+   470→                        return ctx.Err()
+   471→                }
+   472→                end := start + batchSize
+   473→                if end > len(items) {
+   474→                        end = len(items)
+   475→                }
+   476→                var buf bytes.Buffer
+   477→                for i := start; i < end; i++ {
+   478→                        meta, _ := json.Marshal(map[string]any{"index": map[string]any{"_index": index, "_id": ids[i]}})
+   479→                        buf.Write(meta)
+   480→                        buf.WriteByte('\n')
+   481→                        doc, err := json.Marshal(items[i])
+   482→                        if err != nil {
+   483→                                return err
+   484→                        }
+   485→                        buf.Write(doc)
+   486→                        buf.WriteByte('\n')
+   487→                }
+   488→                var out struct {
+   489→                        Errors bool `json:"errors"`
+   490→                        Items  []struct {
+   491→                                Index struct {
+   492→                                        Status int    `json:"status"`
+   493→                                        Error  any    `json:"error"`
+   494→                                        ID     string `json:"_id"`
+   495→                                } `json:"index"`
+   496→                        } `json:"items"`
+   497→                }
+   498→                reqBody := json.RawMessage(buf.Bytes())
+   499→                if err := c.do(ctx, "POST", "/_bulk", reqBody, &out); err != nil {
+   500→                        return err
+   501→                }
+   502→                if out.Errors {
+   503→                        first := ""
+   504→                        for _, it := range out.Items {
+   505→                                if it.Index.Error != nil {
+   506→                                        first = fmt.Sprint(it.Index.Error)
+   507→                                        break
+   508→                                }
+   509→                        }
+   510→                        return fmt.Errorf("نمایه‌سازی bulk با خطا مواجه شد: %s", truncate(first, 300))
+   511→                }
+   512→                if progress != nil {
+   513→                        progress(end)
+   514→                }
+   515→                if pause > 0 && end < len(items) {
+   516→                        select {
+   517→                        case <-ctx.Done():
+   518→                                return ctx.Err()
+   519→                        case <-time.After(pause):
+   520→                        }
+   521→                }
+   522→        }
+   523→        return nil
+   524→}
+   525→
+   526→// searchAll پیمایش کامل نتایج با PIT + search_after (صفحه‌بندی پایدار در برابر تغییر index).
+   527→// توجه: در OpenSearch ساخت PIT روی «POST /{index}/_search/point_in_time» است و
+   528→// بستنش روی «DELETE /_pit» با بدنهٔ {"pit_id": ...}.
+   529→func (c *osClient) searchAll(index string, body map[string]any, sortKeys []any, maxHits int) ([]osHit, error) {
+   530→        ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+   531→        defer cancel()
+   532→        // PIT
+   533→        var pit struct {
+   534→                ID string `json:"pit_id"`
+   535→        }
+   536→        if err := c.do(ctx, "POST", "/"+index+"/_search/point_in_time?keep_alive=2m", nil, &pit); err != nil {
+   537→                return nil, err
+   538→        }
+   539→        defer func() {
+   540→                b, _ := json.Marshal(map[string]any{"pit_id": pit.ID})
+   541→                req, err := http.NewRequestWithContext(ctx, "DELETE", c.baseURL+"/_pit", bytes.NewReader(b))
+   542→                if err == nil {
+   543→                        req.Header.Set("Content-Type", "application/json")
+   544→                        if c.user != "" {
+   545→                                req.SetBasicAuth(c.user, c.pass)
+   546→                        }
+   547→                        if resp, err := c.http.Do(req); err == nil {
+   548→                                resp.Body.Close()
+   549→                        }
+   550→                }
+   551→        }()
+   552→        b := map[string]any{
+   553→                "size":  1000,
+   554→                "query": body["query"],
+   555→                "sort":  sortKeys,
+   556→                "pit":   map[string]any{"id": pit.ID, "keep_alive": "2m"},
+   557→        }
+   558→        var after []any
+   559→        var hits []osHit
+   560→        for {
+   561→                if len(hits) >= maxHits {
+   562→                        break
+   563→                }
+   564→                if after != nil {
+   565→                        b["search_after"] = after
+   566→                }
+   567→                var out struct {
+   568→                        Hits struct {
+   569→                                Hits []struct {
+   570→                                        Sort   []any          `json:"sort"`
+   571→                                        Source map[string]any `json:"_source"`
+   572→                                } `json:"hits"`
+   573→                        } `json:"hits"`
+   574→                }
+   575→                if err := c.do(ctx, "POST", "/_search", b, &out); err != nil {
+   576→                        return hits, err
+   577→                }
+   578→                page := out.Hits.Hits
+   579→                if len(page) == 0 {
+   580→                        break
+   581→                }
+   582→                for _, h := range page {
+   583→                        hits = append(hits, osHit{Source: h.Source})
+   584→                }
+   585→                last := page[len(page)-1].Sort
+   586→                if len(last) == 0 {
+   587→                        break
+   588→                }
+   589→                after = last
+   590→        }
+   591→        return hits, nil
+   592→}
+   593→
+   594→func (c *osClient) searchOnce(index string, body map[string]any, out any) error {
+   595→        ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+   596→        defer cancel()
+   597→        return c.do(ctx, "POST", "/"+index+"/_search", body, out)
+   598→}
+   599→
+   600→var errOSNotFound = errors.New("opensearch: not found")
+   601→
+   602→var _ = url.QueryEscape // نگه‌داشتن ایمپورت url برای آدرس‌دهی‌های آینده
+   603→
+   604→// ---- سندهای حداقلی و کمک‌ها ----
+   605→
+   606→type osHit struct {
+   607→        Source map[string]any `json:"-"`
+   608→}
+   609→
+   610→func str(v any) string {
+   611→        if s, ok := v.(string); ok {
+   612→                return s
+   613→        }
+   614→        return ""
+   615→}
+   616→
+   617→func num(v any) int {
+   618→        switch x := v.(type) {
+   619→        case float64:
+   620→                return int(x)
+   621→        case int:
+   622→                return x
+   623→        }
+   624→        return 0
+   625→}
+   626→
+   627→func truncate(s string, n int) string {
+   628→        r := []rune(s)
+   629→        if len(r) > n {
+   630→                return string(r[:n]) + "…"
+   631→        }
+   632→        return s
+   633→}
+   634→

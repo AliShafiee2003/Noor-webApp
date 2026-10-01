@@ -1,0 +1,1318 @@
+     1→// Package search — موتور جست‌وجو: بازیابی کاندید از نمایه + verifier روی متن مؤثر (§۴۴–۴۷).
+     2→// صحت مقدم بر سرعت است؛ count کاندید هرگز «نتیجهٔ نهایی» نمایش داده نمی‌شود.
+     3→// توجه: همهٔ offsetها code point هستند (نه بایت) — §۴۲.
+     4→package search
+     5→
+     6→import (
+     7→        "context"
+     8→        "crypto/hmac"
+     9→        "crypto/rand"
+    10→        "crypto/sha256"
+    11→        "database/sql"
+    12→        "encoding/base64"
+    13→        "encoding/hex"
+    14→        "encoding/json"
+    15→        "errors"
+    16→        "fmt"
+    17→        "log"
+    18→        "strconv"
+    19→        "strings"
+    20→        "sync"
+    21→        "sync/atomic"
+    22→        "time"
+    23→
+    24→        "noor/internal/index"
+    25→        "noor/internal/norm"
+    26→)
+    27→
+    28→// Modes حالت‌های مجاز (§۴۴).
+    29→const (
+    30→        StrictPhrase     = "strict_phrase"
+    31→        NormalizedPhrase = "normalized_phrase"
+    32→        AllWords         = "all_words"
+    33→        AnyWords         = "any_words"
+    34→        Near             = "near"
+    35→        Linguistic       = "linguistic"
+    36→        LongQuote        = "long_quote"
+    37→)
+    38→
+    39→// Scope دامنهٔ جست‌وجو (§۴۸).
+    40→type Scope struct {
+    41→        Target         string   `json:"target"` // library|collection|work|document|section|titles|citations
+    42→        CollectionUIDs []string `json:"collection_uids,omitempty"`
+    43→        WorkUID        *string  `json:"work_uid,omitempty"`
+    44→        DocumentUIDs   []string `json:"document_uids,omitempty"`
+    45→        Roles          []string `json:"roles,omitempty"`
+    46→        Language       *string  `json:"language,omitempty"`
+    47→        // Quran فیلتر استناد قرآنی (QUR-03): سوره و آیه/بازهٔ مشخص
+    48→        Quran *QuranRef `json:"quran,omitempty"`
+    49→}
+    50→
+    51→// QuranRef نشانی استناد؛ سوره الزامی، آیه اختیاری (بازهٔ آیه نیز پوشش داده می‌شود).
+    52→type QuranRef struct {
+    53→        Sure string `json:"sure"`
+    54→        Aya  string `json:"aya,omitempty"`
+    55→}
+    56→
+    57→// Request درخواست جست‌وجو.
+    58→type Request struct {
+    59→        Query string `json:"query"`
+    60→        Mode  string `json:"mode"`
+    61→        Scope Scope  `json:"scope"`
+    62→        Near  *struct {
+    63→                Slop    int  `json:"slop"`
+    64→                Ordered bool `json:"ordered"`
+    65→        } `json:"near,omitempty"`
+    66→        Sort     string `json:"sort"` // relevance|source
+    67→        PageSize int    `json:"page_size"`
+    68→}
+    69→
+    70→// Result نتیجهٔ تأییدشده.
+    71→type Result struct {
+    72→        PassageUID  string   `json:"passage_uid"`
+    73→        MatchType   string   `json:"match_type"`
+    74→        Work        Ref      `json:"work"`
+    75→        Document    Ref      `json:"document"`
+    76→        Page        Ref      `json:"page"`
+    77→        Section     *Ref     `json:"section,omitempty"`
+    78→        Snippet     string   `json:"snippet"`
+    79→        Highlight   []Range  `json:"highlight"`
+    80→        Roles       []string `json:"roles"`
+    81→        LocalHadith string   `json:"local_hadith_uid,omitempty"`
+    82→        // RevayatIndex شمارهٔ درون‌منبع روایت (HAD-08) — نمایش در کارت نتیجه؛
+    83→        // تعمیم به کتاب‌های دیگر ندارد و در پرس‌وجوی میان‌کتابی (§۴۷) به‌کار نمی‌رود.
+    84→        RevayatIndex string `json:"revayat_index,omitempty"`
+    85→        Fingerprint  string `json:"fingerprint,omitempty"`
+    86→        SourceRange  [2]int `json:"source_offsets"`
+    87→        // بازهٔ دقیق تطبیق در مختصات سند (نه فقط passage) — برای هایلایت کتاب‌خوان
+    88→        MatchRange [2]int          `json:"match_offsets,omitempty"`
+    89→        Citations  json.RawMessage `json:"citations,omitempty"`
+    90→}
+    91→
+    92→type Ref struct {
+    93→        UID   string `json:"uid"`
+    94→        Title string `json:"title"`
+    95→        Label string `json:"label"`
+    96→}
+    97→
+    98→type Range struct {
+    99→        Start int    `json:"start"`
+   100→        End   int    `json:"end"`
+   101→        Unit  string `json:"unit"` // codepoint
+   102→}
+   103→
+   104→// Response پاسخ صادقانه (§۴۷).
+   105→type Response struct {
+   106→        SessionUID          string `json:"session_uid"`
+   107→        ReleaseUID          string `json:"release_uid"`
+   108→        CompletionState     string `json:"completion_state"`
+   109→        VerifiedOccurrences int    `json:"verified_occurrences"`
+   110→        VerifiedBooks       int    `json:"verified_books"`
+   111→        // TECH-11: شمارش جداگانهٔ قطعه‌های متمایز و روایت‌های متمایز — با مواضع/کتاب‌ها مخلوط نمی‌شود
+   112→        VerifiedPassages      int    `json:"verified_passages,omitempty"`
+   113→        VerifiedHadiths       int    `json:"verified_hadiths,omitempty"`
+   114→        CountRelation         string `json:"count_relation"`
+   115→        ContinuationAvailable bool   `json:"continuation_available"`
+   116→        NextCursor            string `json:"next_cursor,omitempty"`
+   117→        CountJobUID           string `json:"count_job_uid,omitempty"`
+   118→        // Notice پیام صادقانهٔ فارسی برای حالت‌های خاص (مثل فعال‌شدن سقف نتایج) —
+   119→        // افزودهٔ سازگار با قرارداد؛ نبودش معنی «حالت عادی» دارد.
+   120→        Notice  string   `json:"notice,omitempty"`
+   121→        Results []Result `json:"results"`
+   122→}
+   123→
+   124→// BookGroup گروه‌بندی «کتاب‌های دارای تطبیق تأییدشده».
+   125→type BookGroup struct {
+   126→        Work      Ref           `json:"work"`
+   127→        Documents []DocEvidence `json:"documents"`
+   128→}
+   129→
+   130→type DocEvidence struct {
+   131→        Document            Ref      `json:"document"`
+   132→        VerifiedOccurrences int      `json:"verified_occurrences"`
+   133→        Evidence            []Result `json:"evidence"`
+   134→}
+   135→
+   136→type TitleHit struct {
+   137→        WorkUID    string `json:"uid"`
+   138→        Title      string `json:"title"`
+   139→        ShortTitle string `json:"short_title"`
+   140→        Author     string `json:"author"`
+   141→}
+   142→
+   143→// Engine اینترفیس موتور (قابل‌تعویض با OpenSearch — §۴۶).
+   144→type Engine interface {
+   145→        Search(ctx context.Context, req *Request, releaseUID string) (*Response, error)
+   146→        Continue(ctx context.Context, sessionUID, cursor string, releaseUID string) (*Response, error)
+   147→        BooksGrouped(ctx context.Context, sessionUID string) ([]BookGroup, error)
+   148→        SearchTitles(ctx context.Context, q string, pageSize int) ([]TitleHit, error)
+   149→}
+   150→
+   151→// GoneError خطای 410 cursor منقضی.
+   152→type GoneError struct{ Message string }
+   153→
+   154→func (e *GoneError) Error() string { return e.Message }
+   155→
+   156→// LocalEngine موتور محلی روی نمایهٔ SQLite (§۴۶).
+   157→// صفحه‌بندی: نشست فقط «درخواست + release» را نگه می‌دارد (SQLite یا حافظه با سقف و
+   158→// تخلیهٔ per-session)؛ ادامهٔ صفحه‌بندی با re-execute قطعی همان پرس‌وجو و skip موقعیتی
+   159→// انجام می‌شود — هیچ آرایهٔ کامل نتایج در حافظهٔ نشست نگه داشته نمی‌شود (ب-۶).
+   160→type LocalEngine struct {
+   161→        path       string
+   162→        Secret     []byte
+   163→        catalog    MetaSource
+   164→        mu         sync.Mutex
+   165→        memSess    map[string]*memSession
+   166→        maxResults int
+   167→        sessionTTL time.Duration
+   168→        sessStore  SessionStore
+   169→        dbMu       sync.Mutex
+   170→        db         *sql.DB
+   171→        dbInode    uint64
+   172→        dbSize     int64
+   173→        // آمار پیش‌فیلتر (round14-B آزمون مقیاس) — فقط شمارش برای پایش/بنچمارک؛
+   174→        // هیچ تصمیمی از روی این مقادیر گرفته نمی‌شود و مسیر صحت جست‌وجو تغییری نمی‌کند.
+   175→        statCands atomic.Int64 // کاندیدهای واکشی‌شده در آخرین run کامل
+   176→        statScans atomic.Int64 // دفعات اسکن کاملِ strict (نمایهٔ قدیمی یا عبارت کوتاه)
+   177→}
+   178→
+   179→// MetaSource ابردادهٔ کار/سند.
+   180→type MetaSource interface {
+   181→        WorkTitle(uid string) (title, short, author string, ok bool)
+   182→        DocumentMeta(uid string) (workUID, label string, ok bool)
+   183→        SectionTitle(docUID, secUID string) (string, bool)
+   184→}
+   185→
+   186→// SessionStore نگهداری سبک نشست جست‌وجو (فقط درخواست؛ نه نتایج).
+   187→// پیاده‌سازی تولیدی: جدول search_sessions در app.sqlite.
+   188→type SessionStore interface {
+   189→        SaveSearchSession(uid, releaseUID string, reqJSON []byte, ttl time.Duration) error
+   190→        // LoadSearchSession اگر نشست نبود یا منقضی بود، خطای ErrSearchSessionGone می‌دهد.
+   191→        LoadSearchSession(uid string) (releaseUID string, reqJSON []byte, err error)
+   192→        TouchSearchSession(uid string, ttl time.Duration) error
+   193→}
+   194→
+   195→// ErrSearchSessionGone نشست جست‌وجو نیست/منقضی است → 410 (GoneError).
+   196→var ErrSearchSessionGone = errors.New("search session gone")
+   197→
+   198→type memSession struct {
+   199→        release string
+   200→        reqJSON []byte
+   201→        expire  time.Time
+   202→}
+   203→
+   204→// پیش‌فرض‌های قابل‌تنظیم با option (ب-۵: سقف کل نتایج و TTL نشست).
+   205→const (
+   206→        defaultMaxResults = 10000
+   207→        defaultSessionTTL = 30 * time.Minute
+   208→        maxMemSessions    = 400 // فقط برای fallback حافظه؛ با تخلیهٔ per-session
+   209→)
+   210→
+   211→type Option func(*LocalEngine)
+   212→
+   213→// WithLimits سقف کل نتایج تأییدشدهٔ هر پرس‌وجو و TTL نشست را تنظیم می‌کند.
+   214→func WithLimits(maxResults int, ttl time.Duration) Option {
+   215→        return func(e *LocalEngine) {
+   216→                if maxResults > 0 {
+   217→                        e.maxResults = maxResults
+   218→                }
+   219→                if ttl > 0 {
+   220→                        e.sessionTTL = ttl
+   221→                }
+   222→        }
+   223→}
+   224→
+   225→// WithSessionStore نشست‌ها را در SQLite نگه می‌دارد (پیش‌فرض: حافظه با سقف).
+   226→func WithSessionStore(s SessionStore) Option {
+   227→        return func(e *LocalEngine) { e.sessStore = s }
+   228→}
+   229→
+   230→func NewLocal(path string, secret []byte, meta MetaSource, opts ...Option) *LocalEngine {
+   231→        e := &LocalEngine{path: path, Secret: secret, catalog: meta,
+   232→                memSess:    map[string]*memSession{},
+   233→                maxResults: defaultMaxResults,
+   234→                sessionTTL: defaultSessionTTL,
+   235→        }
+   236→        for _, o := range opts {
+   237→                o(e)
+   238→        }
+   239→        return e
+   240→}
+   241→
+   242→// dbHandle اتصال فقط‌خواندنی نمایه؛ با تعویض فایل (نسل جدید) خودکار بازگشایی می‌شود.
+   243→// تشخیص تعویض: inode + اندازه؛ و اگر release_uid اتصال با نسخهٔ درخواستی نخواند، بازگشایی اجباری.
+   244→func (e *LocalEngine) dbHandle() (*sql.DB, error) {
+   245→        e.dbMu.Lock()
+   246→        defer e.dbMu.Unlock()
+   247→        fi, err := osStat(e.path)
+   248→        if err == nil {
+   249→                ino := fileInode(fi)
+   250→                sz := fi.Size()
+   251→                if e.db != nil && (ino != e.dbInode || sz != e.dbSize) {
+   252→                        e.db.Close()
+   253→                        e.db = nil
+   254→                }
+   255→                if e.db == nil {
+   256→                        db, err := sql.Open("sqlite", "file:"+e.path+"?mode=ro")
+   257→                        if err != nil {
+   258→                                return nil, err
+   259→                        }
+   260→                        db.SetMaxOpenConns(3)
+   261→                        e.db = db
+   262→                        e.dbInode = ino
+   263→                        e.dbSize = sz
+   264→                }
+   265→                return e.db, nil
+   266→        }
+   267→        if e.db != nil {
+   268→                return e.db, nil
+   269→        }
+   270→        return nil, errors.New("نمایهٔ جست‌وجو در دسترس نیست")
+   271→}
+   272→
+   273→// ensureRelease اگر اتصالِ فعلی نسلِ درخواستی را ندارد، اتصال را نوسازی می‌کند
+   274→// (مقاوم در برابر inode reuse بین نسل‌ها).
+   275→func (e *LocalEngine) ensureRelease(db *sql.DB, releaseUID string) (*sql.DB, error) {
+   276→        var rel string
+   277→        err := db.QueryRow(`SELECT release_uid FROM passages LIMIT 1`).Scan(&rel)
+   278→        if err == nil && rel == releaseUID {
+   279→                return db, nil
+   280→        }
+   281→        // نوسازی اجباری
+   282→        e.dbMu.Lock()
+   283→        if e.db != nil {
+   284→                e.db.Close()
+   285→                e.db = nil
+   286→        }
+   287→        e.dbMu.Unlock()
+   288→        return e.dbHandle()
+   289→}
+   290→
+   291→// LastCandidateCount آمار پیش‌فیلتر: شمار کاندیدهای واکشی‌شده در آخرین run کامل
+   292→// (Search/Continue). برای سنجش گزینش‌پذیری پیش‌فیلتر در آزمون مقیاس (round14-B).
+   293→func (e *LocalEngine) LastCandidateCount() int64 { return e.statCands.Load() }
+   294→
+   295→// FullScanCount آمار پیش‌فیلتر: شمار دفعات اسکن کاملِ strict از آغاز عمر موتور
+   296→// (نمایهٔ قدیمی یا عبارت کوتاه‌تر از ۳ نویسه — مسیر fallback).
+   297→func (e *LocalEngine) FullScanCount() int64 { return e.statScans.Load() }
+   298→
+   299→func (e *LocalEngine) validate(req *Request) error { return validateRequest(req) }
+   300→
+   301→// validateRequest قواعد مشترک اعتبارسنجی پرس‌وجو (هر دو موتور).
+   302→func validateRequest(req *Request) error {
+   303→        // جست‌وجوی صرفاً استنادی (بدون عبارت) مجاز است — QUR-03
+   304→        if len([]rune(req.Query)) == 0 && req.Scope.Quran == nil {
+   305→                return errors.New("عبارت جست‌وجو خالی است")
+   306→        }
+   307→        modeOK := false
+   308→        for _, m := range []string{StrictPhrase, NormalizedPhrase, AllWords, AnyWords, Near, Linguistic, LongQuote} {
+   309→                if req.Mode == m {
+   310→                        modeOK = true
+   311→                }
+   312→        }
+   313→        if !modeOK {
+   314→                return fmt.Errorf("حالت جست‌وجو معتبر نیست")
+   315→        }
+   316→        limit := 2048
+   317→        if req.Mode == LongQuote {
+   318→                limit = 8192
+   319→        }
+   320→        if len([]rune(req.Query)) > limit {
+   321→                return errors.New("عبارت بیش از حد مجاز است؛ برای نقل‌قول بلند از حالت مخصوص آن استفاده کنید")
+   322→        }
+   323→        if req.PageSize < 5 || req.PageSize > 50 {
+   324→                req.PageSize = 20
+   325→        }
+   326→        return nil
+   327→}
+   328→
+   329→// Search اجرای جست‌وجو: کاندید → verifier → نتایج تأییدشده.
+   330→func (e *LocalEngine) Search(ctx context.Context, req *Request, releaseUID string) (*Response, error) {
+   331→        if err := e.validate(req); err != nil {
+   332→                return nil, err
+   333→        }
+   334→        if req.Scope.Target == "titles" {
+   335→                hits, err := e.SearchTitles(ctx, req.Query, req.PageSize)
+   336→                if err != nil {
+   337→                        return nil, err
+   338→                }
+   339→                resp := &Response{ReleaseUID: releaseUID, CompletionState: "complete", CountRelation: "exact", Results: []Result{}}
+   340→                for _, h := range hits {
+   341→                        resp.Results = append(resp.Results, Result{
+   342→                                PassageUID: "title-" + h.WorkUID, MatchType: "exact",
+   343→                                Work: Ref{UID: h.WorkUID, Title: h.Title, Label: h.ShortTitle},
+   344→                                Page: Ref{Label: "نام کتاب"},
+   345→                        })
+   346→                }
+   347→                resp.VerifiedBooks = len(hits)
+   348→                resp.VerifiedOccurrences = len(hits)
+   349→                return resp, nil
+   350→        }
+   351→        db, err := e.dbHandle()
+   352→        if err != nil {
+   353→                return nil, err
+   354→        }
+   355→        db, err = e.ensureRelease(db, releaseUID)
+   356→        if err != nil {
+   357→                return nil, err
+   358→        }
+   359→        verified, capped, err := e.run(ctx, db, req, releaseUID)
+   360→        if err != nil {
+   361→                return nil, err
+   362→        }
+   363→        sid := newID("s")
+   364→        if err := e.saveSession(sid, releaseUID, req); err != nil {
+   365→                return nil, err
+   366→        }
+   367→        return e.buildResponse(sid, releaseUID, req, verified, 0, capped), nil
+   368→}
+   369→
+   370→// Continue ادامهٔ بررسی با cursor امضاشده (§۴۷) — re-execute قطعی + skip موقعیتی.
+   371→func (e *LocalEngine) Continue(ctx context.Context, sessionUID, cursor, releaseUID string) (*Response, error) {
+   372→        if !verifyCursor(cursor, e.Secret) {
+   373→                return nil, &GoneError{Message: "نشانهٔ ادامهٔ جست‌وجو معتبر نیست؛ دوباره اجرا کنید."}
+   374→        }
+   375→        payload, ok := parseCursorPayload(cursor)
+   376→        if !ok || payload.S != sessionUID {
+   377→                return nil, &GoneError{Message: "نشانهٔ ادامهٔ جست‌وجو معتبر نیست؛ دوباره اجرا کنید."}
+   378→        }
+   379→        release, req, err := e.loadSession(sessionUID)
+   380→        if err != nil {
+   381→                return nil, &GoneError{Message: "مهلت این جست‌وجو پایان یافته است؛ دوباره اجرا کنید."}
+   382→        }
+   383→        db, err := e.dbHandle()
+   384→        if err != nil {
+   385→                return nil, err
+   386→        }
+   387→        db, err = e.ensureRelease(db, release)
+   388→        if err != nil {
+   389→                return nil, err
+   390→        }
+   391→        verified, capped, err := e.run(ctx, db, req, release)
+   392→        if err != nil {
+   393→                return nil, err
+   394→        }
+   395→        _ = releaseUID // پرس‌وجو با release نشست ادامه می‌یابد تا نتایج صفحه‌ها هم‌خوان بمانند
+   396→        return e.buildResponse(sessionUID, release, req, verified, payload.O, capped), nil
+   397→}
+   398→
+   399→// cursorPayload محتوای امضاشدهٔ cursor: شناسهٔ نشست + موقعیت.
+   400→type cursorPayloadT struct {
+   401→        S string `json:"s"`
+   402→        O int    `json:"o"`
+   403→}
+   404→
+   405→func parseCursorPayload(cursor string) (cursorPayloadT, bool) {
+   406→        var out cursorPayloadT
+   407→        part := strings.SplitN(cursor, ".", 2)[0]
+   408→        b, err := base64.RawURLEncoding.DecodeString(part)
+   409→        if err != nil || json.Unmarshal(b, &out) != nil {
+   410→                return out, false
+   411→        }
+   412→        return out, true
+   413→}
+   414→
+   415→// buildResponse پاسخ از روی نتایج کامل اجرای جاری می‌سازد؛ صفحه از offset شروع می‌شود.
+   416→func (e *LocalEngine) buildResponse(sid, release string, req *Request, verified []Result, offset int, capped bool) *Response {
+   417→        if offset < 0 {
+   418→                offset = 0
+   419→        }
+   420→        if offset > len(verified) {
+   421→                offset = len(verified)
+   422→        }
+   423→        pageSize := req.PageSize
+   424→        if pageSize < 5 || pageSize > 50 {
+   425→                pageSize = 20
+   426→        }
+   427→        page := verified[offset:]
+   428→        if len(page) > pageSize {
+   429→                page = page[:pageSize]
+   430→        }
+   431→        books := map[string]bool{}
+   432→        passages := map[string]bool{}
+   433→        hadiths := map[string]bool{}
+   434→        for _, r := range verified {
+   435→                if w, _, ok := e.catalog.DocumentMeta(r.Document.UID); ok {
+   436→                        books[w] = true
+   437→                } else {
+   438→                        books[r.Work.UID] = true
+   439→                }
+   440→                if r.PassageUID != "" {
+   441→                        passages[r.PassageUID] = true
+   442→                }
+   443→                if r.LocalHadith != "" {
+   444→                        // روایت درون هر سند متمایز است؛ شناسهٔ محلی جهانی نیست
+   445→                        hadiths[r.Document.UID+"/"+r.LocalHadith] = true
+   446→                }
+   447→        }
+   448→        newOffset := offset + len(page)
+   449→        continuation := newOffset < len(verified)
+   450→        rel := "exact"
+   451→        if capped {
+   452→                rel = "lower_bound" // سقف فعال شد؛ شمارش‌ها حداقل واقعی‌اند
+   453→        }
+   454→        resp := &Response{
+   455→                SessionUID:            sid,
+   456→                ReleaseUID:            release,
+   457→                CompletionState:       "complete",
+   458→                VerifiedOccurrences:   len(verified),
+   459→                VerifiedBooks:         len(books),
+   460→                VerifiedPassages:      len(passages),
+   461→                VerifiedHadiths:       len(hadiths),
+   462→                CountRelation:         rel,
+   463→                ContinuationAvailable: continuation,
+   464→                Results:               page,
+   465→        }
+   466→        if capped {
+   467→                resp.Notice = fmt.Sprintf("نتایج بیشتر از سقف جست‌وجو است؛ شمارش‌ها حداقل واقعی‌اند (سقف %s موضع).", faNum(e.maxResults))
+   468→        }
+   469→        if continuation {
+   470→                resp.NextCursor = signCursor(map[string]any{"s": sid, "o": newOffset}, e.Secret)
+   471→        }
+   472→        return resp
+   473→}
+   474→
+   475→// BooksGrouped «این عبارت در چه کتاب‌هایی آمده؟» — فقط تأییدشده‌ها (§۴۷).
+   476→// با re-execute از روی درخواست ذخیره‌شدهٔ نشست (بدون نگهداری نتایج در حافظه).
+   477→func (e *LocalEngine) BooksGrouped(ctx context.Context, sessionUID string) ([]BookGroup, error) {
+   478→        release, req, err := e.loadSession(sessionUID)
+   479→        if err != nil {
+   480→                return nil, &GoneError{Message: "مهلت این جست‌وجو پایان یافته است؛ دوباره اجرا کنید."}
+   481→        }
+   482→        db, err := e.dbHandle()
+   483→        if err != nil {
+   484→                return nil, err
+   485→        }
+   486→        db, err = e.ensureRelease(db, release)
+   487→        if err != nil {
+   488→                return nil, err
+   489→        }
+   490→        verified, _, err := e.run(ctx, db, req, release)
+   491→        if err != nil {
+   492→                return nil, err
+   493→        }
+   494→        workOrder := []string{}
+   495→        groups := map[string]*BookGroup{}
+   496→        docOrder := map[string][]string{}
+   497→        docs := map[string]*DocEvidence{}
+   498→        for _, r := range verified {
+   499→                bg, ok2 := groups[r.Work.UID]
+   500→                if !ok2 {
+   501→                        bg = &BookGroup{Work: r.Work, Documents: []DocEvidence{}}
+   502→                        groups[r.Work.UID] = bg
+   503→                        workOrder = append(workOrder, r.Work.UID)
+   504→                }
+   505→                key := r.Work.UID + "|" + r.Document.UID
+   506→                dg, ok3 := docs[key]
+   507→                if !ok3 {
+   508→                        dg = &DocEvidence{Document: r.Document, Evidence: []Result{}}
+   509→                        docs[key] = dg
+   510→                        docOrder[r.Work.UID] = append(docOrder[r.Work.UID], r.Document.UID)
+   511→                }
+   512→                dg.VerifiedOccurrences++
+   513→                if len(dg.Evidence) < 3 {
+   514→                        dg.Evidence = append(dg.Evidence, r)
+   515→                }
+   516→
+   517→        }
+   518→        var out []BookGroup
+   519→        for _, wUID := range workOrder {
+   520→                bg := groups[wUID]
+   521→                bg.Documents = []DocEvidence{}
+   522→                for _, dUID := range docOrder[wUID] {
+   523→                        bg.Documents = append(bg.Documents, *docs[wUID+"|"+dUID])
+   524→                }
+   525→                out = append(out, *bg)
+   526→        }
+   527→        if out == nil {
+   528→                out = []BookGroup{}
+   529→        }
+   530→        return out, nil
+   531→}
+   532→
+   533→// ---- نشست جست‌وجو: ذخیرهٔ فقط «درخواست» — SQLite یا حافظه با تخلیهٔ per-session ----
+   534→
+   535→func (e *LocalEngine) saveSession(sid, releaseUID string, req *Request) error {
+   536→        reqJSON, err := json.Marshal(req)
+   537→        if err != nil {
+   538→                return err
+   539→        }
+   540→        if e.sessStore != nil {
+   541→                return e.sessStore.SaveSearchSession(sid, releaseUID, reqJSON, e.sessionTTL)
+   542→        }
+   543→        e.mu.Lock()
+   544→        defer e.mu.Unlock()
+   545→        e.evictMemSessionsLocked()
+   546→        e.memSess[sid] = &memSession{release: releaseUID, reqJSON: reqJSON, expire: time.Now().Add(e.sessionTTL)}
+   547→        return nil
+   548→}
+   549→
+   550→func (e *LocalEngine) loadSession(sid string) (string, *Request, error) {
+   551→        if e.sessStore != nil {
+   552→                release, reqJSON, err := e.sessStore.LoadSearchSession(sid)
+   553→                if err != nil {
+   554→                        return "", nil, err
+   555→                }
+   556→                _ = e.sessStore.TouchSearchSession(sid, e.sessionTTL)
+   557→                var req Request
+   558→                if err := json.Unmarshal(reqJSON, &req); err != nil {
+   559→                        return "", nil, ErrSearchSessionGone
+   560→                }
+   561→                return release, &req, nil
+   562→        }
+   563→        e.mu.Lock()
+   564→        defer e.mu.Unlock()
+   565→        ms, ok := e.memSess[sid]
+   566→        if !ok || time.Now().After(ms.expire) {
+   567→                if ok {
+   568→                        delete(e.memSess, sid) // تخلیهٔ per-session، نه تخلیهٔ کلی
+   569→                }
+   570→                return "", nil, ErrSearchSessionGone
+   571→        }
+   572→        ms.expire = time.Now().Add(e.sessionTTL)
+   573→        var req Request
+   574→        if err := json.Unmarshal(ms.reqJSON, &req); err != nil {
+   575→                return "", nil, ErrSearchSessionGone
+   576→        }
+   577→        return ms.release, &req, nil
+   578→}
+   579→
+   580→// evictMemSessionsLocked منقضی‌ها را حذف می‌کند؛ اگر هنوز بالای سقف بود،
+   581→// زودترین انقضا (قدیمی‌ترین) حذف می‌شود — هرگز تخلیهٔ کامل map نیست.
+   582→func (e *LocalEngine) evictMemSessionsLocked() {
+   583→        now := time.Now()
+   584→        for k, ms := range e.memSess {
+   585→                if now.After(ms.expire) {
+   586→                        delete(e.memSess, k)
+   587→                }
+   588→        }
+   589→        for len(e.memSess) >= maxMemSessions {
+   590→                oldestK := ""
+   591→                var oldest time.Time
+   592→                for k, ms := range e.memSess {
+   593→                        if oldestK == "" || ms.expire.Before(oldest) {
+   594→                                oldestK = k
+   595→                                oldest = ms.expire
+   596→                        }
+   597→                }
+   598→                if oldestK == "" {
+   599→                        break
+   600→                }
+   601→                delete(e.memSess, oldestK)
+   602→        }
+   603→}
+   604→
+   605→// SearchTitles جست‌وجوی نام کتاب.
+   606→func (e *LocalEngine) SearchTitles(ctx context.Context, q string, pageSize int) ([]TitleHit, error) {
+   607→        db, err := e.dbHandle()
+   608→        if err != nil {
+   609→                return nil, err
+   610→        }
+   611→        nf := norm.Fold(q)
+   612→        rows, err := db.Query(`SELECT work_uid, title, short_title, author FROM titles ORDER BY work_uid`)
+   613→        if err != nil {
+   614→                return nil, err
+   615→        }
+   616→        defer rows.Close()
+   617→        var out []TitleHit
+   618→        for rows.Next() {
+   619→                var uid, title, short, author string
+   620→                if err := rows.Scan(&uid, &title, &short, &author); err != nil {
+   621→                        continue
+   622→                }
+   623→                if nf == "" || strings.Contains(norm.Fold(title), nf) || strings.Contains(norm.Fold(short), nf) {
+   624→                        out = append(out, TitleHit{WorkUID: uid, Title: title, ShortTitle: short, Author: author})
+   625→                }
+   626→                if len(out) >= pageSize {
+   627→                        break
+   628→                }
+   629→        }
+   630→        return out, nil
+   631→}
+   632→
+   633→// ---- اجرا: کاندید → verifier ----
+   634→
+   635→type candRow struct {
+   636→        PassageUID    string
+   637→        ReleaseUID    string
+   638→        CollectionUID string
+   639→        WorkUID       string
+   640→        DocumentUID   string
+   641→        SectionUID    sql.NullString
+   642→        PageUID       string
+   643→        PageLabel     sql.NullString
+   644→        Language      string
+   645→        LocalHadith   sql.NullString
+   646→        RevayatIndex  sql.NullString
+   647→        TextOriginal  string
+   648→        TextN1        string
+   649→        N1Map         string
+   650→        SourceStart   int
+   651→        SourceEnd     int
+   652→        RoleRanges    string
+   653→        Citations     sql.NullString
+   654→        Fingerprint   sql.NullString
+   655→        BlockStart    int
+   656→        BlockEnd      int
+   657→}
+   658→
+   659→func scanCand(rows *sql.Rows, r *candRow) error {
+   660→        return rows.Scan(&r.PassageUID, &r.ReleaseUID, &r.CollectionUID, &r.WorkUID, &r.DocumentUID,
+   661→                &r.SectionUID, &r.PageUID, &r.PageLabel, &r.Language, &r.LocalHadith,
+   662→                &r.RevayatIndex,
+   663→                &r.TextOriginal, &r.TextN1, &r.N1Map, &r.SourceStart, &r.SourceEnd,
+   664→                &r.RoleRanges, &r.Citations, &r.Fingerprint, &r.BlockStart, &r.BlockEnd)
+   665→}
+   666→
+   667→// candCols فهرست صریح ستون‌ها — ترتیب اسکن هرگز به ترتیب فیزیکی جدول وابسته نیست
+   668→// (اشتباهِ ترتیب = خطای اسکن = حذف خاموش همهٔ کاندیدها؛ رگرسیون واقعی این فایل).
+   669→const candCols = `passage_uid,release_uid,collection_uid,work_uid,document_uid,` +
+   670→        `section_uid,page_uid,page_label,language,local_hadith_uid,revayat_index,` +
+   671→        `text_original,text_n1,n1_map,source_start,source_end,role_ranges,citations,fingerprint,block_start,block_end`
+   672→
+   673→func (e *LocalEngine) run(ctx context.Context, db *sql.DB, req *Request, releaseUID string) ([]Result, bool, error) {
+   674→        qN, _ := norm.Normalize(req.Query)
+   675→        toks := norm.Tokenize(qN)
+   676→        citationOnly := req.Scope.Quran != nil && len(toks) == 0
+   677→        if len(toks) == 0 && !citationOnly {
+   678→                return nil, true, nil
+   679→        }
+   680→        cap := e.maxResults
+   681→        if cap <= 0 {
+   682→                cap = defaultMaxResults
+   683→        }
+   684→        var rows *sql.Rows
+   685→        var err error
+   686→        if citationOnly {
+   687→                // جست‌وجوی استناد قرآنی (QUR-03): همهٔ passages دامنه، فیلتر در verifier
+   688→                rows, err = db.Query(`SELECT `+candCols+` FROM passages WHERE release_uid=? ORDER BY work_uid, document_uid, block_start`, releaseUID)
+   689→        } else if req.Mode == StrictPhrase {
+   690→                // عبارت دقیق: پیش‌فیلتر با سه‌گانه‌های نویسه‌ای text_n1 (بدون اسکن کامل)؛
+   691→                // تأیید نهایی تطبیق همیشه روی متن اصلی با مرز واژه در verifyInText می‌ماند —
+   692→                // رفتار نتایج تغییری نمی‌کند (pre-filter ابرمجموعهٔ sound است).
+   693→                tris := norm.Trigrams(qN)
+   694→                if len(tris) > 0 && index.HasTrigrams(db) {
+   695→                        sel := sampleTrigrams(tris, 48)
+   696→                        rows, err = db.Query(`SELECT s.`+strings.ReplaceAll(candCols, ",", ",s.")+` FROM passages s WHERE s.release_uid=? AND s.passage_uid IN (
+   697→                                SELECT passage_uid FROM trigrams WHERE tri IN (`+placeholders(len(sel))+`) GROUP BY passage_uid HAVING COUNT(DISTINCT tri)=? LIMIT 20000)
+   698→                                ORDER BY s.work_uid, s.document_uid, s.block_start`, append([]any{releaseUID}, append(toStrs(sel), len(sel))...)...)
+   699→                } else {
+   700→                        // نمایهٔ قدیمی بدون جدول trigrams یا عبارتِ کوتاه‌تر از ۳ نویسه — اسکن کامل (منصفانه گزارش می‌شود)
+   701→                        log.Println("noor-search: strict_phrase بدون پیش‌فیلتر trigram (نمایه قدیمی یا عبارت کوتاه) — اسکن کامل")
+   702→                        e.statScans.Add(1)
+   703→                        rows, err = db.Query(`SELECT `+candCols+` FROM passages WHERE release_uid=? ORDER BY work_uid, document_uid, block_start`, releaseUID)
+   704→                }
+   705→        } else if req.Mode == AnyWords || req.Mode == Linguistic {
+   706→                ph := placeholders(len(toks))
+   707→                rows, err = db.Query(`SELECT s.`+strings.ReplaceAll(candCols, ",", ",s.")+` FROM passages s WHERE s.release_uid=? AND s.passage_uid IN (
+   708→                        SELECT DISTINCT p.passage_uid FROM postings p JOIN tokens t ON t.token_id=p.token_id WHERE t.token IN (`+ph+`) LIMIT 20000)
+   709→                        ORDER BY s.work_uid, s.document_uid, s.block_start`, append([]any{releaseUID}, toStrs(toks)...)...)
+   710→        } else {
+   711→                // پیش‌فیلتر «همهٔ واژه‌ها باید در passage باشند»: شمار مقایسه‌ای =
+   712→                // شمار واژه‌های متمایزِ پرس‌وجو (نه توکن‌ها با تکرار) — وگرنه هر عبارت
+   713→                // دارای واژهٔ تکراری (مثل «الرسول ما الرسول») بی‌کاندید می‌ماند.
+   714→                uniq := dedupStrings(toks)
+   715→                ph := placeholders(len(uniq))
+   716→                rows, err = db.Query(`SELECT s.`+strings.ReplaceAll(candCols, ",", ",s.")+` FROM passages s WHERE s.release_uid=? AND s.passage_uid IN (
+   717→                        SELECT p.passage_uid FROM postings p JOIN tokens t ON t.token_id=p.token_id WHERE t.token IN (`+ph+`)
+   718→                        GROUP BY p.passage_uid HAVING COUNT(DISTINCT t.token)=? LIMIT 20000)
+   719→                        ORDER BY s.work_uid, s.document_uid, s.block_start`, append([]any{releaseUID}, append(toStrs(uniq), len(uniq))...)...)
+   720→        }
+   721→        if err != nil {
+   722→                return nil, false, err
+   723→        }
+   724→        defer rows.Close()
+   725→        var out []Result
+   726→        seen := map[string]bool{}
+   727→        rowN := 0
+   728→        for rows.Next() {
+   729→                rowN++
+   730→                if ctx.Err() != nil {
+   731→                        return out, false, ctx.Err()
+   732→                }
+   733→                var r candRow
+   734→                if err := scanCand(rows, &r); err != nil {
+   735→                        // حذف خاموش ممنوع: خطای اسکن = کاندید نادیده = نتیجهٔ ناقص بی‌اعلام.
+   736→                        // طبق فلسفهٔ خطای §۳۹، این وضعیت باید صریحاً خطا باشد.
+   737→                        return nil, false, fmt.Errorf("scan candidate: %w", err)
+   738→                }
+   739→                // فیلتر دامنهٔ اثر/سند/زبان در verifier هم اعمال می‌شود (دفاع در عمق)
+   740→                if !scopeAllows(req, &r) {
+   741→                        continue
+   742→                }
+   743→                if !citationAllows(req, &r) {
+   744→                        continue // استناد باید واقعاً در همین passage باشد، نه فقط در سند
+   745→                }
+   746→                hits, matchType := verifyInText(req, &r)
+   747→                if req.Scope.Quran != nil && len([]rune(req.Query)) == 0 && len(hits) == 0 {
+   748→                        // جست‌وجوی صرفاً استنادی: خود passage با شاهد ابتدایی نمایش داده می‌شود
+   749→                        n1r := []rune(r.TextOriginal)
+   750→                        hi := clampInt(160, 0, len(n1r))
+   751→                        hits = []hit{{Range: [2]int{0, hi}}}
+   752→                        matchType = "exact"
+   753→                }
+   754→
+   755→                for _, h := range hits {
+   756→                        // کلید رخداد = document + محدودهٔ واقعی مطلق در جریان متن سند (§۴۵)
+   757→                        key := r.DocumentUID + ":" + fmt.Sprint(r.SourceStart+h.Range[0]) + ":" + fmt.Sprint(r.SourceStart+h.Range[1])
+   758→                        if seen[key] {
+   759→                                continue // overlap تکراری نتیجه نمی‌سازد؛ رخدادهای واقعی جدا می‌مانند
+   760→                        }
+   761→                        seen[key] = true
+   762→                        if len(req.Scope.Roles) > 0 && !matchInsideRoles(r.RoleRanges, h.Range) {
+   763→                                continue // فیلتر نقش: محل واقعی تطبیق باید داخل نقش باشد (§۴۵)
+   764→                        }
+   765→                        out = append(out, e.toResult(&r, h, matchType))
+   766→                        if len(out) >= cap {
+   767→                                // سقف کل نتایج فعال شد (ب-۵): جمع‌آوری متوقف؛ صادقانه lower_bound اعلام می‌شود.
+   768→                                e.statCands.Store(int64(rowN))
+   769→                                return out, true, nil
+   770→                        }
+   771→                }
+   772→        }
+   773→        e.statCands.Store(int64(rowN))
+   774→        return out, false, nil
+   775→}
+   776→
+   777→// sampleTrigrams نمونهٔ پخش‌شده از سه‌گانه‌ها برای پرس‌وجوی پیش‌فیلتر —
+   778→// زیرمجموعه از سه‌گانه‌های عبارت است، پس صدا حفظ می‌شود (ابر‌مجموعهٔ کاندید).
+   779→func sampleTrigrams(tris []string, k int) []string {
+   780→        if len(tris) <= k {
+   781→                return tris
+   782→        }
+   783→        step := (len(tris) + k - 1) / k
+   784→        var out []string
+   785→        for i := 0; i < len(tris) && len(out) < k; i += step {
+   786→                out = append(out, tris[i])
+   787→        }
+   788→        return out
+   789→}
+   790→
+   791→// faNum نمایش عدد با ارقام فارسی برای پیام‌های کاربر.
+   792→func faNum(n int) string {
+   793→        fd := []rune("۰۱۲۳۴۵۶۷۸۹")
+   794→        s := strconv.Itoa(n)
+   795→        out := make([]rune, 0, len(s))
+   796→        for _, c := range s {
+   797→                if c >= '0' && c <= '9' {
+   798→                        out = append(out, fd[c-'0'])
+   799→                } else {
+   800→                        out = append(out, c)
+   801→                }
+   802→        }
+   803→        return string(out)
+   804→}
+   805→
+   806→type hit struct {
+   807→        Range [2]int // بازهٔ متن اصلی (code point)
+   808→}
+   809→
+   810→// verifyInText بسته به mode تطبیق را روی متن واقعی همان نسخه تأیید می‌کند.
+   811→func verifyInText(req *Request, r *candRow) ([]hit, string) {
+   812→        orig := []rune(r.TextOriginal)
+   813→        n1 := []rune(r.TextN1)
+   814→        var n1Map []int
+   815→        _ = json.Unmarshal([]byte(r.N1Map), &n1Map)
+   816→        switch req.Mode {
+   817→        case StrictPhrase:
+   818→                q := []rune(req.Query)
+   819→                var out []hit
+   820→                start := 0
+   821→                for {
+   822→                        idx := indexRunes(orig[start:], q)
+   823→                        if idx < 0 {
+   824→                                break
+   825→                        }
+   826→                        s := start + idx
+   827→                        e := s + len(q)
+   828→                        if norm.WordBoundary(string(orig), s, e) {
+   829→                                out = append(out, hit{Range: [2]int{s, e}})
+   830→                        }
+   831→                        start = s + 1
+   832→                        if len(out) >= 50 {
+   833→                                break
+   834→                        }
+   835→                }
+   836→                return out, "exact"
+   837→        default:
+   838→                qN, _ := norm.Normalize(req.Query)
+   839→                if req.Mode == Linguistic {
+   840→                        qN = norm.Fold(req.Query)
+   841→                }
+   842→                if req.Mode == AllWords || req.Mode == Near {
+   843→                        toks := norm.Tokenize(qN)
+   844→                        positions := make([][]int, len(toks))
+   845→                        for i, t := range toks {
+   846→                                positions[i] = findAllWord(n1, t)
+   847→                        }
+   848→                        var out []hit
+   849→                        if req.Mode == Near && req.Near != nil && req.Near.Slop > 0 {
+   850→                                for _, rng := range nearCombination(positions, req.Near.Slop, req.Near.Ordered, len(n1)) {
+   851→                                        out = append(out, mapN1Hit(rng, n1Map))
+   852→                                }
+   853→                                return out, "normalized"
+   854→                        }
+   855→                        if allPresent(positions) {
+   856→                                lo, hi := -1, -1
+   857→                                for i, ps := range positions {
+   858→                                        if i == 0 || ps[0] < lo {
+   859→                                                lo = ps[0]
+   860→                                        }
+   861→                                        last := ps[len(ps)-1] + len([]rune(toks[i]))
+   862→                                        if i == 0 || last > hi {
+   863→                                                hi = last
+   864→                                        }
+   865→                                }
+   866→                                out = append(out, mapN1Hit([2]int{lo, hi}, n1Map))
+   867→                        }
+   868→                        return out, "normalized"
+   869→                }
+   870→                // normalized_phrase / linguistic / long_quote: تطبیق متوالی با مرز واژه
+   871→                qRunes := []rune(qN)
+   872→                var out []hit
+   873→                start := 0
+   874→                for {
+   875→                        idx := indexRunes(n1[start:], qRunes)
+   876→                        if idx < 0 {
+   877→                                break
+   878→                        }
+   879→                        s := start + idx
+   880→                        e := s + len(qRunes)
+   881→                        if norm.WordBoundary(string(n1), s, e) {
+   882→                                out = append(out, mapN1Hit([2]int{s, e}, n1Map))
+   883→                        }
+   884→                        start = s + 1
+   885→                        if len(out) >= 50 {
+   886→                                break
+   887→                        }
+   888→                }
+   889→                if req.Mode == Linguistic {
+   890→                        return out, "linguistic"
+   891→                }
+   892→                return out, "normalized"
+   893→        }
+   894→}
+   895→
+   896→// mapN1Hit نگاشت بازهٔ نرمال → بازهٔ متن اصلی (highlight روی اصل — SEARCH-11).
+   897→func mapN1Hit(rng [2]int, n1Map []int) hit {
+   898→        if len(n1Map) == 0 {
+   899→                return hit{Range: rng}
+   900→        }
+   901→        s := clampInt(rng[0], 0, len(n1Map)-1)
+   902→        e := clampInt(rng[1], s, len(n1Map))
+   903→        if e > s {
+   904→                return hit{Range: [2]int{n1Map[s], n1Map[e-1] + 1}}
+   905→        }
+   906→        return hit{Range: [2]int{n1Map[s], n1Map[s]}}
+   907→}
+   908→
+   909→func clampInt(v, lo, hi int) int {
+   910→        if v < lo {
+   911→                return lo
+   912→        }
+   913→        if v > hi {
+   914→                return hi
+   915→        }
+   916→        return v
+   917→}
+   918→
+   919→func findAllWord(s []rune, w string) []int {
+   920→        var out []int
+   921→        rs := []rune(w)
+   922→        start := 0
+   923→        for {
+   924→                idx := indexRunes(s[start:], rs)
+   925→                if idx < 0 {
+   926→                        break
+   927→                }
+   928→                p := start + idx
+   929→                if norm.WordBoundary(string(s), p, p+len(rs)) {
+   930→                        out = append(out, p)
+   931→                }
+   932→                start = p + 1
+   933→        }
+   934→        return out
+   935→}
+   936→
+   937→func allPresent(ps [][]int) bool {
+   938→        for _, p := range ps {
+   939→                if len(p) == 0 {
+   940→                        return false
+   941→                }
+   942→        }
+   943→        return true
+   944→}
+   945→
+   946→func nearCombination(positions [][]int, slop int, ordered bool, textLen int) [][2]int {
+   947→        var out [][2]int
+   948→        if len(positions) == 0 || !allPresent(positions) {
+   949→                return nil
+   950→        }
+   951→        idx := make([]int, len(positions))
+   952→        for {
+   953→                var lo, hi int
+   954→                for i, p := range positions {
+   955→                        pos := p[idx[i]]
+   956→                        if i == 0 || pos < lo {
+   957→                                lo = pos
+   958→                        }
+   959→                        if i == 0 || pos > hi {
+   960→                                hi = pos
+   961→                        }
+   962→                }
+   963→                ok := (hi - lo) <= slop*6
+   964→                if ok && ordered && len(positions) > 1 {
+   965→                        for i := 1; i < len(positions); i++ {
+   966→                                if positions[i][idx[i]] < positions[i-1][idx[i-1]] {
+   967→                                        ok = false
+   968→                                        break
+   969→                                }
+   970→                        }
+   971→                }
+   972→                if ok {
+   973→                        out = append(out, [2]int{lo, clampInt(hi+len(positions[len(positions)-1]), 0, textLen)})
+   974→                }
+   975→                i := len(idx) - 1
+   976→                for i >= 0 {
+   977→                        idx[i]++
+   978→                        if idx[i] < len(positions[i]) {
+   979→                                break
+   980→                        }
+   981→                        idx[i] = 0
+   982→                        i--
+   983→                }
+   984→                if i < 0 || len(out) >= 10 {
+   985→                        break
+   986→                }
+   987→        }
+   988→        return out
+   989→}
+   990→
+   991→type roleRangeT struct {
+   992→        Role  string `json:"role"`
+   993→        Start int    `json:"start"`
+   994→        End   int    `json:"end"`
+   995→}
+   996→
+   997→// scopeAllows فیلتر دامنهٔ اثر/سند/زبان روی هر کاندید (دفاع در عمق — هر دو موتور).
+   998→func scopeAllows(req *Request, r *candRow) bool {
+   999→        if req.Scope.Target == "work" && (req.Scope.WorkUID == nil || r.WorkUID != *req.Scope.WorkUID) {
+  1000→                return false
+  1001→        }
+  1002→        if req.Scope.Target == "document" || req.Scope.Target == "section" {
+  1003→                inScope := false
+  1004→                for _, d := range req.Scope.DocumentUIDs {
+  1005→                        if d == r.DocumentUID {
+  1006→                                inScope = true
+  1007→                                break
+  1008→                        }
+  1009→                }
+  1010→                if !inScope {
+  1011→                        return false
+  1012→                }
+  1013→        }
+  1014→        if req.Scope.Language != nil && *req.Scope.Language != "" && r.Language != *req.Scope.Language {
+  1015→                return false
+  1016→        }
+  1017→        return true
+  1018→}
+  1019→
+  1020→// citationAllows فیلتر استناد قرآنی (QUR-03) روی خود passage — مشترک میان دو موتور.
+  1021→func citationAllows(req *Request, r *candRow) bool {
+  1022→        if req.Scope.Quran == nil {
+  1023→                return true
+  1024→        }
+  1025→        cits, err := parseCitations(r.Citations.String)
+  1026→        if err != nil {
+  1027→                return false
+  1028→        }
+  1029→        for _, c := range cits {
+  1030→                if c.Sure != req.Scope.Quran.Sure {
+  1031→                        continue
+  1032→                }
+  1033→                if req.Scope.Quran.Aya == "" {
+  1034→                        return true
+  1035→                }
+  1036→                if c.Aya == req.Scope.Quran.Aya {
+  1037→                        return true
+  1038→                }
+  1039→                if c.AyaFrom != "" && c.AyaTo != "" && between(c.AyaFrom, c.AyaTo, req.Scope.Quran.Aya) {
+  1040→                        return true
+  1041→                }
+  1042→        }
+  1043→        return false
+  1044→}
+  1045→
+  1046→// groupVerified گروه‌بندی «کتاب‌های دارای تطبیق تأییدشده» — مشترک میان دو موتور.
+  1047→func groupVerified(catalog MetaSource, verified []Result) []BookGroup {
+  1048→        workOrder := []string{}
+  1049→        groups := map[string]*BookGroup{}
+  1050→        docOrder := map[string][]string{}
+  1051→        docs := map[string]*DocEvidence{}
+  1052→        for _, r := range verified {
+  1053→                bg, ok2 := groups[r.Work.UID]
+  1054→                if !ok2 {
+  1055→                        bg = &BookGroup{Work: r.Work, Documents: []DocEvidence{}}
+  1056→                        groups[r.Work.UID] = bg
+  1057→                        workOrder = append(workOrder, r.Work.UID)
+  1058→                }
+  1059→                key := r.Work.UID + "|" + r.Document.UID
+  1060→                dg, ok3 := docs[key]
+  1061→                if !ok3 {
+  1062→                        dg = &DocEvidence{Document: r.Document, Evidence: []Result{}}
+  1063→                        docs[key] = dg
+  1064→                        docOrder[r.Work.UID] = append(docOrder[r.Work.UID], r.Document.UID)
+  1065→                }
+  1066→                dg.VerifiedOccurrences++
+  1067→                if len(dg.Evidence) < 3 {
+  1068→                        dg.Evidence = append(dg.Evidence, r)
+  1069→                }
+  1070→        }
+  1071→        var out []BookGroup
+  1072→        for _, wUID := range workOrder {
+  1073→                bg := groups[wUID]
+  1074→                bg.Documents = []DocEvidence{}
+  1075→                for _, dUID := range docOrder[wUID] {
+  1076→                        bg.Documents = append(bg.Documents, *docs[wUID+"|"+dUID])
+  1077→                }
+  1078→                out = append(out, *bg)
+  1079→        }
+  1080→        if out == nil {
+  1081→                out = []BookGroup{}
+  1082→        }
+  1083→        return out
+  1084→}
+  1085→
+  1086→// fetchCandRows واکشی ردیف‌های کامل کاندید از نمایهٔ محلی بر اساس passage_uid
+  1087→// (منبع متن واحد است — OpenSearch فقط نشانی می‌دهد)؛ ترتیب خروجی = ترتیب ورودی.
+  1088→func fetchCandRows(db *sql.DB, releaseUID string, hits []osHit) ([]candRow, error) {
+  1089→        uids := make([]string, 0, len(hits))
+  1090→        for _, h := range hits {
+  1091→                if u := str(h.Source["passage_uid"]); u != "" {
+  1092→                        uids = append(uids, u)
+  1093→                }
+  1094→        }
+  1095→        if len(uids) == 0 {
+  1096→                return nil, nil
+  1097→        }
+  1098→        q := `SELECT ` + candCols + ` FROM passages WHERE release_uid=? AND passage_uid IN (` + placeholders(len(uids)) + `)`
+  1099→        args := make([]any, 0, len(uids)+1)
+  1100→        args = append(args, releaseUID)
+  1101→        for _, u := range uids {
+  1102→                args = append(args, u)
+  1103→        }
+  1104→        rows, err := db.Query(q, args...)
+  1105→        if err != nil {
+  1106→                return nil, err
+  1107→        }
+  1108→        defer rows.Close()
+  1109→        byUID := map[string]*candRow{}
+  1110→        for rows.Next() {
+  1111→                var r candRow
+  1112→                if err := scanCand(rows, &r); err != nil {
+  1113→                        return nil, fmt.Errorf("scan candidate: %w", err)
+  1114→                }
+  1115→                byUID[r.PassageUID] = &r
+  1116→        }
+  1117→        if err := rows.Err(); err != nil {
+  1118→                return nil, err
+  1119→        }
+  1120→        out := make([]candRow, 0, len(uids))
+  1121→        for _, u := range uids {
+  1122→                if r, ok := byUID[u]; ok {
+  1123→                        out = append(out, *r)
+  1124→                }
+  1125→                // uid بدون ردیف: کاندید منقضی/خارج از release — عمداً نادیده؛
+  1126→                // verifier شمارش واقعی را تضمین می‌کند و _source حداقلی متن را از همین‌جا می‌گیرد
+  1127→        }
+  1128→        return out, nil
+  1129→}
+  1130→func matchInsideRoles(roleRangesJSON string, rng [2]int) bool {
+  1131→        if roleRangesJSON == "" || roleRangesJSON == "[]" {
+  1132→                return false
+  1133→        }
+  1134→        var rr []roleRangeT
+  1135→        if err := json.Unmarshal([]byte(roleRangesJSON), &rr); err != nil {
+  1136→                return false
+  1137→        }
+  1138→        for _, r := range rr {
+  1139→                if r.Start < rng[1] && r.End > rng[0] {
+  1140→                        return true
+  1141→                }
+  1142→        }
+  1143→        return false
+  1144→}
+  1145→
+  1146→func (e *LocalEngine) toResult(r *candRow, h hit, matchType string) Result {
+  1147→        work := Ref{UID: r.WorkUID}
+  1148→        if t, s, _, ok := e.catalog.WorkTitle(r.WorkUID); ok {
+  1149→                work.Title = t
+  1150→                work.Label = s
+  1151→        }
+  1152→        doc := Ref{UID: r.DocumentUID}
+  1153→        if _, label, ok := e.catalog.DocumentMeta(r.DocumentUID); ok {
+  1154→                doc.Label = label
+  1155→        }
+  1156→        doc.Title = work.Title
+  1157→        sec := (*Ref)(nil)
+  1158→        if r.SectionUID.Valid && r.SectionUID.String != "" {
+  1159→                title, _ := e.catalog.SectionTitle(r.DocumentUID, r.SectionUID.String)
+  1160→                sec = &Ref{UID: r.SectionUID.String, Title: title, Label: title}
+  1161→        }
+  1162→        var ranges []roleRangeT
+  1163→        _ = json.Unmarshal([]byte(r.RoleRanges), &ranges)
+  1164→        roles := []string{}
+  1165→        for _, g := range ranges {
+  1166→                if g.Start < h.Range[1] && g.End > h.Range[0] {
+  1167→                        roles = append(roles, g.Role)
+  1168→                }
+  1169→        }
+  1170→        roles = dedupStrings(roles)
+  1171→        snippet := []rune(r.TextOriginal)
+  1172→        lo := clampInt(h.Range[0]-60, 0, len(snippet))
+  1173→        hi := clampInt(h.Range[1]+60, 0, len(snippet))
+  1174→        sub := string(snippet[lo:hi])
+  1175→        hl := Range{Start: h.Range[0] - lo, End: h.Range[1] - lo, Unit: "codepoint"}
+  1176→        return Result{
+  1177→                PassageUID: r.PassageUID, MatchType: matchType,
+  1178→                Work: work, Document: doc,
+  1179→                Page:    Ref{UID: r.PageUID, Label: orDefault(r.PageLabel.String, "—")},
+  1180→                Section: sec,
+  1181→                Snippet: sub, Highlight: []Range{hl},
+  1182→                Roles: roles, LocalHadith: r.LocalHadith.String,
+  1183→                RevayatIndex: r.RevayatIndex.String,
+  1184→                Fingerprint:  r.Fingerprint.String,
+  1185→                SourceRange:  [2]int{r.SourceStart, r.SourceEnd},
+  1186→                MatchRange:   [2]int{r.SourceStart + h.Range[0], r.SourceStart + h.Range[1]},
+  1187→                Citations:    json.RawMessage(r.Citations.String),
+  1188→        }
+  1189→}
+  1190→
+  1191→func dedupStrings(s []string) []string {
+  1192→        seen := map[string]bool{}
+  1193→        var out []string
+  1194→        for _, x := range s {
+  1195→                if !seen[x] {
+  1196→                        seen[x] = true
+  1197→                        out = append(out, x)
+  1198→                }
+  1199→        }
+  1200→        return out
+  1201→}
+  1202→
+  1203→// indexRunes یافتن زیررشته بر پایهٔ code point — نه بایت (صحت نشانی عربی/فارسی).
+  1204→func indexRunes(s []rune, sub []rune) int {
+  1205→        n := len(sub)
+  1206→        if n == 0 || n > len(s) {
+  1207→                return -1
+  1208→        }
+  1209→        for i := 0; i+n <= len(s); i++ {
+  1210→                match := true
+  1211→                for j := 0; j < n; j++ {
+  1212→                        if s[i+j] != sub[j] {
+  1213→                                match = false
+  1214→                                break
+  1215→                        }
+  1216→                }
+  1217→                if match {
+  1218→                        return i
+  1219→                }
+  1220→        }
+  1221→        return -1
+  1222→}
+  1223→
+  1224→func placeholders(n int) string {
+  1225→        return strings.TrimSuffix(strings.Repeat("?,", n), ",")
+  1226→}
+  1227→
+  1228→func toStrs(ss []string) []any {
+  1229→        out := make([]any, len(ss))
+  1230→        for i, s := range ss {
+  1231→                out[i] = s
+  1232→        }
+  1233→        return out
+  1234→}
+  1235→
+  1236→func orDefault(s, d string) string {
+  1237→        if s == "" {
+  1238→                return d
+  1239→        }
+  1240→        return s
+  1241→}
+  1242→
+  1243→// ---- cursor امضاشده opaque ----
+  1244→
+  1245→func signCursor(payload map[string]any, secret []byte) string {
+  1246→        b, _ := json.Marshal(payload)
+  1247→        body := base64.RawURLEncoding.EncodeToString(b)
+  1248→        mac := hmac.New(sha256.New, secret)
+  1249→        mac.Write([]byte(body))
+  1250→        return body + "." + hex.EncodeToString(mac.Sum(nil)[:16])
+  1251→}
+  1252→
+  1253→func verifyCursor(cursor string, secret []byte) bool {
+  1254→        parts := strings.SplitN(cursor, ".", 2)
+  1255→        if len(parts) != 2 {
+  1256→                return false
+  1257→        }
+  1258→        mac := hmac.New(sha256.New, secret)
+  1259→        mac.Write([]byte(parts[0]))
+  1260→        want := hex.EncodeToString(mac.Sum(nil)[:16])
+  1261→        return hmac.Equal([]byte(want), []byte(parts[1]))
+  1262→}
+  1263→
+  1264→func newID(prefix string) string {
+  1265→        b := make([]byte, 8)
+  1266→        _, _ = rand.Read(b)
+  1267→        return prefix + "-" + hex.EncodeToString(b)
+  1268→}
+  1269→
+  1270→// parseCitations استنادهای ذخیره‌شدهٔ passage را می‌خواند (فرمت xmlparse.Citation).
+  1271→func parseCitations(raw string) ([]citationRef, error) {
+  1272→        if raw == "" || raw == "null" {
+  1273→                return nil, nil
+  1274→        }
+  1275→        var out []citationRef
+  1276→        if err := json.Unmarshal([]byte(raw), &out); err != nil {
+  1277→                return nil, err
+  1278→        }
+  1279→        return out, nil
+  1280→}
+  1281→
+  1282→type citationRef struct {
+  1283→        Sure     string `json:"sure"`
+  1284→        Aya      string `json:"aya"`
+  1285→        AyaFrom  string `json:"aya_from"`
+  1286→        AyaTo    string `json:"aya_to"`
+  1287→        Address  string `json:"address"`
+  1288→        BlockID  string `json:"block_id"`
+  1289→        InHadith string `json:"in_hadith"`
+  1290→}
+  1291→
+  1292→// between بررسی تعلق آیهٔ پرس‌شده به بازهٔ استناد (اعداد فارسی/عربی/لاتین نرمال می‌شوند).
+  1293→func between(from, to, aya string) bool {
+  1294→        f := numNorm(from)
+  1295→        t := numNorm(to)
+  1296→        a := numNorm(aya)
+  1297→        if f == "" || t == "" || a == "" {
+  1298→                return false
+  1299→        }
+  1300→        return a >= f && a <= t
+  1301→}
+  1302→
+  1303→func numNorm(s string) string {
+  1304→        digits := map[rune]string{
+  1305→                '٠': "0", '١': "1", '٢': "2", '٣': "3", '٤': "4", '٥': "5", '٦': "6", '٧': "7", '٨': "8", '٩': "9",
+  1306→                '۰': "0", '۱': "1", '۲': "2", '۳': "3", '۴': "4", '۵': "5", '۶': "6", '۷': "7", '۸': "8", '۹': "9",
+  1307→        }
+  1308→        var b []byte
+  1309→        for _, r := range s {
+  1310→                if d, ok := digits[r]; ok {
+  1311→                        b = append(b, d...)
+  1312→                } else if r >= '0' && r <= '9' {
+  1313→                        b = append(b, byte(r))
+  1314→                }
+  1315→        }
+  1316→        return string(b)
+  1317→}
+  1318→

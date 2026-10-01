@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -140,6 +141,27 @@ func (s *Service) openDoc(docUID string) (*xmlparse.DocModel, error) {
 	}
 	s.mu.RUnlock()
 
+	model, err := s.decodeDoc(docUID)
+	if err != nil {
+		return nil, err
+	}
+
+	s.mu.Lock()
+	if len(s.modelOrder) >= modelCacheMax {
+		old := s.modelOrder[0]
+		s.modelOrder = s.modelOrder[1:]
+		delete(s.modelCache, old)
+	}
+	s.modelCache[docUID] = &cacheEntry{model: model, at: time.Now()}
+	s.modelOrder = append(s.modelOrder, docUID)
+	s.mu.Unlock()
+	return model, nil
+}
+
+// decodeDoc بازکردن، decode و پارس کامل سند بدون دخالت کش (نقطهٔ مشترک openDoc و
+// ModelUncached). خطاهای decode/parse اینجا هرگز بی‌صدا حذف نمی‌شوند (DB-03):
+// سند جزئی با ParseErrors شمارش‌پذیر برمی‌گردد و هشدار با شمارش خطاها لاگ می‌شود.
+func (s *Service) decodeDoc(docUID string) (*xmlparse.DocModel, error) {
 	s.modelSem <- struct{}{}
 	defer func() { <-s.modelSem }()
 
@@ -163,10 +185,21 @@ func (s *Service) openDoc(docUID string) (*xmlparse.DocModel, error) {
 	if err != nil {
 		return nil, err
 	}
+	var decodeErrs []string // خطاهای decode رکوردهای خطاخورده (DB-03 — شمارش‌پذیر)
 	items, err := noordb.ReadDocItems(db, dict)
 	if err != nil {
-		if de, ok := err.(*noordb.DecodeErrors); ok && len(items) == 0 {
+		var de *noordb.DecodeErrors
+		if !errors.As(err, &de) {
+			// خطای غیر-decode (مثلاً SQL) با رکوردهای ناقص: بلوع ممنوع — سند صادقانه رد می‌شود.
+			return nil, fmt.Errorf("خواندن رکوردهای سند ناموفق: %w", err)
+		}
+		if len(items) == 0 {
 			return nil, fmt.Errorf("همهٔ رکوردها خطای بازگشایی: %v", de.Items)
+		}
+		// رکوردهای خطاخورده میان سالم‌ها: سند جزئی ادامه می‌یابد ولی خطاها به مدل
+		// پیوست و شمرده می‌شوند — سند ناقص بی‌صدا «کامل» شمرده نمی‌شود (DB-03/§4.6).
+		for _, msg := range de.Items {
+			decodeErrs = append(decodeErrs, msg)
 		}
 	}
 	in := make([]xmlparse.ItemInput, 0, len(items))
@@ -177,23 +210,26 @@ func (s *Service) openDoc(docUID string) (*xmlparse.DocModel, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Length validation گزارشی (DATA-05) — در ParseErrors جمع شده است
-
-	s.mu.Lock()
-	if len(s.modelOrder) >= modelCacheMax {
-		old := s.modelOrder[0]
-		s.modelOrder = s.modelOrder[1:]
-		delete(s.modelCache, old)
+	if len(decodeErrs) > 0 {
+		model.ParseErrors = append(model.ParseErrors, decodeErrs...)
 	}
-	s.modelCache[docUID] = &cacheEntry{model: model, at: time.Now()}
-	s.modelOrder = append(s.modelOrder, docUID)
-	s.mu.Unlock()
+	// Length validation گزارشی (DATA-05) — در ParseErrors جمع شده است
+	if n := len(model.ParseErrors); n > 0 {
+		log.Printf("noor-catalog: سند %s ناقص است: %d خطای decode/parse ثبت شد (مدل جزئی؛ شمارش‌پذیر — DB-03)", docUID, n)
+	}
 	return model, nil
 }
 
 // Model مدل مشتق سند (برای خواننده و نمایه‌ساز).
 func (s *Service) Model(docUID string) (*xmlparse.DocModel, error) {
 	return s.openDoc(docUID)
+}
+
+// ModelUncached مدل سند را بدون ذخیره در LRU می‌سازد — مسیر reindex جریانی worker
+// (DB-01): هر مدل فقط در حین نوشتنِ همان سند زنده است و پس از آن رها می‌شود،
+// پس peak حافظه به شمار اسناد کورپوس وابسته نمی‌ماند.
+func (s *Service) ModelUncached(docUID string) (*xmlparse.DocModel, error) {
+	return s.decodeDoc(docUID)
 }
 
 // Features پوشش قابلیت اثر از مدل اسناد (DATA-08).

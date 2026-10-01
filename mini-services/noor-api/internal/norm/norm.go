@@ -1,8 +1,9 @@
 // Package norm — نرمال‌ساز نسخه‌دار N1 (§۴۴ PRD).
-// قواعد محافظه‌کارانه: ي→ی، ك→ک، حذف تطویل و مجموعهٔ مصوب اعراب،
-// یکسان‌سازی ارقام عربی/فارسی، whitespace و نیم‌فاصله، lowercase فقط لاتین.
+// ترتیب قواعد: نخست NFC (ترکیب کانونی — بند نخست §۴۴)، سپس قواعد صریح:
+// ي→ی، ك→ک، حذف تطویل و مجموعهٔ مصوب اعراب، یکسان‌سازی ارقام عربی/فارسی،
+// whitespace و نیم‌فاصله، lowercase فقط لاتین.
 // همزه و شکل‌های الف و ة/ه بی‌قید یکی نمی‌شوند. تغییر قواعد = نسخهٔ جدید + reindex.
-// NFC در parser اعمال می‌شود (متن ورودی NFC فرض می‌گردد) تا نگاشت دقیق بماند.
+// نگاشت n1_map همیشه به موقعیت «متن اصلی» (پیش از NFC) اشاره می‌کند.
 package norm
 
 import (
@@ -11,12 +12,16 @@ import (
 )
 
 // Version نسخهٔ فعلی قواعد نرمال‌سازی؛ در index و release ثبت می‌شود.
-const Version = "n1-1.0.0"
+// n1-1.1.0: افزودن NFC در ابتدای خط نرمال‌سازی (SEARCH-04) + حذف U+064D کسرتان
+// (SEARCH-05) — تغییر قواعد؛ نمایه‌های ساخته‌شده با نسخهٔ قبلی باید بازسازی شوند.
+const Version = "n1-1.1.0"
 
 // ArabicDiacritics مجموعهٔ مصوب علامت‌های اعراب و تطویل (نه بازهٔ کور یونیکد).
+// ۰x064D (تنوین کسر/کسرتان) نیز عضو مجموعه است (SEARCH-05) — نسخهٔ مشابه همین
+// مجموعه در فیلتر OS (osDiacriticFilter) باید با اینجا هم‌گام بماند.
 var ArabicDiacritics = map[rune]bool{
 	0x0610: true, 0x0611: true, 0x0612: true,
-	0x064B: true, 0x064C: true, 0x064E: true, 0x064F: true, 0x0650: true, 0x0651: true, 0x0652: true,
+	0x064B: true, 0x064C: true, 0x064D: true, 0x064E: true, 0x064F: true, 0x0650: true, 0x0651: true, 0x0652: true,
 	0x0653: true, 0x0654: true, 0x0655: true, 0x0656: true, 0x0670: true, 0x0674: true,
 	0x06D6: true, 0x06D7: true, 0x06D8: true, 0x06D9: true, 0x06DA: true, 0x06DB: true, 0x06DC: true,
 	0x06DF: true, 0x06E0: true, 0x06E1: true, 0x06E2: true, 0x06E3: true, 0x06E4: true,
@@ -33,8 +38,10 @@ var digitMap = map[rune]rune{
 
 // Normalize متن را نرمال می‌کند و نگاشت کامل «هر code point خروجی → code point ورودی»
 // را برمی‌گرداند (آرایهٔ هم‌طول خروجی). برای highlight و نشانی شاهد الزامی است.
+// ترتیب: نخست NFC روی ورودی (SEARCH-04 — بند نخست §۴۴) با نگاشت به اصل،
+// سپس قواعد صریح N1؛ نگاشت نهایی همچنان به موقعیت متن اصلی اشاره می‌کند.
 func Normalize(s string) (out string, mapToOrig []int) {
-	runes := []rune(s)
+	runes, nfcMap := nfcFrom([]rune(s))
 	var b strings.Builder
 	b.Grow(len(runes))
 	mapToOrig = make([]int, 0, len(runes))
@@ -43,7 +50,7 @@ func Normalize(s string) (out string, mapToOrig []int) {
 		if r == ZWNJ || unicode.IsSpace(r) {
 			if !prevSpace && b.Len() > 0 {
 				b.WriteRune(' ')
-				mapToOrig = append(mapToOrig, i)
+				mapToOrig = append(mapToOrig, nfcMap[i])
 			}
 			prevSpace = true
 			continue
@@ -65,7 +72,7 @@ func Normalize(s string) (out string, mapToOrig []int) {
 			emit = r
 		}
 		b.WriteRune(emit)
-		mapToOrig = append(mapToOrig, i)
+		mapToOrig = append(mapToOrig, nfcMap[i])
 	}
 	return b.String(), mapToOrig
 }

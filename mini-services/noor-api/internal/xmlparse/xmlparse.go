@@ -6,7 +6,9 @@ package xmlparse
 
 import (
 	"encoding/xml"
+	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"unicode/utf8"
 )
@@ -119,7 +121,7 @@ type DocModel struct {
 // ParseItems آیتم‌های decodeشدهٔ یک سند را به DocModel تبدیل می‌کند.
 func ParseItems(documentUID string, items []ItemInput) (*DocModel, error) {
 	m := &DocModel{DocumentUID: documentUID}
-	var text strings.Builder
+	text := &textStream{}
 	blockIdx := 0
 	pageSerial := 0
 	// شاخص صفحهٔ فعلی (بدون اشاره‌گر به سلیس — مقاوم به reallocation)
@@ -136,7 +138,7 @@ func ParseItems(documentUID string, items []ItemInput) (*DocModel, error) {
 		}
 		dec := xml.NewDecoder(strings.NewReader(it.XML))
 		dec.Strict = true
-		if err := parseItem(m, dec, &text, &blockIdx, &pageSerial, &curPageIdx, closePage); err != nil {
+		if err := parseItem(m, dec, text, &blockIdx, &pageSerial, &curPageIdx, closePage); err != nil {
 			m.ParseErrors = append(m.ParseErrors, fmt.Sprintf("DocItem %d: %v", it.ID, err))
 		}
 	}
@@ -175,34 +177,65 @@ type ctx struct {
 	curBlock   *Block
 }
 
+// textStream جریان متن نمایشی سند همراه با شمارِ rune جاری.
+// شمارشِ مجدد کل متن انباشته برای هر بلوک حذف شده است (DB-02: O(n²) → O(n))؛
+// برون‌داد نهایی (متن و SourceOffsets) بایت‌به‌بایت با رفتار پیشین یکسان است.
+type textStream struct {
+	sb    strings.Builder
+	runes int
+}
+
+func (t *textStream) String() string { return t.sb.String() }
+
+// Len طول جریان بر حسب code point (نه بایت).
+func (t *textStream) Len() int { return t.runes }
+
+// writeSeg قطعه‌ای را می‌نویسد و شمار rune را فقط به اندازهٔ همان قطعه پیش می‌برد.
+func (t *textStream) writeSeg(s string) {
+	t.sb.WriteString(s)
+	t.runes += utf8.RuneCountInString(s)
+}
+
 // addBlock بلوک را ثبت و جریان متن را پیش می‌برد.
-func addBlock(m *DocModel, text *strings.Builder, blockIdx *int, b *Block) {
+func addBlock(m *DocModel, text *textStream, blockIdx *int, b *Block) {
 	if b.Text == "" && b.Type != "unknown" && len(b.Citations) == 0 {
 		return
 	}
-	start := utf8.RuneCountInString(text.String())
+	start := text.Len()
 	if start > 0 {
-		text.WriteString("\n")
+		text.writeSeg("\n")
 		start++
 	}
 	b.SourceOffsets = [2]int{start, start + utf8.RuneCountInString(b.Text)}
-	text.WriteString(b.Text)
+	text.writeSeg(b.Text)
 	b.ID = fmt.Sprintf("b-%04d", *blockIdx)
 	*blockIdx++
 	m.Blocks = append(m.Blocks, *b)
 }
 
 // parseItem یک رکورد را پارس می‌کند.
-func parseItem(m *DocModel, dec *xml.Decoder, text *strings.Builder, blockIdx *int, pageSerial *int, curPageIdx *int, closePage func()) error {
+func parseItem(m *DocModel, dec *xml.Decoder, text *textStream, blockIdx *int, pageSerial *int, curPageIdx *int, closePage func()) error {
 	c := &ctx{}
+
+	// fill متن بلوک را پر می‌کند؛ هر خطای decoder اینجا پایان سکوت نیست (DB-03):
+	// بلوک جزئی ثبت می‌شود (سندِ ناقص قابل مشاهده می‌ماند) و خطا به caller برمی‌گردد.
+	fill := func(b *Block) error {
+		if err := fillText(b, dec); err != nil {
+			addBlock(m, text, blockIdx, b)
+			return err
+		}
+		return nil
+	}
 
 	for {
 		tok, err := dec.Token()
 		if err != nil {
-			if err.Error() == "EOF" {
+			if errors.Is(err, io.EOF) {
 				return nil
 			}
-			return nil // EOF استاندارد
+			// فقط io.EOF پایان موفق است؛ هر خطای دیگر decoder (syntax/ناقص/…) ثبت
+			// و بازگردانده می‌شود — با بایت‌آفست در دسترس برای ردیابی (DB-03).
+			return fmt.Errorf("%w (بایت‌آفست %d)", err, dec.InputOffset())
 		}
 		switch t := tok.(type) {
 		case xml.StartElement:
@@ -218,18 +251,24 @@ func parseItem(m *DocModel, dec *xml.Decoder, text *strings.Builder, blockIdx *i
 				*curPageIdx = len(m.Pages) - 1
 			case "heading":
 				b := &Block{Type: "heading"}
-				fillText(b, dec)
+				if err := fill(b); err != nil {
+					return err
+				}
 				addBlock(m, text, blockIdx, b)
 			case "p":
 				b := &Block{Type: "p", HadithUID: c.hadithUID, RevayatIndex: c.revayatIdx, Untagged: !c.inHadith}
-				fillText(b, dec)
+				if err := fill(b); err != nil {
+					return err
+				}
 				if c.inHadith {
 					b.Type = "hadith_body"
 				}
 				addBlock(m, text, blockIdx, b)
 			case "sanadHadith":
 				b := &Block{Type: "sanad", HadithUID: c.hadithUID, RevayatIndex: c.revayatIdx}
-				fillText(b, dec)
+				if err := fill(b); err != nil {
+					return err
+				}
 				addBlock(m, text, blockIdx, b)
 			case "hadith":
 				attrs := attrMap(t)
@@ -238,33 +277,43 @@ func parseItem(m *DocModel, dec *xml.Decoder, text *strings.Builder, blockIdx *i
 				c.revayatIdx = attrs["revayatindex"]
 			case "maasoom":
 				inner := &Block{Type: "maasoom"}
-				fillText(inner, dec)
+				if err := fill(inner); err != nil {
+					return err
+				}
 				// maasoom درون سند یا بدنه: به‌عنوان بلوک مستقل muted نمایش داده می‌شود
 				addBlock(m, text, blockIdx, inner)
 			case "G":
 				attrs := attrMap(t)
 				b := &Block{Type: "p", Untagged: !c.inHadith}
-				fillText(b, dec)
+				if err := fill(b); err != nil {
+					return err
+				}
 				b.Spans = append(b.Spans, Span{Role: "G", Start: 0, End: utf8.RuneCountInString(b.Text), G: attrs["n"], HadithUID: c.hadithUID})
 				addBlock(m, text, blockIdx, b)
 			case "K":
 				attrs := attrMap(t)
 				b := &Block{Type: "p", Untagged: true}
-				fillText(b, dec)
+				if err := fill(b); err != nil {
+					return err
+				}
 				b.Spans = append(b.Spans, Span{Role: "K", Start: 0, End: utf8.RuneCountInString(b.Text), Ref: attrs["book"] + "/" + attrs["vol"] + "/" + attrs["page"], HadithUID: c.hadithUID})
 				addBlock(m, text, blockIdx, b)
 			case "ayah":
 				attrs := attrMap(t)
 				cit := Citation{Sure: attrs["sure"], Aya: attrs["aya"], Address: attrs["ayahAddress"], BlockID: fmt.Sprintf("b-%04d", *blockIdx), InHadith: c.hadithUID, HasParent: true}
 				b := &Block{Type: "ayah_quote", HadithUID: c.hadithUID, RevayatIndex: c.revayatIdx, Untagged: !c.inHadith}
-				fillText(b, dec)
+				if err := fill(b); err != nil {
+					return err
+				}
 				b.Citations = append(b.Citations, cit)
 				addBlock(m, text, blockIdx, b)
 				m.Citations = append(m.Citations, cit)
 			case "ayahAddress":
 				attrs := attrMap(t)
 				inner := &Block{Type: "p", Untagged: true}
-				fillText(inner, dec)
+				if err := fill(inner); err != nil {
+					return err
+				}
 				cit := Citation{Sure: attrs["sure"], AyaFrom: attrs["ayaFrom"], AyaTo: attrs["ayaTo"], Address: inner.Text, BlockID: "", HasParent: false}
 				m.Citations = append(m.Citations, cit)
 				inner.Citations = append(inner.Citations, cit)
@@ -274,12 +323,16 @@ func parseItem(m *DocModel, dec *xml.Decoder, text *strings.Builder, blockIdx *i
 				_ = attrs
 			case "B":
 				b := &Block{Type: "b_note", Untagged: true}
-				fillText(b, dec)
+				if err := fill(b); err != nil {
+					return err
+				}
 				addBlock(m, text, blockIdx, b)
 			case "sharh":
 				attrs := attrMap(t)
 				b := &Block{Type: "sharh", Untagged: true}
-				fillText(b, dec)
+				if err := fill(b); err != nil {
+					return err
+				}
 				b.Spans = append(b.Spans, Span{Role: "sharh", Start: 0, End: utf8.RuneCountInString(b.Text), Ref: attrs["id"], HadithUID: c.hadithUID})
 				addBlock(m, text, blockIdx, b)
 			case "lfootnote":
@@ -287,27 +340,38 @@ func parseItem(m *DocModel, dec *xml.Decoder, text *strings.Builder, blockIdx *i
 				if id := attrs["id"]; id != "" {
 					fn := Footnote{UID: id, Label: attrs["num"]}
 					b := &Block{Type: "p", Untagged: true}
-					fillText(b, dec)
+					// پاورقی مستقل به جریان نمایش اضافه نمی‌شود (SEARCH-06)؛ خطا اما
+					// اینجا هم بی‌صدا بلعیده نمی‌شود (DB-03) — متن جزئی ثبت و خطا برمی‌گردد.
+					err := fillText(b, dec)
 					fn.Text = b.Text
 					m.Footnotes = append(m.Footnotes, fn)
+					if err != nil {
+						return err
+					}
 				} else if ref := attrs["ref"]; ref != "" {
 					// ارجاع پاورقی درون بلوک جاری: از متن سادهٔ خود تگ
 					b := &Block{Type: "p", Untagged: !c.inHadith}
-					fillText(b, dec)
+					if err := fill(b); err != nil {
+						return err
+					}
 					b.FootnoteRefs = append(b.FootnoteRefs, FootRef{Ref: ref, Start: 0, End: utf8.RuneCountInString(b.Text)})
 					addBlock(m, text, blockIdx, b)
 				}
 			case "link":
 				attrs := attrMap(t)
 				b := &Block{Type: "p", Untagged: !c.inHadith}
-				fillText(b, dec)
+				if err := fill(b); err != nil {
+					return err
+				}
 				target := map[string]string{"book_code": attrs["book"], "volume": attrs["vol"], "page": attrs["page"]}
 				b.Links = append(b.Links, LinkSpan{Start: 0, End: utf8.RuneCountInString(b.Text), OriginalAddress: b.Text, Target: target, Resolved: false})
 				addBlock(m, text, blockIdx, b)
 			default:
 				// تگ ناشناخته: حفظ متن و دادهٔ خام، بدون نقش حدسی (§۱۹)
 				b := &Block{Type: "unknown"}
-				fillText(b, dec)
+				if err := fill(b); err != nil {
+					return err
+				}
 				for _, a := range t.Attr {
 					if a.Name.Local != "" && len(b.Attrs) < 8 {
 						b.Attrs = append(b.Attrs, KV{K: a.Name.Local, V: a.Value})
@@ -331,7 +395,10 @@ func parseItem(m *DocModel, dec *xml.Decoder, text *strings.Builder, blockIdx *i
 // عناصر معنایی درون پاراگراف به‌صورت inline-span با نگاشت code point ثبت می‌شوند —
 // هرگز حذف یا صاف نمی‌شوند؛ اتصال مصنوعی عبارت از دو طرف عنصر حذف‌شده رخ نمی‌دهد
 // چون متنِ عنصر باقی می‌ماند و فقط نقشش ثبت می‌شود.
-func fillText(b *Block, dec *xml.Decoder) {
+// خطای بازگشتی fillText (DB-03): رسیدن به io.EOF در حالی که عنصر هنوز باز است
+// یعنی XML ناقص/بریده — هرگز موفقیت تلقی نمی‌شود؛ سایر خطاهای decoder هم عیناً
+// برمی‌گردند. caller بلوک جزئی را ثبت می‌کند تا سند ناقص قابل مشاهده بماند.
+func fillText(b *Block, dec *xml.Decoder) error {
 	var raw []rune
 	depth := 1
 	type marker struct {
@@ -343,7 +410,13 @@ func fillText(b *Block, dec *xml.Decoder) {
 	for depth > 0 {
 		tok, err := dec.Token()
 		if err != nil {
-			break
+			// متن جزئی خوانده‌شده پیش از بازگرداندن خطا حفظ می‌شود تا سندِ ناقص
+			// قابل مشاهده بماند (DB-03) — بلوک ناقص با متن جزئی ثبت می‌شود.
+			b.Text = strings.Join(strings.Fields(collapseSpaces(string(raw))), " ")
+			if errors.Is(err, io.EOF) {
+				return fmt.Errorf("پایان نابه‌هنگام XML درون عنصر (تگ بسته‌نشده)")
+			}
+			return err
 		}
 		switch t := tok.(type) {
 		case xml.StartElement:
@@ -372,6 +445,7 @@ func fillText(b *Block, dec *xml.Decoder) {
 		}
 	}
 	b.Text = strings.Join(strings.Fields(collapseSpaces(string(raw))), " ")
+	return nil
 }
 
 func roleOf(name string, attrs map[string]string) string {

@@ -4,6 +4,7 @@
 package research
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -244,12 +245,16 @@ func (s *Service) ListClips(owner, projectUID, state, q, tag string) ([]Clip, er
 		where += ` AND c.deleted_at IS NULL`
 	}
 	if q != "" {
-		where += ` AND (c.quote_original LIKE '%'||?||'%' OR c.note LIKE '%'||?||'%')`
-		args = append(args, q, q)
+		/* DB-09: ورودی کاربر پیش از LIKE گریز می‌شود تا % و _ به wildcard تبدیل نشوند؛ رشتهٔ معمولی همانند قبل «شامل» می‌شود */
+		where += ` AND (c.quote_original LIKE '%'||?||'%' ESCAPE '\' OR c.note LIKE '%'||?||'%' ESCAPE '\')`
+		args = append(args, likeEscape(q), likeEscape(q))
 	}
 	if tag != "" {
-		where += ` AND c.tags LIKE '%'||?||'%'`
-		args = append(args, tag)
+		/* DB-09: تطبیق برچسب «عضو دقیق آرایهٔ tags» است نه زیررشته — مرز نقل‌قول JSON شرط عضویت را می‌سازد
+		   (برچسب «علم» برچسب «علم کلام» را نمی‌گیرد). ردیف قدیمی خراب (tags='null') صادقانه بی‌نتیجه
+		   می‌ماند؛ json_each به‌کار نمی‌رود چون ردیف خراب کل کوئری را می‌شکند (نگاه: ListMyClipTags). */
+		where += ` AND c.tags LIKE '%'||'"'||?||'"'||'%' ESCAPE '\'`
+		args = append(args, likeEscape(tag))
 	}
 	rows, err := s.db.Query(`SELECT uid, project_uid, kind, quote_original, quote_as_read, prefix_context, suffix_context, note, tags, version,
                 work_uid, document_uid, page_uid, page_label, section_uid, source_offsets_start, source_offsets_end, offset_unit,
@@ -379,12 +384,16 @@ func (s *Service) ListMyClips(owner, kind, q, tag string) ([]MyClip, int, error)
 		return nil, 0, errors.New("نوع فیش نامعتبر است")
 	}
 	if q != "" {
-		where += ` AND (c.quote_original LIKE '%'||?||'%' OR c.note LIKE '%'||?||'%')`
-		args = append(args, q, q)
+		/* DB-09: ورودی کاربر پیش از LIKE گریز می‌شود تا % و _ به wildcard تبدیل نشوند؛ رشتهٔ معمولی همانند قبل «شامل» می‌شود */
+		where += ` AND (c.quote_original LIKE '%'||?||'%' ESCAPE '\' OR c.note LIKE '%'||?||'%' ESCAPE '\')`
+		args = append(args, likeEscape(q), likeEscape(q))
 	}
 	if tag != "" {
-		where += ` AND c.tags LIKE '%'||?||'%'`
-		args = append(args, tag)
+		/* DB-09: تطبیق برچسب «عضو دقیق آرایهٔ tags» است نه زیررشته — مرز نقل‌قول JSON شرط عضویت را می‌سازد
+		   (برچسب «علم» برچسب «علم کلام» را نمی‌گیرد). ردیف قدیمی خراب (tags='null') صادقانه بی‌نتیجه
+		   می‌ماند؛ json_each به‌کار نمی‌رود چون ردیف خراب کل کوئری را می‌شکند (نگاه: ListMyClipTags). */
+		where += ` AND c.tags LIKE '%'||'"'||?||'"'||'%' ESCAPE '\'`
+		args = append(args, likeEscape(tag))
 	}
 	var total int
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM clips c JOIN projects p ON p.uid=c.project_uid WHERE `+where, args...).Scan(&total); err != nil {
@@ -549,9 +558,17 @@ func (s *Service) UpdateClip(owner, uid string, expectedVersion int, note, quote
 			return nil, err
 		}
 	}
-	if _, err := tx.Exec(`UPDATE clips SET note=?, quote_as_read=?, version=version+1, updated_at=datetime('now') WHERE uid=? AND owner_user_id=? AND version=?`,
-		c.Note, c.QuoteAsRead, uid, owner, expectedVersion); err != nil {
+	res, err := tx.Exec(`UPDATE clips SET note=?, quote_as_read=?, version=version+1, updated_at=datetime('now') WHERE uid=? AND owner_user_id=? AND version=?`,
+		c.Note, c.QuoteAsRead, uid, owner, expectedVersion)
+	if err != nil {
 		return nil, err
+	}
+	/* DB-08: اگر نویسندهٔ رقیب بین خواندن بالا و این UPDATE نسخه را جابه‌جا
+	   کرده باشد، هیچ ردیفی منطبق نمی‌شود؛ تعارض نباید بی‌صدا «موفق» شود —
+	   همان قرارداد 409 مسیر UpdateNote. تراکنش با defer Rollback عقب می‌نشیند
+	   و تاریخچهٔ نیم‌نوشته هم باقی نمی‌ماند. */
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, &ErrConflict{CurrentVersion: c.Version}
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
@@ -823,34 +840,83 @@ func defaultPrefs() map[string]any {
 	}
 }
 
-func (s *Service) PutPosition(owner, documentUID string, pos map[string]any) error {
-	ws, err := s.GetWorkspace(owner)
+/*
+putWorkspace خواندن-نوشتن JSON کامل میزکار را در یک تراکنش اتمیک انجام می‌دهد (DB-07).
+
+	بدون تراکنش، دو درخواست هم‌زمان (موضع مطالعه / ترجیحات) هر دو کل سطر را
+	می‌خوانند و نوشتنِ آخر، نوشتنِ دیگری را گم می‌کند (lost update).
+	BEGIN IMMEDIATE روی یک اتصال اختصاصی (sql.Conn) از ابتدا قفل نوشتن
+	می‌گیرد تا بین خواندن و نوشتن پنجره‌ای برای نویسندهٔ رقیب نماند؛
+	درگیری هم‌زمان با busy_timeout صف می‌شود نه گم‌شدن داده.
+	API عمومی PutPosition/PutPrefs تغییری نمی‌کند.
+*/
+func (s *Service) putWorkspace(owner string, mutate func(ws *WorkspaceState)) error {
+	ctx := context.Background()
+	conn, err := s.db.Conn(ctx)
 	if err != nil {
 		return err
 	}
-	pos["updated_at"] = time.Now().UTC().Format(time.RFC3339)
-	ws.Positions[documentUID] = pos
-	b, _ := json.Marshal(ws.Positions)
-	_, err = s.db.Exec(`INSERT INTO workspace_states(owner_user_id, positions, prefs) VALUES(?,?,?)
-                ON CONFLICT(owner_user_id) DO UPDATE SET positions=excluded.positions, updated_at=datetime('now')`, owner, string(b), "{}")
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
+		return err
+	}
+	// اگر مسیر خطا برگردد (یا COMMIT شده باشد) این عقب‌نشینی بی‌ضرر است.
+	defer func() { _, _ = conn.ExecContext(ctx, `ROLLBACK`) }()
+	// همان معناشناسی GetWorkspace: prefs از پیش‌فرض‌ها می‌آیند و مقادیر
+	// ذخیره‌شده رویشان merge می‌شوند (کلید غایب = پیش‌فرض، نه حذف).
+	ws := &WorkspaceState{Positions: map[string]any{}, Prefs: defaultPrefs()}
+	var pos, prefs string
+	err = conn.QueryRowContext(ctx, `SELECT positions, prefs FROM workspace_states WHERE owner_user_id=?`, owner).Scan(&pos, &prefs)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if err == nil {
+		_ = json.Unmarshal([]byte(pos), &ws.Positions)
+		_ = json.Unmarshal([]byte(prefs), &ws.Prefs)
+	}
+	mutate(ws)
+	// هر دو ستون با هم نوشته می‌شوند تا «نوشتن کامل سطر» اتمیک بماند.
+	posB, _ := json.Marshal(ws.Positions)
+	prefsB, _ := json.Marshal(ws.Prefs)
+	if _, err := conn.ExecContext(ctx, `INSERT INTO workspace_states(owner_user_id, positions, prefs) VALUES(?,?,?)
+                ON CONFLICT(owner_user_id) DO UPDATE SET positions=excluded.positions, prefs=excluded.prefs, updated_at=datetime('now')`,
+		owner, string(posB), string(prefsB)); err != nil {
+		return err
+	}
+	_, err = conn.ExecContext(ctx, `COMMIT`)
 	return err
+}
+
+func (s *Service) PutPosition(owner, documentUID string, pos map[string]any) error {
+	if pos == nil {
+		pos = map[string]any{} // بدنهٔ بدون position نباید panic بدهد
+	}
+	return s.putWorkspace(owner, func(ws *WorkspaceState) {
+		pos["updated_at"] = time.Now().UTC().Format(time.RFC3339)
+		ws.Positions[documentUID] = pos
+	})
 }
 
 func (s *Service) PutPrefs(owner string, prefs map[string]any) error {
-	ws, err := s.GetWorkspace(owner)
-	if err != nil {
-		return err
-	}
-	for k, v := range prefs {
-		ws.Prefs[k] = v
-	}
-	b, _ := json.Marshal(ws.Prefs)
-	_, err = s.db.Exec(`INSERT INTO workspace_states(owner_user_id, positions, prefs) VALUES(?,?,?)
-                ON CONFLICT(owner_user_id) DO UPDATE SET prefs=excluded.prefs, updated_at=datetime('now')`, owner, "{}", string(b))
-	return err
+	return s.putWorkspace(owner, func(ws *WorkspaceState) {
+		for k, v := range prefs {
+			ws.Prefs[k] = v
+		}
+	})
 }
 
 // ---- کمکی‌ها ----
+
+/*
+likeEscape ورودی کاربر را برای استفاده در LIKE ایمن می‌کند (DB-09):
+
+	nویسه‌های % و _ و خودِ نویسهٔ گریز پوشانده می‌شوند تا ورودی کاربر به
+	الگوی wildcard تبدیل نشود؛ همراه با ESCAPE '\' در کوئری به‌کار می‌رود
+	و رفتار رشته‌های معمولی بدون تغییر می‌ماند.
+*/
+func likeEscape(s string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
+}
 
 func uidOf(prefix string) string {
 	return prefix + "-" + randHex(6)

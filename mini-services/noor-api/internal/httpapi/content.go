@@ -1,6 +1,10 @@
 package httpapi
 
 import (
+	"context"
+	"errors"
+	"net"
+	"os"
 	"sort"
 
 	"encoding/json"
@@ -337,12 +341,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	release, _ := s.DB.ActiveRelease()
 	resp, err := s.Engine.Search(r.Context(), &req, release)
 	if err != nil {
-		var gone *search.GoneError
-		if errorsAs(err, &gone) {
-			s.fail(w, r, 410, "gone_cursor", gone.Message, true)
-			return
-		}
-		s.fail(w, r, 422, "invalid_query", err.Error(), true)
+		s.failSearchErr(w, r, err)
 		return
 	}
 	s.ok(w, resp)
@@ -358,12 +357,7 @@ func (s *Server) handleSearchContinue(w http.ResponseWriter, r *http.Request) {
 	release, _ := s.DB.ActiveRelease()
 	resp, err := s.Engine.Continue(r.Context(), chi.URLParam(r, "sessionUID"), body.Cursor, release)
 	if err != nil {
-		var gone *search.GoneError
-		if errorsAs(err, &gone) {
-			s.fail(w, r, 410, "gone_cursor", gone.Message, true)
-			return
-		}
-		s.fail(w, r, 422, "invalid_query", err.Error(), true)
+		s.failSearchErr(w, r, err)
 		return
 	}
 	s.ok(w, resp)
@@ -372,12 +366,7 @@ func (s *Server) handleSearchContinue(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleSearchBooks(w http.ResponseWriter, r *http.Request) {
 	resp, err := s.Engine.BooksGrouped(r.Context(), chi.URLParam(r, "sessionUID"))
 	if err != nil {
-		var gone *search.GoneError
-		if errorsAs(err, &gone) {
-			s.fail(w, r, 410, "gone_cursor", gone.Message, true)
-			return
-		}
-		s.fail(w, r, 422, "invalid_query", err.Error(), true)
+		s.failSearchErr(w, r, err)
 		return
 	}
 	s.ok(w, map[string]any{"groups": resp})
@@ -387,6 +376,63 @@ func errorsAs(err error, target any) bool {
 	if g, ok := err.(*search.GoneError); ok {
 		if tp, ok2 := target.(**search.GoneError); ok2 {
 			*tp = g
+			return true
+		}
+	}
+	return false
+}
+
+// failSearchErr نگاشت یکنواخت خطاهای موتور جست‌وجو به قرارداد خطا (GO-07):
+// نشست منقضی → 410 gone_cursor؛ خرابی زیرساخت موتور/نمایه → 503 engine_unavailable
+// قابل‌تلاش؛ بقیه (خطای اعتبارسنجی پرس‌وجوی کاربر) → 422 invalid_query. خرابی
+// موتور/OS نباید به کاربر «پرس‌وجوی نامعتبر» گزارش شود.
+func (s *Server) failSearchErr(w http.ResponseWriter, r *http.Request, err error) {
+	var gone *search.GoneError
+	if errorsAs(err, &gone) {
+		s.fail(w, r, 410, "gone_cursor", gone.Message, true)
+		return
+	}
+	if isEngineFailure(err) {
+		s.fail(w, r, 503, "engine_unavailable", "موتور جست‌وجو موقتاً در دسترس نیست؛ کمی بعد تلاش کنید.", true)
+		return
+	}
+	s.fail(w, r, 422, "invalid_query", err.Error(), true)
+}
+
+/*
+isEngineFailure classifier حداقلی خطاهای زیرساختی موتور (GO-07).
+
+	بستهٔ search هنوز خطاها را کلاسه‌بندی نمی‌کند؛ این تشخیص افزودنی است و
+	رفتار خود موتور تغییر نمی‌دهد. دو مسیر: خطاهای تایپ‌دار (مهلت/شبکه) و
+	پیام‌های پایدار زیرساختی بستهٔ search (نمایهٔ در دسترس نیست، خطای SQLite
+	پیمایش کاندید، خطاهای HTTP آداپتور OpenSearch). لغوِ سمت کلاینت
+	(context.Canceled) خرابی موتور نیست. خطای ناشناخته مثل قبل 422 می‌ماند —
+	یعنی تغییر قرارداد فقط 422→503 برای خرابی‌های قطعی موتور است.
+*/
+func isEngineFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) {
+		return false // قطع اتصال کلاینت، نه خرابی موتور
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, os.ErrDeadlineExceeded) {
+		return true
+	}
+	var nerr net.Error
+	if errors.As(err, &nerr) {
+		return true // *url.Error کلاینت HTTP و timeoutهای شبکه همین‌جا می‌افتند
+	}
+	msg := err.Error()
+	for _, marker := range []string{
+		"نمایهٔ جست‌وجو در دسترس نیست", // engine.go: dbHandle بدون نمایه
+		"scan candidate", // خطای خواندن نمایهٔ SQLite در پیمایش کاندید
+		"opensearch ",    // خطاهای HTTP آداپتور OS («opensearch GET … → HTTP 5xx»)
+		"OpenSearch",     // پیام‌های آداپتور OS (سرویس پاسخ نمی‌دهد / پاسخ قابل تحلیل نیست)
+		"SQLITE_",        // خطاهای زیرساختی SQLite (نشست/شمارش)
+		"database is locked",
+	} {
+		if strings.Contains(msg, marker) {
 			return true
 		}
 	}
@@ -514,17 +560,12 @@ func (s *Server) handleHadithLocations(w http.ResponseWriter, r *http.Request) {
 		}
 		r2, err := s.Engine.Search(r.Context(), req, release)
 		if err != nil {
-			s.fail(w, r, 422, "invalid_query", err.Error(), true)
+			s.failSearchErr(w, r, err)
 			return
 		}
 		g2, err := s.Engine.BooksGrouped(r.Context(), r2.SessionUID)
 		if err != nil {
-			var gone *search.GoneError
-			if errorsAs(err, &gone) {
-				s.fail(w, r, 410, "gone_cursor", gone.Message, true)
-				return
-			}
-			s.fail(w, r, 422, "invalid_query", err.Error(), true)
+			s.failSearchErr(w, r, err)
 			return
 		}
 		meta := passMetaT{Note: p.note, Query: p.q, WorksFound: len(g2)}

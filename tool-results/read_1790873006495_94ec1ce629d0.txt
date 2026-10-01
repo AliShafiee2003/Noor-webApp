@@ -1,0 +1,884 @@
+     1→// Package research — دادهٔ خصوصی پژوهش (§۱۷): پرونده، فیش، یادداشت، نشانک،
+     2→// جست‌وجوی ذخیره، میزکار. قواعد: مالکیت در سرور، optimistic concurrency با 409،
+     3→// حذف نرم با سطل بازیافت، تاریخچهٔ نسخه، snapshot کامل نشانی (TECH-08).
+     4→package research
+     5→
+     6→import (
+     7→        "database/sql"
+     8→        "encoding/json"
+     9→        "errors"
+    10→        "sort"
+    11→        "strings"
+    12→        "time"
+    13→
+    14→        "noor/internal/store"
+    15→)
+    16→
+    17→// ErrNotFound شیء متعلق به کاربر نیست یا وجود ندارد (404 — بدون افشا).
+    18→var ErrNotFound = errors.New("یافت نشد")
+    19→
+    20→// ErrConflict تعارض نسخه (409).
+    21→type ErrConflict struct{ CurrentVersion int }
+    22→
+    23→func (e *ErrConflict) Error() string {
+    24→        return "این مورد در جای دیگری ویرایش شده است؛ نسخهٔ فعلی بارگذاری شد"
+    25→}
+    26→
+    27→type Service struct{ db *store.DB }
+    28→
+    29→func New(db *store.DB) *Service { return &Service{db: db} }
+    30→
+    31→// ---- Projects ----
+    32→
+    33→type Project struct {
+    34→        UID       string `json:"uid"`
+    35→        Name      string `json:"name"`
+    36→        Archived  bool   `json:"archived"`
+    37→        ClipCount int    `json:"clip_count"`
+    38→        Version   int    `json:"version"`
+    39→        UpdatedAt string `json:"updated_at"`
+    40→}
+    41→
+    42→func (s *Service) ListProjects(owner string) ([]Project, error) {
+    43→        rows, err := s.db.Query(`SELECT p.uid, p.name, p.archived, p.version, p.updated_at,
+    44→                (SELECT COUNT(*) FROM clips c WHERE c.project_uid=p.uid AND c.deleted_at IS NULL)
+    45→                FROM projects p WHERE p.owner_user_id=? AND p.deleted_at IS NULL ORDER BY p.updated_at DESC`, owner)
+    46→        if err != nil {
+    47→                return nil, err
+    48→        }
+    49→        defer rows.Close()
+    50→        var out []Project
+    51→        for rows.Next() {
+    52→                var p Project
+    53→                var arch int
+    54→                if err := rows.Scan(&p.UID, &p.Name, &arch, &p.Version, &p.UpdatedAt, &p.ClipCount); err != nil {
+    55→                        continue
+    56→                }
+    57→                p.Archived = arch == 1
+    58→                out = append(out, p)
+    59→        }
+    60→        return out, nil
+    61→}
+    62→
+    63→func (s *Service) CreateProject(owner, name string) (*Project, error) {
+    64→        if name == "" {
+    65→                return nil, errors.New("نام پرونده الزامی است")
+    66→        }
+    67→        uid := uidOf("prj")
+    68→        _, err := s.db.Exec(`INSERT INTO projects(uid, owner_user_id, name) VALUES(?,?,?)`, uid, owner, name)
+    69→        if err != nil {
+    70→                return nil, err
+    71→        }
+    72→        return &Project{UID: uid, Name: name, Version: 1, UpdatedAt: time.Now().UTC().Format(time.RFC3339)}, nil
+    73→}
+    74→
+    75→func (s *Service) UpdateProject(owner, uid string, name *string, archived *bool, expectedVersion int) (*Project, error) {
+    76→        p, err := s.getProject(owner, uid)
+    77→        if err != nil {
+    78→                return nil, err
+    79→        }
+    80→        if p.Version != expectedVersion {
+    81→                return nil, &ErrConflict{CurrentVersion: p.Version}
+    82→        }
+    83→        if name != nil {
+    84→                p.Name = *name
+    85→        }
+    86→        if archived != nil {
+    87→                p.Archived = *archived
+    88→        }
+    89→        _, err = s.db.Exec(`UPDATE projects SET name=?, archived=?, version=version+1, updated_at=datetime('now') WHERE uid=? AND owner_user_id=? AND version=?`,
+    90→                p.Name, boolInt(p.Archived), uid, owner, expectedVersion)
+    91→        if err != nil {
+    92→                return nil, err
+    93→        }
+    94→        return s.getProject(owner, uid)
+    95→}
+    96→
+    97→func (s *Service) DeleteProject(owner, uid string) error {
+    98→        if _, err := s.getProject(owner, uid); err != nil {
+    99→                return err
+   100→        }
+   101→        // فیش‌های پروژه به سطل می‌روند (حذف نرم — RES-09)
+   102→        _, err := s.db.Exec(`UPDATE clips SET deleted_at=datetime('now') WHERE project_uid=? AND deleted_at IS NULL`, uid)
+   103→        if err != nil {
+   104→                return err
+   105→        }
+   106→        _, err = s.db.Exec(`UPDATE projects SET deleted_at=datetime('now') WHERE uid=? AND owner_user_id=?`, uid, owner)
+   107→        return err
+   108→}
+   109→
+   110→func (s *Service) getProject(owner, uid string) (*Project, error) {
+   111→        var p Project
+   112→        var arch int
+   113→        err := s.db.QueryRow(`SELECT uid, name, archived, version, updated_at FROM projects WHERE uid=? AND owner_user_id=? AND deleted_at IS NULL`, uid, owner).
+   114→                Scan(&p.UID, &p.Name, &arch, &p.Version, &p.UpdatedAt)
+   115→        if err != nil {
+   116→                return nil, ErrNotFound
+   117→        }
+   118→        p.Archived = arch == 1
+   119→        return &p, nil
+   120→}
+   121→
+   122→// ---- Clips (فیش) ----
+   123→
+   124→type ClipSource struct {
+   125→        WorkUID       string `json:"work_uid"`
+   126→        DocumentUID   string `json:"document_uid"`
+   127→        PageUID       string `json:"page_uid,omitempty"`
+   128→        PageLabel     string `json:"page_label,omitempty"`
+   129→        SectionUID    string `json:"section_uid,omitempty"`
+   130→        Start         int    `json:"start"`
+   131→        End           int    `json:"end"`
+   132→        OffsetUnit    string `json:"offset_unit"`
+   133→        SourceVersion string `json:"source_version_uid,omitempty"`
+   134→        ReleaseUID    string `json:"release_uid,omitempty"`
+   135→        OverlayRev    string `json:"overlay_revision_uid,omitempty"`
+   136→        LocalHadith   string `json:"local_hadith_uid,omitempty"`
+   137→}
+   138→
+   139→type Clip struct {
+   140→        UID           string     `json:"uid"`
+   141→        ProjectUID    string     `json:"project_uid"`
+   142→        Kind          string     `json:"kind"`
+   143→        QuoteOriginal string     `json:"quote_original"`
+   144→        QuoteAsRead   *string    `json:"quote_as_read"`
+   145→        PrefixContext *string    `json:"prefix_context"`
+   146→        SuffixContext *string    `json:"suffix_context"`
+   147→        Note          *string    `json:"note"`
+   148→        Tags          []string   `json:"tags"`
+   149→        Version       int        `json:"version"`
+   150→        Source        ClipSource `json:"source"`
+   151→        CreatedAt     string     `json:"created_at"`
+   152→        UpdatedAt     string     `json:"updated_at"`
+   153→}
+   154→
+   155→type ClipInput struct {
+   156→        ProjectUID    string     `json:"project_uid"`
+   157→        Kind          string     `json:"kind"`
+   158→        QuoteOriginal string     `json:"quote_original"`
+   159→        QuoteAsRead   *string    `json:"quote_as_read"`
+   160→        PrefixContext *string    `json:"prefix_context"`
+   161→        SuffixContext *string    `json:"suffix_context"`
+   162→        Note          *string    `json:"note"`
+   163→        Tags          []string   `json:"tags"`
+   164→        Source        ClipSource `json:"source"`
+   165→}
+   166→
+   167→/*
+   168→normTags قرارداد «tags همیشه آرایه» را تضمین می‌کند: ردیف‌های قدیمی با
+   169→tags='null' (خروجی json.Marshal روی اسلایس nil) و ورودیِ کلاینت بدون tags
+   170→نباید در پاسخ به null سری شوند — قرارداد API tags: string[] است و فرانت
+   171→روی null می‌شکند («c.tags is not iterable»).
+   172→*/
+   173→func normTags(t *[]string) {
+   174→        if *t == nil {
+   175→                *t = []string{}
+   176→        }
+   177→}
+   178→
+   179→// CreateClip داخل transaction: اول مالکیت project، بعد فیش (§۳۹).
+   180→func (s *Service) CreateClip(owner string, in *ClipInput) (*Clip, error) {
+   181→        if in.QuoteOriginal == "" {
+   182→                return nil, errors.New("متن نقل‌قول خالی است")
+   183→        }
+   184→        if in.Kind != "original" && in.Kind != "as_read" && in.Kind != "note" {
+   185→                in.Kind = "original"
+   186→        }
+   187→        tx, err := s.db.Begin()
+   188→        if err != nil {
+   189→                return nil, err
+   190→        }
+   191→        defer tx.Rollback()
+   192→        var cnt int
+   193→        if err := tx.QueryRow(`SELECT COUNT(*) FROM projects WHERE uid=? AND owner_user_id=? AND deleted_at IS NULL`, in.ProjectUID, owner).Scan(&cnt); err != nil || cnt == 0 {
+   194→                return nil, ErrNotFound
+   195→        }
+   196→        uid := uidOf("clip")
+   197→        normTags(&in.Tags) /* ردیف 'null' در DB ذخیره نشود */
+   198→        tags, _ := json.Marshal(in.Tags)
+   199→        if _, err := tx.Exec(`INSERT INTO clips(uid, owner_user_id, project_uid, kind, quote_original, quote_as_read, prefix_context, suffix_context, note, tags,
+   200→                work_uid, document_uid, page_uid, page_label, section_uid, source_offsets_start, source_offsets_end, offset_unit,
+   201→                source_version_uid, release_uid, overlay_revision_uid, local_hadith_uid)
+   202→                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+   203→                uid, owner, in.ProjectUID, in.Kind, in.QuoteOriginal, in.QuoteAsRead, in.PrefixContext, in.SuffixContext, in.Note, string(tags),
+   204→                in.Source.WorkUID, in.Source.DocumentUID, in.Source.PageUID, in.Source.PageLabel, in.Source.SectionUID,
+   205→                in.Source.Start, in.Source.End, orStr(in.Source.OffsetUnit, "codepoint"),
+   206→                in.Source.SourceVersion, in.Source.ReleaseUID, in.Source.OverlayRev, in.Source.LocalHadith); err != nil {
+   207→                return nil, err
+   208→        }
+   209→        if err := tx.Commit(); err != nil {
+   210→                return nil, err
+   211→        }
+   212→        return s.GetClip(owner, uid)
+   213→}
+   214→
+   215→func (s *Service) GetClip(owner, uid string) (*Clip, error) {
+   216→        row := s.db.QueryRow(`SELECT uid, project_uid, kind, quote_original, quote_as_read, prefix_context, suffix_context, note, tags, version,
+   217→                work_uid, document_uid, page_uid, page_label, section_uid, source_offsets_start, source_offsets_end, offset_unit,
+   218→                source_version_uid, release_uid, overlay_revision_uid, local_hadith_uid, created_at, updated_at
+   219→                FROM clips WHERE uid=? AND owner_user_id=? AND deleted_at IS NULL`, uid, owner)
+   220→        var c Clip
+   221→        var tags string
+   222→        var src ClipSource
+   223→        if err := row.Scan(&c.UID, &c.ProjectUID, &c.Kind, &c.QuoteOriginal, &c.QuoteAsRead, &c.PrefixContext, &c.SuffixContext, &c.Note, &tags, &c.Version,
+   224→                &src.WorkUID, &src.DocumentUID, &src.PageUID, &src.PageLabel, &src.SectionUID, &src.Start, &src.End, &src.OffsetUnit,
+   225→                &src.SourceVersion, &src.ReleaseUID, &src.OverlayRev, &src.LocalHadith, &c.CreatedAt, &c.UpdatedAt); err != nil {
+   226→                return nil, ErrNotFound
+   227→        }
+   228→        c.Source = src
+   229→        _ = json.Unmarshal([]byte(tags), &c.Tags)
+   230→        normTags(&c.Tags) /* ردیف قدیمی با 'null' همیشه به [] برگردد */
+   231→        return &c, nil
+   232→}
+   233→
+   234→func (s *Service) ListClips(owner, projectUID, state, q, tag string) ([]Clip, error) {
+   235→        where := `c.owner_user_id=?`
+   236→        args := []any{owner}
+   237→        if projectUID != "" {
+   238→                where += ` AND c.project_uid=?`
+   239→                args = append(args, projectUID)
+   240→        }
+   241→        if state == "trashed" {
+   242→                where += ` AND c.deleted_at IS NOT NULL`
+   243→        } else {
+   244→                where += ` AND c.deleted_at IS NULL`
+   245→        }
+   246→        if q != "" {
+   247→                where += ` AND (c.quote_original LIKE '%'||?||'%' OR c.note LIKE '%'||?||'%')`
+   248→                args = append(args, q, q)
+   249→        }
+   250→        if tag != "" {
+   251→                where += ` AND c.tags LIKE '%'||?||'%'`
+   252→                args = append(args, tag)
+   253→        }
+   254→        rows, err := s.db.Query(`SELECT uid, project_uid, kind, quote_original, quote_as_read, prefix_context, suffix_context, note, tags, version,
+   255→                work_uid, document_uid, page_uid, page_label, section_uid, source_offsets_start, source_offsets_end, offset_unit,
+   256→                source_version_uid, release_uid, overlay_revision_uid, local_hadith_uid, created_at, updated_at
+   257→                FROM clips c WHERE `+where+` ORDER BY c.updated_at DESC LIMIT 200`, args...)
+   258→        if err != nil {
+   259→                return nil, err
+   260→        }
+   261→        defer rows.Close()
+   262→        var out []Clip
+   263→        for rows.Next() {
+   264→                var c Clip
+   265→                var tags string
+   266→                var src ClipSource
+   267→                if err := rows.Scan(&c.UID, &c.ProjectUID, &c.Kind, &c.QuoteOriginal, &c.QuoteAsRead, &c.PrefixContext, &c.SuffixContext, &c.Note, &tags, &c.Version,
+   268→                        &src.WorkUID, &src.DocumentUID, &src.PageUID, &src.PageLabel, &src.SectionUID, &src.Start, &src.End, &src.OffsetUnit,
+   269→                        &src.SourceVersion, &src.ReleaseUID, &src.OverlayRev, &src.LocalHadith, &c.CreatedAt, &c.UpdatedAt); err != nil {
+   270→                        continue
+   271→                }
+   272→                c.Source = src
+   273→                _ = json.Unmarshal([]byte(tags), &c.Tags)
+   274→                normTags(&c.Tags)
+   275→                out = append(out, c)
+   276→        }
+   277→        /* §۳۹: پایان اسکن هم باید صریح کنترل شود — خطای اسکن خاموش نمی‌ماند */
+   278→        if err := rows.Err(); err != nil {
+   279→                return nil, err
+   280→        }
+   281→        return out, nil
+   282→}
+   283→
+   284→// ---- فیش‌های یک روایت (نمای پنل روایت) ----
+   285→
+   286→/*
+   287→HadithClip خلاصهٔ فیش برای «فیش‌های این روایت» در پنل روایت است؛
+   288→
+   289→        مالکیت سرور کنترل می‌شود و نام پرونده برای جهت‌گیری می‌آید.
+   290→*/
+   291→type HadithClip struct {
+   292→        UID           string   `json:"uid"`
+   293→        ProjectUID    string   `json:"project_uid"`
+   294→        ProjectName   string   `json:"project_name"`
+   295→        Kind          string   `json:"kind"`
+   296→        QuoteOriginal string   `json:"quote_original"`
+   297→        Note          *string  `json:"note"`
+   298→        Tags          []string `json:"tags"`
+   299→        PageUID       string   `json:"page_uid,omitempty"`
+   300→        PageLabel     string   `json:"page_label,omitempty"`
+   301→        UpdatedAt     string   `json:"updated_at"`
+   302→}
+   303→
+   304→/*
+   305→ListHadithClips فیش‌های فعالِ همین کاربر را که به یک روایت مشخص
+   306→
+   307→        (جفت document_uid + local_hadith_uid؛ شناسهٔ محلی جهانی نیست) متصل‌اند،
+   308→        از همهٔ پرونده‌های او برمی‌گرداند.
+   309→*/
+   310→func (s *Service) ListHadithClips(owner, documentUID, localHadithUID string) ([]HadithClip, error) {
+   311→        rows, err := s.db.Query(`SELECT c.uid, c.project_uid, p.name, c.kind, c.quote_original, c.note, c.tags,
+   312→                c.page_uid, c.page_label, c.updated_at
+   313→                FROM clips c JOIN projects p ON p.uid = c.project_uid
+   314→                WHERE c.owner_user_id=? AND c.deleted_at IS NULL AND p.deleted_at IS NULL
+   315→                  AND c.document_uid=? AND c.local_hadith_uid=?
+   316→                ORDER BY c.updated_at DESC LIMIT 50`, owner, documentUID, localHadithUID)
+   317→        if err != nil {
+   318→                return nil, err
+   319→        }
+   320→        defer rows.Close()
+   321→        var out []HadithClip
+   322→        for rows.Next() {
+   323→                var h HadithClip
+   324→                var tags string
+   325→                if err := rows.Scan(&h.UID, &h.ProjectUID, &h.ProjectName, &h.Kind, &h.QuoteOriginal, &h.Note, &tags,
+   326→                        &h.PageUID, &h.PageLabel, &h.UpdatedAt); err != nil {
+   327→                        return nil, err
+   328→                }
+   329→                _ = json.Unmarshal([]byte(tags), &h.Tags)
+   330→                normTags(&h.Tags)
+   331→                out = append(out, h)
+   332→        }
+   333→        if err := rows.Err(); err != nil {
+   334→                return nil, err
+   335→        }
+   336→        return out, nil
+   337→}
+   338→
+   339→// ---- همهٔ فیش‌های من (نمای میزکار) ----
+   340→
+   341→/*
+   342→MyClip خلاصهٔ فیش برای نمای «همهٔ فیش‌های من» در میزکار؛
+   343→
+   344→        نام پرونده و عنوان اثر برای جهت‌گیری می‌آید (عنوان اثر در handler
+   345→        از کاتالوگ پر می‌شود — کاتالوگ در سرویس پژوهش در دسترس نیست).
+   346→*/
+   347→type MyClip struct {
+   348→        UID           string   `json:"uid"`
+   349→        ProjectUID    string   `json:"project_uid"`
+   350→        ProjectName   string   `json:"project_name"`
+   351→        Kind          string   `json:"kind"`
+   352→        QuoteOriginal string   `json:"quote_original"`
+   353→        Note          *string  `json:"note"`
+   354→        Tags          []string `json:"tags"`
+   355→        WorkUID       string   `json:"work_uid,omitempty"`
+   356→        WorkTitle     string   `json:"work_title,omitempty"`
+   357→        DocumentUID   string   `json:"document_uid,omitempty"`
+   358→        PageUID       string   `json:"page_uid,omitempty"`
+   359→        PageLabel     string   `json:"page_label,omitempty"`
+   360→        UpdatedAt     string   `json:"updated_at"`
+   361→}
+   362→
+   363→/*
+   364→ListMyClips فیش‌های فعالِ کاربر از همهٔ پرونده‌ها با پالایش اختیاری
+   365→
+   366→        kind (original|as_read|note)، q (در نقل/یادداشت) و tag برمی‌گرداند.
+   367→        شمارش کل صادقانه با COUNT جداگانه است؛ فهرست سقف ۱۰۰ دارد.
+   368→*/
+   369→func (s *Service) ListMyClips(owner, kind, q, tag string) ([]MyClip, int, error) {
+   370→        where := `c.owner_user_id=? AND c.deleted_at IS NULL AND p.deleted_at IS NULL`
+   371→        args := []any{owner}
+   372→        switch kind {
+   373→        case "original", "as_read", "note":
+   374→                where += ` AND c.kind=?`
+   375→                args = append(args, kind)
+   376→        case "":
+   377→                /* بدون پالایش نوع */
+   378→        default:
+   379→                return nil, 0, errors.New("نوع فیش نامعتبر است")
+   380→        }
+   381→        if q != "" {
+   382→                where += ` AND (c.quote_original LIKE '%'||?||'%' OR c.note LIKE '%'||?||'%')`
+   383→                args = append(args, q, q)
+   384→        }
+   385→        if tag != "" {
+   386→                where += ` AND c.tags LIKE '%'||?||'%'`
+   387→                args = append(args, tag)
+   388→        }
+   389→        var total int
+   390→        if err := s.db.QueryRow(`SELECT COUNT(*) FROM clips c JOIN projects p ON p.uid=c.project_uid WHERE `+where, args...).Scan(&total); err != nil {
+   391→                return nil, 0, err
+   392→        }
+   393→        rows, err := s.db.Query(`SELECT c.uid, c.project_uid, p.name, c.kind, c.quote_original, c.note, c.tags,
+   394→                c.work_uid, c.document_uid, c.page_uid, c.page_label, c.updated_at
+   395→                FROM clips c JOIN projects p ON p.uid = c.project_uid
+   396→                WHERE `+where+` ORDER BY c.updated_at DESC LIMIT 100`, args...)
+   397→        if err != nil {
+   398→                return nil, 0, err
+   399→        }
+   400→        defer rows.Close()
+   401→        var out []MyClip
+   402→        for rows.Next() {
+   403→                var m MyClip
+   404→                var tags string
+   405→                if err := rows.Scan(&m.UID, &m.ProjectUID, &m.ProjectName, &m.Kind, &m.QuoteOriginal, &m.Note, &tags,
+   406→                        &m.WorkUID, &m.DocumentUID, &m.PageUID, &m.PageLabel, &m.UpdatedAt); err != nil {
+   407→                        return nil, 0, err
+   408→                }
+   409→                _ = json.Unmarshal([]byte(tags), &m.Tags)
+   410→                normTags(&m.Tags)
+   411→                out = append(out, m)
+   412→        }
+   413→        if err := rows.Err(); err != nil {
+   414→                return nil, 0, err
+   415→        }
+   416→        return out, total, nil
+   417→}
+   418→
+   419→/*
+   420→ClipTag توزیع برچسب‌های کاربر: شناسه + شمار فیش‌های فعالِ دارای آن برچسب.
+   421→
+   422→        مبنای چیپ‌های پالایش برچسب در نمای «همهٔ فیش‌های من» — شمارش صادقانه
+   423→        از کل فیش‌های فعال (نه فقط ۱۰۰ مورد نمایان) با COUNT گروهی.
+   424→*/
+   425→type ClipTag struct {
+   426→        Tag   string `json:"tag"`
+   427→        Count int    `json:"count"`
+   428→}
+   429→
+   430→/*
+   431→ListMyClipTags برچسب‌های متمایز فیش‌های فعال کاربر با شمار.
+   432→
+   433→        تجزیهٔ JSON در Go انجام می‌شود نه در SQL: برنامه‌ریز کوئری SQLite
+   434→        جدول‌مجازی json_each را پیش از پالایش WHERE ارزیابی می‌کند و ردیف
+   435→        خراب (مثلاً tags='null' قدیمی) کل کوئری را با «malformed JSON» می‌شکند.
+   436→        ردیف خراب = بدون برچسب، نه خطا (صداقت داده: مقادیر نامعتبر نادیده
+   437→        گرفته می‌شوند، پنهان نمی‌شوند). شمار صادقانه از کل فیش‌های فعال با
+   438→        COUNT در Go؛ سقف ۵۰ برچسب پرکاربردتر — نمای پالایش است، نه آرشیو.
+   439→*/
+   440→func (s *Service) ListMyClipTags(owner string) ([]ClipTag, error) {
+   441→        rows, err := s.db.Query(`SELECT c.tags FROM clips c
+   442→                JOIN projects p ON p.uid = c.project_uid
+   443→                WHERE c.owner_user_id=? AND c.deleted_at IS NULL AND p.deleted_at IS NULL`, owner)
+   444→        if err != nil {
+   445→                return nil, err
+   446→        }
+   447→        defer rows.Close()
+   448→        counts := map[string]int{}
+   449→        for rows.Next() {
+   450→                var tags string
+   451→                if err := rows.Scan(&tags); err != nil {
+   452→                        return nil, err
+   453→                }
+   454→                var arr []string
+   455→                if json.Unmarshal([]byte(tags), &arr) != nil {
+   456→                        continue // مقدار نامعتبر برچسبی ندارد
+   457→                }
+   458→                for _, t := range arr {
+   459→                        if t = strings.TrimSpace(t); t != "" {
+   460→                                counts[t]++
+   461→                        }
+   462→                }
+   463→        }
+   464→        if err := rows.Err(); err != nil {
+   465→                return nil, err
+   466→        }
+   467→        out := make([]ClipTag, 0, len(counts))
+   468→        for tag, n := range counts {
+   469→                out = append(out, ClipTag{Tag: tag, Count: n})
+   470→        }
+   471→        sort.Slice(out, func(i, j int) bool {
+   472→                if out[i].Count != out[j].Count {
+   473→                        return out[i].Count > out[j].Count
+   474→                }
+   475→                return out[i].Tag < out[j].Tag
+   476→        })
+   477→        if len(out) > 50 {
+   478→                out = out[:50]
+   479→        }
+   480→        return out, nil
+   481→}
+   482→
+   483→/*
+   484→CountMyClipsForHadith شمار فیش‌های فعالِ کاربر برای یک روایت محلی،
+   485→
+   486→        گروه‌شده بر document_uid — برای «فیش‌های من» در گروه‌های دیالوگ §۴۷.
+   487→        کلید گم ErrorCode نیست؛ سند بدون فیش اصلاً کلید ندارد.
+   488→*/
+   489→func (s *Service) CountMyClipsForHadith(owner, localHadithUID string) (map[string]int, error) {
+   490→        if localHadithUID == "" {
+   491→                return map[string]int{}, nil
+   492→        }
+   493→        rows, err := s.db.Query(`SELECT document_uid, COUNT(*) FROM clips
+   494→                WHERE owner_user_id=? AND local_hadith_uid=? AND deleted_at IS NULL AND document_uid<>''
+   495→                GROUP BY document_uid`, owner, localHadithUID)
+   496→        if err != nil {
+   497→                return nil, err
+   498→        }
+   499→        defer rows.Close()
+   500→        out := map[string]int{}
+   501→        for rows.Next() {
+   502→                var doc string
+   503→                var n int
+   504→                if err := rows.Scan(&doc, &n); err != nil {
+   505→                        return nil, err
+   506→                }
+   507→                out[doc] = n
+   508→        }
+   509→        return out, rows.Err()
+   510→}
+   511→
+   512→// UpdateClip تعارض: شناسه + مالک + نسخه هر سه باید تطابق کنند (§۳۹).
+   513→func (s *Service) UpdateClip(owner, uid string, expectedVersion int, note, quoteAsRead *string, tags *[]string, projectUID *string) (*Clip, error) {
+   514→        c, err := s.GetClip(owner, uid)
+   515→        if err != nil {
+   516→                return nil, err
+   517→        }
+   518→        if c.Version != expectedVersion {
+   519→                return nil, &ErrConflict{CurrentVersion: c.Version}
+   520→        }
+   521→        tx, err := s.db.Begin()
+   522→        if err != nil {
+   523→                return nil, err
+   524→        }
+   525→        defer tx.Rollback()
+   526→        // نسخهٔ قبلی در تاریخچه
+   527→        hist, _ := json.Marshal(c)
+   528→        if _, err := tx.Exec(`INSERT INTO clip_revisions(clip_uid, owner_user_id, body, version) VALUES(?,?,?,?)`, uid, owner, string(hist), c.Version); err != nil {
+   529→                return nil, err
+   530→        }
+   531→        if note != nil {
+   532→                c.Note = note
+   533→        }
+   534→        if quoteAsRead != nil {
+   535→                c.QuoteAsRead = quoteAsRead
+   536→        }
+   537→        if tags != nil {
+   538→                b, _ := json.Marshal(*tags)
+   539→                if _, err := tx.Exec(`UPDATE clips SET tags=? WHERE uid=?`, string(b), uid); err != nil {
+   540→                        return nil, err
+   541→                }
+   542→        }
+   543→        if projectUID != nil {
+   544→                var cnt int
+   545→                if err := tx.QueryRow(`SELECT COUNT(*) FROM projects WHERE uid=? AND owner_user_id=?`, *projectUID, owner).Scan(&cnt); err != nil || cnt == 0 {
+   546→                        return nil, ErrNotFound
+   547→                }
+   548→                if _, err := tx.Exec(`UPDATE clips SET project_uid=? WHERE uid=?`, *projectUID, uid); err != nil {
+   549→                        return nil, err
+   550→                }
+   551→        }
+   552→        if _, err := tx.Exec(`UPDATE clips SET note=?, quote_as_read=?, version=version+1, updated_at=datetime('now') WHERE uid=? AND owner_user_id=? AND version=?`,
+   553→                c.Note, c.QuoteAsRead, uid, owner, expectedVersion); err != nil {
+   554→                return nil, err
+   555→        }
+   556→        if err := tx.Commit(); err != nil {
+   557→                return nil, err
+   558→        }
+   559→        return s.GetClip(owner, uid)
+   560→}
+   561→
+   562→func (s *Service) TrashClip(owner, uid string) error {
+   563→        res, err := s.db.Exec(`UPDATE clips SET deleted_at=datetime('now') WHERE uid=? AND owner_user_id=? AND deleted_at IS NULL`, uid, owner)
+   564→        if err != nil {
+   565→                return err
+   566→        }
+   567→        if n, _ := res.RowsAffected(); n == 0 {
+   568→                return ErrNotFound
+   569→        }
+   570→        return nil
+   571→}
+   572→
+   573→func (s *Service) RestoreClip(owner, uid string) error {
+   574→        res, err := s.db.Exec(`UPDATE clips SET deleted_at=NULL WHERE uid=? AND owner_user_id=?`, uid, owner)
+   575→        if err != nil {
+   576→                return err
+   577→        }
+   578→        if n, _ := res.RowsAffected(); n == 0 {
+   579→                return ErrNotFound
+   580→        }
+   581→        return nil
+   582→}
+   583→
+   584→func (s *Service) ClipRevisions(owner, uid string) ([]json.RawMessage, error) {
+   585→        if _, err := s.GetClip(owner, uid); err != nil {
+   586→                return nil, err
+   587→        }
+   588→        rows, err := s.db.Query(`SELECT body FROM clip_revisions WHERE clip_uid=? AND owner_user_id=? ORDER BY id DESC LIMIT 50`, uid, owner)
+   589→        if err != nil {
+   590→                return nil, err
+   591→        }
+   592→        defer rows.Close()
+   593→        var out []json.RawMessage
+   594→        for rows.Next() {
+   595→                var b string
+   596→                if rows.Scan(&b) == nil {
+   597→                        out = append(out, json.RawMessage(b))
+   598→                }
+   599→        }
+   600→        return out, nil
+   601→}
+   602→
+   603→// ---- Notes ----
+   604→
+   605→type Note struct {
+   606→        UID         string `json:"uid"`
+   607→        DocumentUID string `json:"document_uid"`
+   608→        PageUID     string `json:"page_uid,omitempty"`
+   609→        /* PageLabel در handler از مدل سند پر می‌شود (برچسب چاپی صفحهٔ مقصد
+   610→           برای «پرش به صفحهٔ …» در نشانی عمیق یادداشت‌ها). برچسب دادهٔ
+   611→           نمایشی است، نه دادهٔ ذخیره‌شدهٔ یادداشت. */
+   612→        PageLabel   string `json:"page_label,omitempty"`
+   613→        SectionUID  string `json:"section_uid,omitempty"`
+   614→        LocalHadith string `json:"local_hadith_uid,omitempty"`
+   615→        Body        string `json:"body"`
+   616→        Version     int    `json:"version"`
+   617→        UpdatedAt   string `json:"updated_at"`
+   618→}
+   619→
+   620→func (s *Service) CreateNote(owner string, n *Note) (*Note, error) {
+   621→        if n.Body == "" || n.DocumentUID == "" {
+   622→                return nil, errors.New("بدنهٔ یادداشت و سند الزامی است")
+   623→        }
+   624→        uid := uidOf("note")
+   625→        _, err := s.db.Exec(`INSERT INTO notes(uid, owner_user_id, document_uid, page_uid, section_uid, local_hadith_uid, body)
+   626→                VALUES(?,?,?,?,?,?,?)`, uid, owner, n.DocumentUID, n.PageUID, n.SectionUID, n.LocalHadith, n.Body)
+   627→        if err != nil {
+   628→                return nil, err
+   629→        }
+   630→        return s.GetNote(owner, uid)
+   631→}
+   632→
+   633→func (s *Service) GetNote(owner, uid string) (*Note, error) {
+   634→        var n Note
+   635→        err := s.db.QueryRow(`SELECT uid, document_uid, page_uid, section_uid, local_hadith_uid, body, version, updated_at
+   636→                FROM notes WHERE uid=? AND owner_user_id=? AND deleted_at IS NULL`, uid, owner).
+   637→                Scan(&n.UID, &n.DocumentUID, &n.PageUID, &n.SectionUID, &n.LocalHadith, &n.Body, &n.Version, &n.UpdatedAt)
+   638→        if err != nil {
+   639→                return nil, ErrNotFound
+   640→        }
+   641→        return &n, nil
+   642→}
+   643→
+   644→func (s *Service) ListNotes(owner, documentUID, pageUID string) ([]Note, error) {
+   645→        q := `SELECT uid, document_uid, page_uid, section_uid, local_hadith_uid, body, version, updated_at
+   646→                FROM notes WHERE owner_user_id=? AND deleted_at IS NULL`
+   647→        args := []any{owner}
+   648→        if documentUID != "" {
+   649→                q += ` AND document_uid=?`
+   650→                args = append(args, documentUID)
+   651→        }
+   652→        if pageUID != "" {
+   653→                q += ` AND page_uid=?`
+   654→                args = append(args, pageUID)
+   655→        }
+   656→        q += ` ORDER BY updated_at DESC LIMIT 200`
+   657→        rows, err := s.db.Query(q, args...)
+   658→        if err != nil {
+   659→                return nil, err
+   660→        }
+   661→        defer rows.Close()
+   662→        var out []Note
+   663→        for rows.Next() {
+   664→                var n Note
+   665→                if err := rows.Scan(&n.UID, &n.DocumentUID, &n.PageUID, &n.SectionUID, &n.LocalHadith, &n.Body, &n.Version, &n.UpdatedAt); err != nil {
+   666→                        return nil, err
+   667→                }
+   668→                out = append(out, n)
+   669→        }
+   670→        return out, rows.Err()
+   671→}
+   672→
+   673→func (s *Service) UpdateNote(owner, uid string, expectedVersion int, body string) (*Note, error) {
+   674→        n, err := s.GetNote(owner, uid)
+   675→        if err != nil {
+   676→                return nil, err
+   677→        }
+   678→        if n.Version != expectedVersion {
+   679→                return nil, &ErrConflict{CurrentVersion: n.Version}
+   680→        }
+   681→        res, err := s.db.Exec(`UPDATE notes SET body=?, version=version+1, updated_at=datetime('now') WHERE uid=? AND owner_user_id=? AND version=?`, body, uid, owner, expectedVersion)
+   682→        if err != nil {
+   683→                return nil, err
+   684→        }
+   685→        if r, _ := res.RowsAffected(); r == 0 {
+   686→                return nil, &ErrConflict{CurrentVersion: n.Version}
+   687→        }
+   688→        return s.GetNote(owner, uid)
+   689→}
+   690→
+   691→func (s *Service) DeleteNote(owner, uid string) error {
+   692→        res, err := s.db.Exec(`UPDATE notes SET deleted_at=datetime('now') WHERE uid=? AND owner_user_id=?`, uid, owner)
+   693→        if err != nil {
+   694→                return err
+   695→        }
+   696→        if n, _ := res.RowsAffected(); n == 0 {
+   697→                return ErrNotFound
+   698→        }
+   699→        return nil
+   700→}
+   701→
+   702→// ---- Bookmarks ----
+   703→
+   704→type Bookmark struct {
+   705→        UID         string `json:"uid"`
+   706→        DocumentUID string `json:"document_uid"`
+   707→        PageUID     string `json:"page_uid"`
+   708→        Label       string `json:"label"`
+   709→        CreatedAt   string `json:"created_at"`
+   710→}
+   711→
+   712→func (s *Service) AddBookmark(owner, documentUID, pageUID, label string) (*Bookmark, error) {
+   713→        uid := uidOf("bm")
+   714→        _, err := s.db.Exec(`INSERT INTO bookmarks(uid, owner_user_id, document_uid, page_uid, label) VALUES(?,?,?,?,?)`, uid, owner, documentUID, pageUID, label)
+   715→        if err != nil {
+   716→                return nil, err
+   717→        }
+   718→        return &Bookmark{UID: uid, DocumentUID: documentUID, PageUID: pageUID, Label: label, CreatedAt: time.Now().UTC().Format(time.RFC3339)}, nil
+   719→}
+   720→
+   721→func (s *Service) ListBookmarks(owner string) ([]Bookmark, error) {
+   722→        rows, err := s.db.Query(`SELECT uid, document_uid, page_uid, label, created_at FROM bookmarks WHERE owner_user_id=? ORDER BY created_at DESC LIMIT 100`, owner)
+   723→        if err != nil {
+   724→                return nil, err
+   725→        }
+   726→        defer rows.Close()
+   727→        var out []Bookmark
+   728→        for rows.Next() {
+   729→                var b Bookmark
+   730→                if err := rows.Scan(&b.UID, &b.DocumentUID, &b.PageUID, &b.Label, &b.CreatedAt); err != nil {
+   731→                        continue
+   732→                }
+   733→                out = append(out, b)
+   734→        }
+   735→        return out, nil
+   736→}
+   737→
+   738→func (s *Service) DeleteBookmark(owner, uid string) error {
+   739→        res, err := s.db.Exec(`DELETE FROM bookmarks WHERE uid=? AND owner_user_id=?`, uid, owner)
+   740→        if err != nil {
+   741→                return err
+   742→        }
+   743→        if n, _ := res.RowsAffected(); n == 0 {
+   744→                return ErrNotFound
+   745→        }
+   746→        return nil
+   747→}
+   748→
+   749→// ---- Saved searches ----
+   750→
+   751→type SavedSearch struct {
+   752→        UID       string          `json:"uid"`
+   753→        Name      string          `json:"name"`
+   754→        Payload   json.RawMessage `json:"payload"`
+   755→        CreatedAt string          `json:"created_at"`
+   756→}
+   757→
+   758→func (s *Service) SaveSearch(owner, name string, payload []byte) (*SavedSearch, error) {
+   759→        uid := uidOf("svs")
+   760→        if _, err := s.db.Exec(`INSERT INTO saved_searches(uid, owner_user_id, name, payload) VALUES(?,?,?,?)`, uid, owner, name, string(payload)); err != nil {
+   761→                return nil, err
+   762→        }
+   763→        return &SavedSearch{UID: uid, Name: name, Payload: payload, CreatedAt: time.Now().UTC().Format(time.RFC3339)}, nil
+   764→}
+   765→
+   766→func (s *Service) ListSavedSearches(owner string) ([]SavedSearch, error) {
+   767→        rows, err := s.db.Query(`SELECT uid, name, payload, created_at FROM saved_searches WHERE owner_user_id=? ORDER BY created_at DESC LIMIT 50`, owner)
+   768→        if err != nil {
+   769→                return nil, err
+   770→        }
+   771→        defer rows.Close()
+   772→        var out []SavedSearch
+   773→        for rows.Next() {
+   774→                var sv SavedSearch
+   775→                var p string
+   776→                if err := rows.Scan(&sv.UID, &sv.Name, &p, &sv.CreatedAt); err != nil {
+   777→                        continue
+   778→                }
+   779→                sv.Payload = json.RawMessage(p)
+   780→                out = append(out, sv)
+   781→        }
+   782→        return out, nil
+   783→}
+   784→
+   785→func (s *Service) DeleteSavedSearch(owner, uid string) error {
+   786→        res, err := s.db.Exec(`DELETE FROM saved_searches WHERE uid=? AND owner_user_id=?`, uid, owner)
+   787→        if err != nil {
+   788→                return err
+   789→        }
+   790→        if n, _ := res.RowsAffected(); n == 0 {
+   791→                return ErrNotFound
+   792→        }
+   793→        return nil
+   794→}
+   795→
+   796→// ---- Workspace ----
+   797→
+   798→type WorkspaceState struct {
+   799→        Positions map[string]any `json:"positions"` // document_uid → {page_uid, progress, updated_at}
+   800→        Prefs     map[string]any `json:"prefs"`
+   801→}
+   802→
+   803→func (s *Service) GetWorkspace(owner string) (*WorkspaceState, error) {
+   804→        var pos, prefs string
+   805→        err := s.db.QueryRow(`SELECT positions, prefs FROM workspace_states WHERE owner_user_id=?`, owner).Scan(&pos, &prefs)
+   806→        if err != nil {
+   807→                return &WorkspaceState{Positions: map[string]any{}, Prefs: defaultPrefs()}, nil
+   808→        }
+   809→        ws := &WorkspaceState{Positions: map[string]any{}, Prefs: defaultPrefs()}
+   810→        _ = json.Unmarshal([]byte(pos), &ws.Positions)
+   811→        _ = json.Unmarshal([]byte(prefs), &ws.Prefs)
+   812→        return ws, nil
+   813→}
+   814→
+   815→func defaultPrefs() map[string]any {
+   816→        return map[string]any{
+   817→                "reader": map[string]any{
+   818→                        "font_size":   22,
+   819→                        "line_height": 1.9,
+   820→                        "font_family": "amiri",
+   821→                        "display":     "paged",
+   822→                },
+   823→        }
+   824→}
+   825→
+   826→func (s *Service) PutPosition(owner, documentUID string, pos map[string]any) error {
+   827→        ws, err := s.GetWorkspace(owner)
+   828→        if err != nil {
+   829→                return err
+   830→        }
+   831→        pos["updated_at"] = time.Now().UTC().Format(time.RFC3339)
+   832→        ws.Positions[documentUID] = pos
+   833→        b, _ := json.Marshal(ws.Positions)
+   834→        _, err = s.db.Exec(`INSERT INTO workspace_states(owner_user_id, positions, prefs) VALUES(?,?,?)
+   835→                ON CONFLICT(owner_user_id) DO UPDATE SET positions=excluded.positions, updated_at=datetime('now')`, owner, string(b), "{}")
+   836→        return err
+   837→}
+   838→
+   839→func (s *Service) PutPrefs(owner string, prefs map[string]any) error {
+   840→        ws, err := s.GetWorkspace(owner)
+   841→        if err != nil {
+   842→                return err
+   843→        }
+   844→        for k, v := range prefs {
+   845→                ws.Prefs[k] = v
+   846→        }
+   847→        b, _ := json.Marshal(ws.Prefs)
+   848→        _, err = s.db.Exec(`INSERT INTO workspace_states(owner_user_id, positions, prefs) VALUES(?,?,?)
+   849→                ON CONFLICT(owner_user_id) DO UPDATE SET prefs=excluded.prefs, updated_at=datetime('now')`, owner, "{}", string(b))
+   850→        return err
+   851→}
+   852→
+   853→// ---- کمکی‌ها ----
+   854→
+   855→func uidOf(prefix string) string {
+   856→        return prefix + "-" + randHex(6)
+   857→}
+   858→
+   859→func randHex(n int) string {
+   860→        const chars = "0123456789abcdef"
+   861→        b := make([]byte, n)
+   862→        _, _ = cryptoRead(b)
+   863→        for i := range b {
+   864→                b[i] = chars[int(b[i])%len(chars)]
+   865→        }
+   866→        return string(b)
+   867→}
+   868→
+   869→func orStr(s, d string) string {
+   870→        if s == "" {
+   871→                return d
+   872→        }
+   873→        return s
+   874→}
+   875→
+   876→func boolInt(b bool) int {
+   877→        if b {
+   878→                return 1
+   879→        }
+   880→        return 0
+   881→}
+   882→
+   883→var _ = sql.ErrNoRows
+   884→

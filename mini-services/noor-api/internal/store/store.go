@@ -3,6 +3,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -168,17 +169,37 @@ func (s *DB) migrate() error {
 		`INSERT OR IGNORE INTO users(uid, username, username_norm, display_name, password_hash, role, disabled)
                         VALUES('usr-system', 'system', 'system', 'سیستم', '$argon2id$v=19$m=65536,t=3,p=1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', 'admin', 1)`,
 	}
+	/* DB-04: مهاجرت باید اتمیک و serialized باشد — api و worker هم‌زمان boot
+	   می‌شوند و هر دو روی همان app.sqlite مهاجرت می‌کنند. BEGIN IMMEDIATE روی
+	   یک اتصال اختصاصی (sql.Conn) قفل نوشتن را از ابتدا می‌گیرد؛ مهاجرت دوم
+	   (سرویس دیگر) با busy_timeout صف می‌شود نه crash روی INSERT نسخه، و
+	   نمای نیم‌ساخته هرگز دیده نمی‌شود. INSERT OR IGNORE هم دوباردرج نسخه
+	   را بی‌اثر می‌کند. */
+	ctx := context.Background()
+	conn, err := s.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("migrate: conn: %w", err)
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
+		return fmt.Errorf("migrate: begin: %w", err)
+	}
+	// اگر مسیر خطا برگردد (یا COMMIT شده باشد) این عقب‌نشینی بی‌ضرر است.
+	defer func() { _, _ = conn.ExecContext(ctx, `ROLLBACK`) }()
 	for _, st := range stmts {
-		if _, err := s.Exec(st); err != nil {
+		if _, err := conn.ExecContext(ctx, st); err != nil {
 			return fmt.Errorf("migrate: %w", err)
 		}
 	}
 	var v int
-	_ = s.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&v)
+	_ = conn.QueryRowContext(ctx, `SELECT MAX(version) FROM schema_migrations`).Scan(&v)
 	if v < 1 {
-		if _, err := s.Exec(`INSERT INTO schema_migrations(version) VALUES(1)`); err != nil {
-			return err
+		if _, err := conn.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version) VALUES(1)`); err != nil {
+			return fmt.Errorf("migrate: version: %w", err)
 		}
+	}
+	if _, err := conn.ExecContext(ctx, `COMMIT`); err != nil {
+		return fmt.Errorf("migrate: commit: %w", err)
 	}
 	return nil
 }

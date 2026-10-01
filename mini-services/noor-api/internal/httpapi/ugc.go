@@ -741,8 +741,8 @@ func (s *Server) handleCreatePdfJob(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, 500, "internal", "ثبت کار خروجی ممکن نشد؛ دوباره تلاش کنید.", true)
 		return
 	}
-	w.WriteHeader(202)
-	s.ok(w, map[string]any{"uid": uid})
+	/* GO-08: 202 یک‌بار با بدنهٔ واقعی — WriteHeader دوم (200 در s.ok) superfluous بود */
+	s.okStatus(w, 202, map[string]any{"uid": uid})
 }
 
 // handleListPdfJobs GET /pdf-jobs — ۲۰ کار آخر من.

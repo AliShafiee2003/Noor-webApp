@@ -456,8 +456,8 @@ func (s *Server) handleCreateExport(w http.ResponseWriter, r *http.Request) {
 	}
 	// تولید همگن برای حجم‌های متعارف (job کم‌اولویت در production)
 	go s.runExport(uid)
-	w.WriteHeader(202)
-	s.ok(w, map[string]any{"export_uid": uid})
+	/* GO-08: 202 یک‌بار با بدنهٔ واقعی — WriteHeader دوم (200 در s.ok) superfluous بود */
+	s.okStatus(w, 202, map[string]any{"export_uid": uid})
 }
 
 func (s *Server) runExport(uid string) {
