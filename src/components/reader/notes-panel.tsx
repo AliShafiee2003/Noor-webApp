@@ -512,7 +512,7 @@ export function NotesPanel({
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-base">
-              <TriangleAlert className="size-4 text-amber-600" aria-hidden="true" />
+              <TriangleAlert className="size-4 text-warning" aria-hidden="true" />
               این یادداشت هم‌زمان در جای دیگری ویرایش شده است
             </DialogTitle>
             <DialogDescription>

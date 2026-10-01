@@ -77,7 +77,7 @@ function HeroSearch() {
                 key={m.value}
                 type="button"
                 aria-pressed={mode === m.value}
-                className="choice-chip bg-surface"
+                className="choice-chip"
                 onClick={() => setMode(m.value)}
               >
                 {m.value === "normalized_phrase" ? (

@@ -30,6 +30,7 @@
   --color-border: var(--border);
   --color-input: var(--control-border);
   --color-ring: var(--ring);
+  --color-warning: var(--warning);
 
   /* توکن‌های اختصاصی میزکار نور */
   --color-control-border: var(--control-border);
@@ -86,10 +87,14 @@
   --ring: #17665b;
   --destructive: #a93b32;
 
-  /* معنایی: آیه (سبز ملایم)، شرح (کادر ملایم) */
+  /* معنایی: آیه (سبز ملایم)، شرح (کادر ملایم)، هشدار (کهربایی) */
   --ayah: #2f7d5c;
   --ayah-soft: #e4efe7;
   --sharh-soft: #f1eee1;
+  --warning: #a16207;
+
+  /* رنگ سایهٔ کارت‌ها — با قالب هماهنگ می‌شود */
+  --shadow-color: 24 42 50;
 
   --radius: 0.625rem;
 }
@@ -119,6 +124,183 @@
   --ayah: #8cc9a8;
   --ayah-soft: #1b2f28;
   --sharh-soft: #1f2d33;
+  --warning: #d9b36a;
+
+  --shadow-color: 0 0 0;
+}
+
+/* ────────────────────────────────────────────────────────────────────
+ * قالب‌های رنگی — هر قالب «تمام» توکن‌ها را بازتعریف می‌کند تا بوم،
+ * سطح، متن، حاشیه، highlight، رنگ‌های معنایی و سایه با هم هماهنگ بمانند.
+ * قالب‌های روشن: :root[data-palette=…]   قالب‌های تیره: .dark[data-palette=…]
+ * ──────────────────────────────────────────────────────────────────── */
+
+/* — روشن: کاغذ کهنه (کرم گرم #faf4e5، مرکب قهوه‌ای) — */
+:root[data-palette="l-parchment"] {
+  --canvas: #faf4e5;
+  --surface: #fffaf0;
+  --reader: #fbf6e9;
+  --text: #3d3229;
+  --muted: #6f6152;
+  --primary: #7a4a21;
+  --link: #9c6b1e;
+  --border: #e3d9c2;
+  --control-border: #a89a80;
+  --match: #f5d98f;
+
+  --on-primary: #fff8ec;
+  --muted-soft: #f1e8d2;
+  --paper-2: #efe5cc;
+  --accent-soft: #f0e7cf;
+  --ring: #7a4a21;
+  --destructive: #a3402f;
+
+  --ayah: #66722a;
+  --ayah-soft: #ecefd4;
+  --sharh-soft: #f3ecd7;
+  --warning: #a16207;
+
+  --shadow-color: 61 50 41;
+}
+
+/* — روشن: مه‌آلود (خاکستری سرد #eaecf0، سبزآبی فولادی) — */
+:root[data-palette="l-mist"] {
+  --canvas: #eaecf0;
+  --surface: #f8f9fb;
+  --reader: #f4f6f8;
+  --text: #2b3440;
+  --muted: #5d6b7a;
+  --primary: #2e6e73;
+  --link: #2f6484;
+  --border: #d3d8df;
+  --control-border: #8b97a5;
+  --match: #ffe3a0;
+
+  --on-primary: #ffffff;
+  --muted-soft: #e2e6ec;
+  --paper-2: #e4e8ee;
+  --accent-soft: #e5e9ef;
+  --ring: #2e6e73;
+  --destructive: #ab3a3a;
+
+  --ayah: #3d7a5c;
+  --ayah-soft: #e0ede5;
+  --sharh-soft: #e9edf2;
+  --warning: #a16207;
+
+  --shadow-color: 43 52 64;
+}
+
+/* — روشن: باغ سبز (سبز ملایم #eef3ea) — */
+:root[data-palette="l-sage"] {
+  --canvas: #eef3ea;
+  --surface: #f9fbf7;
+  --reader: #f3f7ef;
+  --text: #2c362e;
+  --muted: #5f6f61;
+  --primary: #3e7048;
+  --link: #3a6e78;
+  --border: #d4ddd0;
+  --control-border: #8ba08a;
+  --match: #f7e3a1;
+
+  --on-primary: #ffffff;
+  --muted-soft: #e3ebdd;
+  --paper-2: #e5ecdf;
+  --accent-soft: #e6ecdf;
+  --ring: #3e7048;
+  --destructive: #a34438;
+
+  --ayah: #4d7c52;
+  --ayah-soft: #e2eede;
+  --sharh-soft: #eaefe2;
+  --warning: #a16207;
+
+  --shadow-color: 44 54 46;
+}
+
+/* — تیره: اقیانوس (فیروزهٔ عمیق #0a333e) — */
+.dark[data-palette="d-ocean"] {
+  --canvas: #0a333e;
+  --surface: #0e404d;
+  --reader: #0c3a46;
+  --text: #d9ecf0;
+  --muted: #8fb4bc;
+  --primary: #62cdbf;
+  --link: #7ec8e3;
+  --border: #1d5261;
+  --control-border: #4a7c87;
+  --match: #6b551f;
+
+  --on-primary: #06272e;
+  --muted-soft: #0f4553;
+  --paper-2: #104755;
+  --accent-soft: #144c5a;
+  --ring: #62cdbf;
+  --destructive: #e88b80;
+
+  --ayah: #7fd0a8;
+  --ayah-soft: #0f3d33;
+  --sharh-soft: #124a56;
+  --warning: #e5b562;
+
+  --shadow-color: 0 0 0;
+}
+
+/* — تیره: گرافیت (خاکستری دودی #282c34 با کهربا) — */
+.dark[data-palette="d-graphite"] {
+  --canvas: #21252b;
+  --surface: #282c34;
+  --reader: #24282e;
+  --text: #d7dce3;
+  --muted: #9aa3af;
+  --primary: #d9a868;
+  --link: #79b8dc;
+  --border: #3a3f49;
+  --control-border: #6b7280;
+  --match: #5d4a22;
+
+  --on-primary: #2a2013;
+  --muted-soft: #2e323b;
+  --paper-2: #30353e;
+  --accent-soft: #343a44;
+  --ring: #d9a868;
+  --destructive: #e0796f;
+
+  --ayah: #96c98f;
+  --ayah-soft: #263128;
+  --sharh-soft: #31363f;
+  --warning: #e0834f;
+
+  --shadow-color: 0 0 0;
+}
+
+/* — تیره: چوب گردو (قهوه‌ای شبانهٔ گرم) — */
+.dark[data-palette="d-walnut"] {
+  --canvas: #221a12;
+  --surface: #2b2118;
+  --reader: #281f16;
+  --text: #ecdfd0;
+  --muted: #b3a28d;
+  --primary: #d9a05b;
+  --link: #e0b98a;
+  --border: #43362a;
+  --control-border: #7d6b55;
+  --match: #6b4e1f;
+
+  --on-primary: #2b1c0b;
+  --muted-soft: #322720;
+  --paper-2: #352a21;
+  --accent-soft: #3a2e24;
+  --ring: #d9a05b;
+  --destructive: #e08573;
+
+  --ayah: #a9c48f;
+  --ayah-soft: #2c331f;
+  --sharh-soft: #352b1f;
+  --warning: #d9b36a;
+
+  --shadow-color: 0 0 0;
 }
 
 @layer base {
@@ -210,19 +392,20 @@
     @apply bg-primary/10 font-medium text-primary;
   }
 
-  /* کارت‌ها: سایهٔ کم و تعامل آرام */
+  /* کارت‌ها: سایهٔ کم و تعامل آرام — رنگ سایه از قالب فعلی می‌آید */
   .quiet-card {
-    @apply rounded-xl border border-border bg-surface shadow-[0_1px_2px_rgba(24,42,50,0.04)];
+    @apply rounded-xl border border-border bg-surface;
+    box-shadow: 0 1px 2px rgb(var(--shadow-color) / 0.04);
     transition: box-shadow 160ms ease, border-color 160ms ease;
   }
   .quiet-card:hover {
-    box-shadow: 0 2px 8px rgba(24, 42, 50, 0.06);
+    box-shadow: 0 2px 8px rgb(var(--shadow-color) / 0.06);
   }
   :is(.dark) .quiet-card {
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+    box-shadow: 0 1px 2px rgb(var(--shadow-color) / 0.25);
   }
   :is(.dark) .quiet-card:hover {
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+    box-shadow: 0 2px 10px rgb(var(--shadow-color) / 0.35);
   }
 
   /* حلقهٔ فوکوس یکدست برای همهٔ تعامل‌ها */
@@ -261,7 +444,8 @@
 
   /* سطح قهرمان خانه: متمایز ولی آرام — قاب دانشگاهی با نشان ظریف */
   .hero-surface {
-    @apply relative overflow-hidden rounded-2xl border border-border bg-surface px-4 pb-5 pt-2 shadow-[0_1px_2px_rgba(24,42,50,0.04)];
+    @apply relative overflow-hidden rounded-2xl border border-border bg-surface px-4 pb-5 pt-2;
+    box-shadow: 0 1px 2px rgb(var(--shadow-color) / 0.04);
   }
   .hero-surface::before {
     content: "";

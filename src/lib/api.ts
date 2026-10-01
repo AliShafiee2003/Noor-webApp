@@ -124,6 +124,9 @@ function fallbackError(response: Response): ApiError {
   });
 }
 
+/** مسیرهای احراز هویت که 401 آن‌ها رویداد سراسری نشست را روشن نمی‌کند */
+const AUTH_PATHS_401_SILENT = /^\/auth\/(login|session|logout|accept-invite|mfa\/verify|mfa\/setup|mfa\/enable)$/;
+
 async function execute<T>(options: RequestOptions, csrf: string | null): Promise<T> {
   const { path, params, body, method = "GET", signal } = options;
 
@@ -173,6 +176,15 @@ async function execute<T>(options: RequestOptions, csrf: string | null): Promise
       } catch {
         /* به خطای اصلی می‌رسیم */
       }
+    }
+    /* نشست باطل‌شده/منقضی: رویداد سراسری برای بازگشت لطیف به صفحهٔ ورود
+       (به‌جای پوستهٔ مردهٔ «احراز‌شده» که همهٔ درخواست‌هایش 401 می‌خورد). */
+    if (
+      response.status === 401 &&
+      typeof window !== "undefined" &&
+      !AUTH_PATHS_401_SILENT.test(path)
+    ) {
+      window.dispatchEvent(new CustomEvent("noor:unauthorized"));
     }
     if (parsed) {
       throw new ApiError({ ...parsed, status: response.status });

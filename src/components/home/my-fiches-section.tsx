@@ -222,7 +222,7 @@ export function MyFichesSection() {
               key={f.value}
               type="button"
               aria-pressed={kind === f.value}
-              className={`choice-chip ${kind === f.value ? "" : "bg-surface"}`}
+              className="choice-chip"
               onClick={() => setKind(f.value)}
             >
               {f.label}
