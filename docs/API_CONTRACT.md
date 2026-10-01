@@ -1,6 +1,6 @@
 # قرارداد API v1 — میزکار پژوهشی نور
 
-Base: `/api/v1` (از مرورگر: `/api/v1/...?XTransformPort=8080`). JSON فقط. کوکی نشست: `noor_session` (تولید: `__Host-noor_session`, Secure).
+Base: `/api/v1` (از مرورگر: `/api/v1/...` — پل BFF داخلی Next در `src/app/api/v1/[...path]/route.ts` درخواست را بدون هدر Origin/Referer به `127.0.0.1:8080` می‌رساند؛ پارامتر قدیمی `?XTransformPort=8080` دیگر لازم نیست و مستقیم‌زدن به :8080 از مرورگر پشت پروکسی پیش‌نمایش با 403 csrf مواجه می‌شود). JSON فقط. کوکی نشست: `noor_session` (تولید: `__Host-noor_session`, Secure).
 Mutationها باید هدر `X-Noor-CSRF` داشته باشند (token از `GET /auth/session` در حافظهٔ JS). ادمین-sensitive نیاز به هدر `X-Noor-MFA: <totp>` دارند (step-up).
 
 ## پاکت خطا (هر خطا ۴ بخش دارد — §۴۸)

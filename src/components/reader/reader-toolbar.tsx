@@ -6,14 +6,13 @@
  * جست‌وجو در همین کتاب/جلد (SEARCH-09) + کپی نشانی (READ-17) + نشانک (READ-12) +
  * حالت نمایش + تنظیمات + پاک‌کردن نشانهٔ جست‌وجو (READ-11) + وضعیت ذخیره.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
   BookOpenText,
   BookmarkCheck,
   BookmarkPlus,
-  ChevronDown,
   Copy,
   Hash,
   ScrollText,
@@ -21,10 +20,9 @@ import {
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Input } from "@/components/ui/input";
+import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { faNum } from "@/lib/format";
 import type { PageRef, ReaderDisplay } from "@/lib/types";
 
 export interface ReaderToolbarProps {
@@ -52,111 +50,75 @@ export interface ReaderToolbarProps {
   saveIndicator?: React.ReactNode;
 }
 
-/** پرش به شمارهٔ صفحهٔ چاپی با تفکیک هم‌نام‌ها */
+/** پرش ساده به شمارهٔ صفحهٔ چاپی: باکس کوتاه + Enter — در تکرار، هم‌نام‌ها به‌ترتیب گشوده می‌شوند */
 function PageJump({
   pageRefs,
-  currentPageUid,
   onJump,
 }: {
   pageRefs: PageRef[];
-  currentPageUid: string | null;
   onJump: (ref: PageRef) => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const [q, setQ] = useState("");
-  const inputRef = useRef<HTMLInputElement>(null);
+  const [value, setValue] = useState("");
+  const lastQueryRef = useRef<string>("");
+  const lastIndexRef = useRef<number>(-1);
 
-  const [wasOpen, setWasOpen] = useState(false);
-  if (open && !wasOpen) {
-    setWasOpen(true);
-    setQ("");
-  }
-  if (!open && wasOpen) {
-    setWasOpen(false);
-  }
-  useEffect(() => {
-    if (open) {
-      const t = window.setTimeout(() => inputRef.current?.focus(), 50);
-      return () => window.clearTimeout(t);
+  /* ارقام فارسی/عربی و فاصله‌ها را نرمال می‌کنیم تا «۱۱۵» و "115" یکی باشند */
+  const normalize = useMemo(() => {
+    const fa = "۰۱۲۳۴۵۶۷۸۹";
+    const ar = "٠١٢٣٤٥٦٧٨٩";
+    return (s: string) =>
+      s
+        .replace(/[۰-۹]/g, (d) => String(fa.indexOf(d)))
+        .replace(/[٠-٩]/g, (d) => String(ar.indexOf(d)))
+        .replace(/[\s\u200c]/g, "");
+  }, []);
+
+  const jump = () => {
+    const q = normalize(value);
+    if (!q) return;
+    const matches = pageRefs.filter(
+      (p) => normalize(p.label) === q || (p.num ? normalize(p.num) === q : false),
+    );
+    if (matches.length === 0) {
+      toast({
+        title: "صفحه‌ای با این شماره یافت نشد.",
+        description: `«${value.trim()}» در صفحه‌های این جلد ثبت نشده است.`,
+        variant: "destructive",
+      });
+      return;
     }
-  }, [open]);
-
-  const counts = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const p of pageRefs) m.set(p.label, (m.get(p.label) ?? 0) + 1);
-    return m;
-  }, [pageRefs]);
-  const seen = new Map<string, number>();
-
-  const normalized = q.trim();
-  const filtered = normalized
-    ? pageRefs.filter((p) => p.label.includes(normalized) || (p.num ?? "").includes(normalized))
-    : pageRefs;
+    /* در تکرار همین جست‌وجو، موضع بعدیِ هم‌نام‌ها (تفکیک صفحات هم‌شمارهٔ جلدهای متفاوت) */
+    const again = lastQueryRef.current === q && lastIndexRef.current >= 0;
+    const index = again ? (lastIndexRef.current + 1) % matches.length : 0;
+    lastQueryRef.current = q;
+    lastIndexRef.current = index;
+    onJump(matches[index]);
+    setValue("");
+  };
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          variant="outline"
-          size="sm"
-          className="min-h-11 gap-1.5 px-2.5 text-xs md:min-h-9"
-          aria-label="پرش به صفحهٔ چاپی"
-        >
-          <Hash className="size-3.5" aria-hidden="true" />
-          پرش به صفحه
-          <ChevronDown className="size-3.5 text-muted-foreground" aria-hidden="true" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent align="start" className="w-64 p-2" dir="rtl">
-        <Input
-          ref={inputRef}
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="شمارهٔ صفحهٔ چاپی…"
-          aria-label="شمارهٔ صفحهٔ چاپی"
-          className="mb-2 min-h-9 text-sm"
-        />
-        <ul className="max-h-60 overflow-y-auto" role="listbox" aria-label="فهرست صفحه‌ها">
-          {filtered.length === 0 ? (
-            <li className="px-2 py-4 text-center text-xs text-muted-foreground">
-              صفحه‌ای با این شماره یافت نشد.
-            </li>
-          ) : (
-            filtered.map((p) => {
-              const dupCount = counts.get(p.label) ?? 1;
-              const dupIndex = (seen.set(p.label, (seen.get(p.label) ?? 0) + 1), seen.get(p.label) ?? 1);
-              const isCurrent = p.page_uid === currentPageUid;
-              return (
-                <li key={p.page_uid}>
-                  <button
-                    type="button"
-                    role="option"
-                    aria-selected={isCurrent}
-                    onClick={() => {
-                      onJump(p);
-                      setOpen(false);
-                    }}
-                    className={cn(
-                      "flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-start text-[13px] hover:bg-accent",
-                      isCurrent && "bg-primary/10 font-semibold text-primary",
-                    )}
-                  >
-                    <span>{p.page_uid === "p-front" ? "آغاز سند" : `صفحهٔ ${p.label}`}</span>
-                    {dupCount > 1 ? (
-                      <span className="text-[10px] text-muted-foreground">
-                        نوبت {faNum(dupIndex)} از {faNum(dupCount)}
-                      </span>
-                    ) : isCurrent ? (
-                      <span className="text-[10px]">فعلی</span>
-                    ) : null}
-                  </button>
-                </li>
-              );
-            })
-          )}
-        </ul>
-      </PopoverContent>
-    </Popover>
+    <div className="relative flex items-center">
+      <Hash
+        className="pointer-events-none absolute start-2.5 size-3.5 text-muted-foreground"
+        aria-hidden="true"
+      />
+      <Input
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            jump();
+          }
+        }}
+        placeholder="صفحه…"
+        inputMode="numeric"
+        autoComplete="off"
+        aria-label="پرش به شمارهٔ صفحهٔ چاپی"
+        title="شمارهٔ صفحه را بنویسید و Enter بزنید"
+        className="min-h-9 w-24 ps-8 text-sm md:w-20"
+      />
+    </div>
   );
 }
 
@@ -205,7 +167,6 @@ export function ReaderToolbar(props: ReaderToolbarProps) {
     display,
     onDisplayChange,
     pageRefs,
-    currentPageUid,
     onJumpToPage,
     documentUid,
     onSearchInDocument,
@@ -304,11 +265,7 @@ export function ReaderToolbar(props: ReaderToolbarProps) {
           </Button>
         </div>
 
-        <PageJump
-          pageRefs={pageRefs}
-          currentPageUid={currentPageUid}
-          onJump={onJumpToPage}
-        />
+        <PageJump pageRefs={pageRefs} onJump={onJumpToPage} />
 
         {/* حالت نمایش: صفحه‌محور/پیوسته */}
         <div

@@ -2,7 +2,8 @@
  * قالب‌های رنگی میزکار — لایهٔ سوم تم (کنار روشن/تیره next-themes).
  * هر قالب، مجموعهٔ کامل توکن‌های raw را در globals.css بازتعریف می‌کند
  * (data-palette روی <html>) — پس کل رابط، نه فقط چند رنگ، هماهنگ عوض می‌شود.
- * انتخاب کاربر فقط در localStorage (بدون ارسال به سرور — ترجیح دستگاهی).
+ * انتخاب کاربر به‌تفکیک حالت (روشن/تیره) در localStorage نگه داشته می‌شود؛
+ * با جابه‌جایی حالت، قالبِ همان حالت دوباره اعمال می‌شود.
  */
 import { useSyncExternalStore } from "react";
 
@@ -70,12 +71,50 @@ export const DARK_PALETTES: readonly PaletteDef[] = [
   },
 ] as const;
 
-const STORAGE_KEY = "noor-palette";
+export type PaletteMode = "light" | "dark";
+
+const LEGACY_KEY = "noor-palette";
+const KEY_LIGHT = "noor-palette-light";
+const KEY_DARK = "noor-palette-dark";
 const DEFAULT_ID = "default";
 
 let current = DEFAULT_ID;
 const listeners = new Set<() => void>();
 let initialized = false;
+
+function storageKeyForMode(mode: PaletteMode): string {
+  return mode === "dark" ? KEY_DARK : KEY_LIGHT;
+}
+
+function readStoredId(mode: PaletteMode): string {
+  try {
+    const fresh = window.localStorage.getItem(storageKeyForMode(mode));
+    if (fresh) return fresh;
+    /* مهاجرت کلید تک‌حالتهٔ قدیمی */
+    const legacy = window.localStorage.getItem(LEGACY_KEY);
+    if (legacy) {
+      window.localStorage.setItem(KEY_LIGHT, legacy);
+      window.localStorage.setItem(KEY_DARK, legacy);
+      window.localStorage.removeItem(LEGACY_KEY);
+      return legacy;
+    }
+  } catch {
+    /* localStorage در دسترس نیست */
+  }
+  return DEFAULT_ID;
+}
+
+function writeStoredId(mode: PaletteMode, id: string): void {
+  try {
+    if (id === DEFAULT_ID) {
+      window.localStorage.removeItem(storageKeyForMode(mode));
+    } else {
+      window.localStorage.setItem(storageKeyForMode(mode), id);
+    }
+  } catch {
+    /* بی‌خیال ذخیره؛ انتخاب تا پایان نشست برقرار می‌ماند */
+  }
+}
 
 function applyToDocument(id: string): void {
   if (typeof document === "undefined") return;
@@ -86,41 +125,64 @@ function applyToDocument(id: string): void {
   }
 }
 
-/** یک‌بار در آغاز کلاینت — پیش از نخستین رندر، تا جرقهٔ تم دیده نشود */
+function setListeners(): void {
+  listeners.forEach((l) => l());
+}
+
+/** حدس حالت آغازین از تنظیمات next-themes — پیش از رندر، برای پرهیز از جرقهٔ قالب */
+function initialMode(): PaletteMode {
+  if (typeof window === "undefined") return "light";
+  try {
+    const theme = window.localStorage.getItem("theme");
+    if (theme === "dark") return "dark";
+    if (theme === "light") return "light";
+    if (
+      (!theme || theme === "system") &&
+      window.matchMedia?.("(prefers-color-scheme: dark)").matches
+    ) {
+      return "dark";
+    }
+  } catch {
+    /* پیش‌فرض روشن */
+  }
+  return "light";
+}
+
+/** یک‌بار در آغاز کلاینت — پیش از نخستین رندر، تا جرقهٔ قالب دیده نشود */
 export function initPalette(): void {
   if (initialized || typeof window === "undefined") return;
   initialized = true;
-  try {
-    const stored = window.localStorage.getItem(STORAGE_KEY);
-    if (stored && stored !== DEFAULT_ID) {
-      current = stored;
-      applyToDocument(stored);
-    }
-  } catch {
-    /* localStorage در دسترس نیست — قالب پیش‌فرض */
-  }
+  const mode = initialMode();
+  current = readStoredId(mode);
+  applyToDocument(current);
   window.addEventListener("storage", (e) => {
-    if (e.key === STORAGE_KEY && e.newValue) {
-      current = e.newValue;
-      applyToDocument(current);
-      listeners.forEach((l) => l());
-    }
+    if (e.key !== KEY_LIGHT && e.key !== KEY_DARK) return;
+    /* همگام‌سازی میان‌تبی: کلید حالت فعلی را دوباره بخوان */
+    current = readStoredId(initialMode());
+    applyToDocument(current);
+    setListeners();
   });
+}
+
+/** اعمال قالبِ ذخیره‌شدهٔ یک حالت (بدون نوشتن) — پس از هر تغییر روشن/تیره */
+export function applyStoredPaletteForMode(mode: PaletteMode): void {
+  const id = readStoredId(mode);
+  if (id === current) return;
+  current = id;
+  applyToDocument(id);
+  setListeners();
 }
 
 export function getPalette(): string {
   return current;
 }
 
-export function setPalette(id: string): void {
+/** انتخاب قالب برای یک حالت — ذخیره به‌تفکیک حالت + اعمال فوری */
+export function setPalette(id: string, mode: PaletteMode): void {
+  writeStoredId(mode, id);
   current = id;
-  try {
-    window.localStorage.setItem(STORAGE_KEY, id);
-  } catch {
-    /* بی‌خیال ذخیره؛ انتخاب تا پایان نشست برقرار می‌ماند */
-  }
   applyToDocument(id);
-  listeners.forEach((l) => l());
+  setListeners();
 }
 
 function subscribe(cb: () => void): () => void {

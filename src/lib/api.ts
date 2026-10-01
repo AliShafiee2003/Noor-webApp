@@ -1,7 +1,8 @@
 /**
  * کلاینت تایپ‌دار API v1 — میزکار پژوهشی نور
  * همهٔ درخواست‌های شبکه از این ماژول عبور می‌کنند (fetch خام ممنوع).
- * - Base: /api/v1 + پارامتر gateway ?XTransformPort=8080
+ * - Base: /api/v1 — درخواست‌ها از پل BFF داخلی Next (src/app/api/v1) به سرویس Go می‌روند؛
+ *   مبدأ همیشه هم‌مبدأ صفحه است و کنترل Origin سمت API به‌اشتباه فعال نمی‌شود.
  * - credentials: include (کوکی نشست)
  * - خطا همیشه به ApiError با {code,message,trace_id,retryable} نگاشت می‌شود.
  * - توکن CSRF فقط در حافظهٔ ماژول نگه داشته می‌شود.
@@ -9,7 +10,6 @@
 import type { ApiErrorCode } from "@/lib/types";
 
 export const API_BASE = "/api/v1";
-export const GATEWAY_PORT = "8080";
 const CSRF_HEADER = "X-Noor-CSRF";
 
 export type QueryParams = Record<
@@ -58,7 +58,7 @@ export function getCsrfToken(): string | null {
 
 /* ---------- ساخت نشانی ---------- */
 
-/** نشانی کامل API با پارامتر gateway؛ همهٔ درخواست‌ها مسیر نسبی دارند. */
+/** نشانی کامل API؛ همهٔ درخواست‌ها مسیر نسبی و هم‌مبدأ دارند. */
 export function apiUrl(path: string, params?: QueryParams): string {
   const qs = new URLSearchParams();
   if (params) {
@@ -67,8 +67,8 @@ export function apiUrl(path: string, params?: QueryParams): string {
       qs.set(key, String(value));
     }
   }
-  qs.set("XTransformPort", GATEWAY_PORT);
-  return `${API_BASE}${path}?${qs.toString()}`;
+  const query = qs.toString();
+  return query ? `${API_BASE}${path}?${query}` : `${API_BASE}${path}`;
 }
 
 /* ---------- درخواست پایه ---------- */

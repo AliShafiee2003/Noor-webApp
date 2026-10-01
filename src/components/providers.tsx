@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { ThemeProvider } from "next-themes";
+import { ThemeProvider, useTheme } from "next-themes";
+import { DirectionProvider } from "@radix-ui/react-direction";
 import { Toaster } from "@/components/ui/toaster";
-import { initPalette } from "@/lib/palette";
+import { initPalette, applyStoredPaletteForMode } from "@/lib/palette";
 import { applyFontPrefs } from "@/lib/fonts";
 import { useAuthStore } from "@/store/auth";
 import { useWorkspaceStore } from "@/store/workspace";
@@ -44,16 +45,29 @@ export function Providers({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <QueryClientProvider client={queryClient}>
-      <ThemeProvider
-        attribute="class"
-        defaultTheme="system"
-        enableSystem
-        disableTransitionOnChange
-      >
-        {children}
-        <Toaster />
-      </ThemeProvider>
-    </QueryClientProvider>
+    <DirectionProvider dir="rtl">
+      <QueryClientProvider client={queryClient}>
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="system"
+          enableSystem
+          disableTransitionOnChange
+        >
+          {/* با تغییر روشن/تیره (حتی همگام با سامانه)، قالب ذخیره‌شدهٔ همان حالت اعمال می‌شود */}
+          <PaletteModeSync />
+          {children}
+          <Toaster />
+        </ThemeProvider>
+      </QueryClientProvider>
+    </DirectionProvider>
   );
+}
+
+/** همگام‌سازی قالب رنگی با حالت فعال — پس از هر تغییر روشن/تیره */
+function PaletteModeSync() {
+  const { resolvedTheme } = useTheme();
+  useEffect(() => {
+    applyStoredPaletteForMode(resolvedTheme === "dark" ? "dark" : "light");
+  }, [resolvedTheme]);
+  return null;
 }

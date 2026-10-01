@@ -39,6 +39,12 @@ import {
   QURAN_FONT_SIZE_DEFAULT,
   QURAN_LINE_HEIGHT_DEFAULT,
 } from "@/lib/fonts";
+import {
+  palettesForMode,
+  setPalette,
+  usePalette,
+  type PaletteMode,
+} from "@/lib/palette";
 import { useRoute } from "@/lib/hash-router";
 import { faDateTime } from "@/lib/format";
 import type { SessionInfo } from "@/lib/types";
@@ -376,8 +382,70 @@ function AppearanceTab() {
             ))}
           </RadioGroup>
         )}
+        <PalettePicker />
       </CardContent>
     </Card>
+  );
+}
+
+/** انتخاب قالب رنگی (لایهٔ سوم تم) — به‌تفکیک حالت روشن/تیره */
+function PalettePicker() {
+  const { resolvedTheme } = useTheme();
+  const mounted = useSyncExternalStore(
+    subscribeNoop,
+    () => true,
+    () => false,
+  );
+  const active = usePalette();
+
+  if (!mounted) {
+    return <Skeleton className="mt-6 h-32 w-full rounded-lg" />;
+  }
+
+  const mode: PaletteMode = resolvedTheme === "dark" ? "dark" : "light";
+  const palettes = palettesForMode(resolvedTheme);
+
+  return (
+    <div className="mt-6 space-y-3 border-t border-border pt-6">
+      <div>
+        <p className="text-sm font-medium leading-none">قالب رنگی میزکار</p>
+        <p className="mt-1.5 text-sm leading-6 text-muted-foreground">
+          پوستهٔ کامل حالت {mode === "dark" ? "تیره" : "روشن"}؛ هر قالب همهٔ رنگ‌های
+          رابط را هماهنگ تنظیم می‌کند و انتخاب برای هر حالت جداگانه نگه داشته می‌شود.
+        </p>
+      </div>
+      <RadioGroup
+        dir="rtl"
+        value={palettes.some((p) => p.id === active) ? active : "default"}
+        onValueChange={(id) => setPalette(id, mode)}
+        className="grid gap-3 sm:grid-cols-2"
+      >
+        {palettes.map((palette) => (
+          <Label
+            key={palette.id}
+            htmlFor={`palette-${palette.id}`}
+            className="flex min-h-11 cursor-pointer items-center gap-3 rounded-lg border border-border p-4 font-normal transition-colors hover:bg-accent has-[[data-state=checked]]:border-primary has-[[data-state=checked]]:bg-primary/5"
+          >
+            <RadioGroupItem value={palette.id} id={`palette-${palette.id}`} />
+            <span className="flex shrink-0 items-center gap-1" aria-hidden="true">
+              {palette.swatch.map((color) => (
+                <span
+                  key={color}
+                  className="inline-block size-5 rounded-full border border-border/60 shadow-sm"
+                  style={{ backgroundColor: color }}
+                />
+              ))}
+            </span>
+            <span className="min-w-0">
+              <span className="block text-sm font-medium">{palette.name}</span>
+              <span className="block truncate text-xs text-muted-foreground">
+                {palette.note}
+              </span>
+            </span>
+          </Label>
+        ))}
+      </RadioGroup>
+    </div>
   );
 }
 
