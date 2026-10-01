@@ -2,12 +2,26 @@
 
 /**
  * تنظیمات — خواندن (ترجیحات مطالعه با PUT /workspace/prefs)،
- * ظاهر (روشن/تیره با next-themes)، نشست‌های فعال، خروج.
+ * ظاهر (روشن/تیره با next-themes)، اشتراک‌های فعال و خروجی‌های PDF (§۷-الف)،
+ * نشست‌های فعال، خروج.
  */
 import { useSyncExternalStore } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTheme } from "next-themes";
-import { LogOut, MonitorSmartphone, Moon, Sun } from "lucide-react";
+import {
+  Download,
+  ExternalLink,
+  FileDown,
+  FileText,
+  Highlighter,
+  Loader2,
+  LogOut,
+  MonitorSmartphone,
+  Moon,
+  Share2,
+  Sun,
+  TriangleAlert,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -46,10 +60,11 @@ import {
   type PaletteMode,
 } from "@/lib/palette";
 import { useRoute } from "@/lib/hash-router";
-import { faDateTime } from "@/lib/format";
-import type { SessionInfo } from "@/lib/types";
+import { faDateTime, faNum } from "@/lib/format";
+import type { PdfJob, SessionInfo, ShareLinkInfo } from "@/lib/types";
 import { useAuthStore } from "@/store/auth";
 import { useWorkspaceStore } from "@/store/workspace";
+import { useToast } from "@/hooks/use-toast";
 
 /* ---------- بخش خواندن ---------- */
 
@@ -585,6 +600,260 @@ function SessionsTab() {
   );
 }
 
+/* ---------- §۷-الف: اشتراک‌های فعال + خروجی‌های PDF من ---------- */
+
+const ACTIVE_JOB_STATES = new Set(["queued", "running"]);
+
+function PdfJobStatusChip({ job }: { job: PdfJob }) {
+  const map: Record<PdfJob["status"], { label: string; className: string }> = {
+    queued: { label: "در صف", className: "border-border bg-muted text-muted-foreground" },
+    running: { label: "در حال ساخت", className: "border-primary/40 bg-primary/10 text-primary" },
+    done: { label: "آمادهٔ دانلود", className: "border-ayah/40 bg-ayah-soft text-ayah" },
+    failed: { label: "ناموفق", className: "border-destructive/40 bg-destructive/10 text-destructive" },
+  };
+  const s = map[job.status] ?? map.queued;
+  return (
+    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${s.className}`}>
+      {s.label}
+    </span>
+  );
+}
+
+function PdfJobsCard() {
+  const { toast } = useToast();
+  const jobsQuery = useQuery({
+    queryKey: ["pdf-jobs"],
+    queryFn: () => api.get<{ items: PdfJob[] }>("/pdf-jobs"),
+    refetchInterval: (q) =>
+      (q.state.data?.items ?? []).some((j) => ACTIVE_JOB_STATES.has(j.status)) ? 2000 : false,
+    retry: false,
+  });
+  const jobs = jobsQuery.data?.items ?? [];
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <FileDown className="size-4 text-primary" aria-hidden="true" />
+          خروجی‌های PDF من
+        </CardTitle>
+        <CardDescription>
+          PDFها از متن واقعی همان نسخه ساخته می‌شوند؛ فایل فقط مال شماست و لینک دانلود پس از ۲۴ ساعت منقضی می‌شود.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {jobsQuery.isPending ? (
+          <div className="space-y-2" aria-busy="true">
+            <Skeleton className="h-16 w-full" />
+            <Skeleton className="h-16 w-full" />
+            <span className="sr-only">در حال بارگیری خروجی‌ها…</span>
+          </div>
+        ) : jobsQuery.isError ? (
+          <div className="space-y-2 rounded-xl border border-destructive/40 bg-destructive/5 p-3">
+            <p className="flex items-start gap-1.5 text-xs text-destructive">
+              <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+              {errorMessage(jobsQuery.error, "فهرست خروجی‌ها در دسترس نیست.")}
+            </p>
+            <Button variant="outline" size="sm" className="min-h-9 gap-1.5" onClick={() => void jobsQuery.refetch()}>
+              تلاش دوباره
+            </Button>
+          </div>
+        ) : jobs.length === 0 ? (
+          <p className="rounded-xl border border-dashed border-border p-4 text-center text-xs leading-6 text-muted-foreground">
+            هنوز خروجی‌ای نگرفته‌اید. در کتاب‌خوان، دکمهٔ «خروجی PDF» را بزنید تا از کل جلد یا بازه‌ای از صفحه‌ها PDF بسازید.
+          </p>
+        ) : (
+          <ul className="max-h-96 space-y-2 overflow-y-auto pe-0.5">
+            {jobs.map((job) => (
+              <li
+                key={job.uid}
+                className="rounded-xl border border-border bg-surface p-3"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium">
+                      {job.work_title ? `${job.work_title} — ` : ""}{job.document_label}
+                    </p>
+                    <p className="mt-0.5 text-[11px] text-muted-foreground">
+                      {job.params?.whole
+                        ? "کل جلد"
+                        : job.params?.from || job.params?.to
+                          ? `صفحه‌های ${faNum(job.params.from ?? "؟")} تا ${faNum(job.params.to ?? "؟")}`
+                          : "کل جلد"}
+                      {job.params?.include_notes ? " · با یادداشت‌ها و هایلایت‌های من" : ""}
+                      {job.created_at ? ` · ${faDateTime(job.created_at)}` : ""}
+                    </p>
+                  </div>
+                  <PdfJobStatusChip job={job} />
+                </div>
+                {job.status === "running" || job.status === "queued" ? (
+                  <div className="mt-2 flex items-center gap-2">
+                    <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
+                      <div
+                        className="h-full rounded-full bg-primary transition-all duration-500"
+                        style={{ width: `${Math.min(100, Math.max(4, job.progress))}%` }}
+                      />
+                    </div>
+                    <span className="text-[11px] tabular-nums text-muted-foreground">{faNum(job.progress)}٪</span>
+                  </div>
+                ) : null}
+                {job.status === "failed" && job.status_note ? (
+                  <p role="alert" className="mt-2 flex items-start gap-1.5 text-[11px] text-destructive">
+                    <TriangleAlert className="mt-0.5 size-3 shrink-0" aria-hidden="true" />
+                    {job.status_note}
+                  </p>
+                ) : null}
+                {job.status === "done" && job.download_url ? (
+                  <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-[11px] text-muted-foreground">
+                      {job.file_bytes ? `${faNum((job.file_bytes / 1024 / 1024).toFixed(1))} مگابایت · ` : ""}
+                      {job.token_expires_at ? `اعتبار لینک تا ${faDateTime(job.token_expires_at)}` : ""}
+                    </span>
+                    <a
+                      href={job.download_url}
+                      download
+                      onClick={() =>
+                        toast({ title: "دانلود آغاز شد", description: "فایل فقط برای حساب شماست؛ آن را با همکاران خود به اشتراک نگذارید." })
+                      }
+                      className="inline-flex min-h-9 items-center gap-1.5 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+                    >
+                      <Download className="size-3.5" aria-hidden="true" />
+                      دانلود PDF
+                    </a>
+                  </div>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function SharesCard() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const sharesQuery = useQuery({
+    queryKey: ["shares"],
+    queryFn: () => api.get<{ items: ShareLinkInfo[] }>("/shares"),
+    retry: false,
+  });
+  const revokeMutation = useMutation({
+    mutationFn: (uid: string) => api.del(`/shares/${uid}`),
+    onSuccess: () => {
+      toast({ title: "اشتراک لغو شد", description: "لینک قبلی از این لحظه برای همکاران کار نمی‌کند." });
+      void queryClient.invalidateQueries({ queryKey: ["shares"] });
+    },
+    onError: (err) => {
+      toast({ title: "لغو اشتراک ناموفق بود", description: errorMessage(err), variant: "destructive" });
+    },
+  });
+  const shares = sharesQuery.data?.items ?? [];
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Share2 className="size-4 text-primary" aria-hidden="true" />
+          اشتراک‌های فعال
+        </CardTitle>
+        <CardDescription>
+          لینک‌های اشتراکی فقط برای کاربران واردشدهٔ همین سامانه کار می‌کنند و پیش‌فرض خصوصی می‌مانند؛ هر لینک را می‌توانید لغو کنید.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {sharesQuery.isPending ? (
+          <div className="space-y-2" aria-busy="true">
+            <Skeleton className="h-16 w-full" />
+            <Skeleton className="h-16 w-full" />
+            <span className="sr-only">در حال بارگیری اشتراک‌ها…</span>
+          </div>
+        ) : sharesQuery.isError ? (
+          <div className="space-y-2 rounded-xl border border-destructive/40 bg-destructive/5 p-3">
+            <p className="flex items-start gap-1.5 text-xs text-destructive">
+              <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+              {errorMessage(sharesQuery.error, "فهرست اشتراک‌ها در دسترس نیست.")}
+            </p>
+            <Button variant="outline" size="sm" className="min-h-9 gap-1.5" onClick={() => void sharesQuery.refetch()}>
+              تلاش دوباره
+            </Button>
+          </div>
+        ) : shares.length === 0 ? (
+          <p className="rounded-xl border border-dashed border-border p-4 text-center text-xs leading-6 text-muted-foreground">
+            اشتراک فعالی ندارید. در کتاب‌خوان، از پنل یادداشت‌ها می‌توانید یادداشت یا هایلایت خود را با لینک مستقیم به اشتراک بگذارید.
+          </p>
+        ) : (
+          <ul className="max-h-96 space-y-2 overflow-y-auto pe-0.5">
+            {shares.map((s) => (
+              <li key={s.uid} className="rounded-xl border border-border bg-surface p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="flex flex-wrap items-center gap-1.5 text-sm font-medium">
+                      {s.kind === "note" ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] text-primary">
+                          <FileText className="size-3" aria-hidden="true" />
+                          یادداشت
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-ayah-soft px-2 py-0.5 text-[10px] text-ayah">
+                          <Highlighter className="size-3" aria-hidden="true" />
+                          هایلایت
+                        </span>
+                      )}
+                      {s.work_title ? s.work_title : ""}
+                      {s.page_label && s.page_label !== "—" ? `، صفحهٔ ${faNum(s.page_label)}` : ""}
+                    </p>
+                    <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{s.excerpt}</p>
+                    <p className="mt-1 text-[11px] text-muted-foreground">
+                      ساخته‌شده: {s.created_at ? faDateTime(s.created_at) : "—"}
+                      {s.expires_at ? ` · اعتبار تا ${faDateTime(s.expires_at)}` : " · بدون انقضا"}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="min-h-9 gap-1"
+                      onClick={() => {
+                        window.location.hash = s.url_path.startsWith("#") ? s.url_path.slice(1) : s.url_path;
+                      }}
+                    >
+                      <ExternalLink className="size-3.5" aria-hidden="true" />
+                      بازکردن
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="min-h-9 gap-1 text-destructive hover:text-destructive"
+                      disabled={revokeMutation.isPending}
+                      onClick={() => revokeMutation.mutate(s.uid)}
+                    >
+                      {revokeMutation.isPending && revokeMutation.variables === s.uid ? (
+                        <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+                      ) : null}
+                      لغو
+                    </Button>
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ExportsSharesTab() {
+  return (
+    <div className="space-y-4">
+      <SharesCard />
+      <PdfJobsCard />
+    </div>
+  );
+}
+
 /* ---------- صفحهٔ تنظیمات ---------- */
 
 export function SettingsView() {
@@ -593,7 +862,7 @@ export function SettingsView() {
       <header className="mb-6">
         <h1 className="text-xl font-bold">تنظیمات</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          ترجیحات مطالعه، ظاهر میزکار و نشست‌های شما.
+          ترجیحات مطالعه، ظاهر میزکار، اشتراک‌ها و خروجی‌های شما.
         </p>
       </header>
 
@@ -605,6 +874,9 @@ export function SettingsView() {
           <TabsTrigger value="appearance" className="min-h-11 flex-1 md:min-h-9">
             ظاهر
           </TabsTrigger>
+          <TabsTrigger value="exports" className="min-h-11 flex-1 md:min-h-9">
+            اشتراک و خروجی
+          </TabsTrigger>
           <TabsTrigger value="sessions" className="min-h-11 flex-1 md:min-h-9">
             نشست‌ها
           </TabsTrigger>
@@ -614,6 +886,9 @@ export function SettingsView() {
         </TabsContent>
         <TabsContent value="appearance">
           <AppearanceTab />
+        </TabsContent>
+        <TabsContent value="exports">
+          <ExportsSharesTab />
         </TabsContent>
         <TabsContent value="sessions">
           <SessionsTab />

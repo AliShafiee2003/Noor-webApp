@@ -14,6 +14,7 @@ import {
   BookmarkCheck,
   BookmarkPlus,
   Copy,
+  FileDown,
   Hash,
   ScrollText,
   Search,
@@ -41,6 +42,8 @@ export interface ReaderToolbarProps {
   bookmarkPending: boolean;
   onToggleBookmark: () => void;
   onCopyAddress: () => void;
+  /** §۷-الف-۲: بازکردن دیالوگ خروجی PDF از این کتاب */
+  onExportPdf: () => void;
   settingsTrigger: React.ReactNode;
   highlightActive: boolean;
   onClearHighlight: () => void;
@@ -174,6 +177,7 @@ export function ReaderToolbar(props: ReaderToolbarProps) {
     bookmarkPending,
     onToggleBookmark,
     onCopyAddress,
+    onExportPdf,
     settingsTrigger,
     highlightActive,
     onClearHighlight,
@@ -233,6 +237,16 @@ export function ReaderToolbar(props: ReaderToolbarProps) {
             ) : (
               <BookmarkPlus className="size-4" aria-hidden="true" />
             )}
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-9"
+            onClick={onExportPdf}
+            aria-label="خروجی PDF از این کتاب"
+            title="خروجی PDF از این کتاب (§۷-الف)"
+          >
+            <FileDown className="size-4" aria-hidden="true" />
           </Button>
           {settingsTrigger}
         </div>

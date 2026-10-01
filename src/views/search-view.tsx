@@ -54,6 +54,7 @@ import {
   type SearchHashState,
 } from "@/components/search/search-form";
 import { FilterChips } from "@/components/search/filter-chips";
+import { ExportMenu } from "@/components/search/export-menu";
 import {
   ResultCardSkeleton,
   VerifiedCountLine,
@@ -705,15 +706,24 @@ export function SearchView() {
                     </p>
                   ) : null}
                 </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="min-h-9 gap-1.5"
-                  onClick={() => setSaveOpen(true)}
-                >
-                  <BookmarkPlus className="size-4" aria-hidden="true" />
-                  ذخیرهٔ این جست‌وجو
-                </Button>
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* خروجی نتایج تأییدشدهٔ همین جست‌وجو (§۷-الف-۱) — فقط با وجود نتیجه */}
+                  {items.length > 0 ? (
+                    <ExportMenu
+                      request={request}
+                      totalVerified={meta?.verified_occurrences ?? null}
+                    />
+                  ) : null}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="min-h-9 gap-1.5"
+                    onClick={() => setSaveOpen(true)}
+                  >
+                    <BookmarkPlus className="size-4" aria-hidden="true" />
+                    ذخیرهٔ این جست‌وجو
+                  </Button>
+                </div>
               </div>
 
               {items.length === 0 ? (

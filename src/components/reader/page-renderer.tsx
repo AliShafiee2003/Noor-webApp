@@ -7,6 +7,8 @@
  * - آفست‌ها code point است (تبدیل به UTF-16 با Array.from).
  * - ارجاع حل‌نشده: پیام فارسی + نشانی اصلی، بدون هدایت حدسی (REL-10) — در والد مدیریت می‌شود.
  * - انتخاب متن → دکمهٔ شناور «ثبت فیش» با آفست code point داخل بلوک.
+ * - هایلایت شخصی کاربر (§۷-الف-۳): رندر چندرنگ لنگردار (block_id + بازهٔ cp) و
+ *   دکمه‌های رنگ در نوار شناور — هردو اختیاری؛ بدون propهای جدید رفتار قبلی دست‌نخورده است.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bookmark, Landmark, Quote, ScrollText, UserRound } from "lucide-react";
@@ -14,6 +16,8 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { faNum } from "@/lib/format";
 import { isLatinBlock } from "@/lib/script";
+import { highlightClass, HIGHLIGHT_COLORS } from "@/lib/highlight-color";
+import { cn } from "@/lib/utils";
 import {
   QURAN_FONT_SIZE_DEFAULT,
   QURAN_LINE_HEIGHT_DEFAULT,
@@ -21,6 +25,8 @@ import {
 import type {
   BlockLink,
   BlockSpan,
+  Highlight,
+  HighlightColor,
   PageBlock,
   PagePayload,
   ReaderPrefs,
@@ -36,6 +42,10 @@ interface Mark {
   link?: BlockLink;
   refUid?: string;
   isHl?: boolean;
+  /** هایلایت شخصی کاربر (§۷-الف-۳) — بالاتر از هایلایت جست‌وجو رندر می‌شود */
+  isUserHl?: boolean;
+  hlUid?: string;
+  hlColor?: string;
 }
 
 interface Segment {
@@ -167,6 +177,7 @@ function BlockText({
   block,
   footnoteLabelFor,
   highlight,
+  userHls,
   onFootnoteClick,
   onLinkClick,
   semantic,
@@ -174,6 +185,8 @@ function BlockText({
   block: PageBlock;
   footnoteLabelFor: (refUid: string) => string | null;
   highlight: { start: number; end: number; blockId?: string | null } | null;
+  /** هایلایت‌های شخصی همین بلوک — لنگر: بازهٔ code point (§۷-الف-۳) */
+  userHls?: ReadonlyArray<Pick<Highlight, "uid" | "start" | "end" | "color">>;
   onFootnoteClick: (refUid: string, anchorId: string) => void;
   onLinkClick: (link: BlockLink) => void;
   semantic: boolean;
@@ -207,6 +220,17 @@ function BlockText({
         refUid: f.ref,
       });
     }
+    for (const uh of userHls ?? []) {
+      if (uh.end <= uh.start) continue;
+      out.push({
+        start: Math.max(0, Math.min(uh.start, cpLen)),
+        end: Math.max(0, Math.min(uh.end, cpLen)),
+        priority: 0,
+        isUserHl: true,
+        hlUid: uh.uid,
+        hlColor: uh.color,
+      });
+    }
     if (highlight && highlight.end > highlight.start) {
       out.push({
         start: Math.max(0, Math.min(highlight.start, cpLen)),
@@ -216,7 +240,7 @@ function BlockText({
       });
     }
     return out;
-  }, [block, cpLen, highlight]);
+  }, [block, cpLen, highlight, userHls]);
 
   const segs = useMemo(() => buildSegments(cpLen, marks), [cpLen, marks]);
 
@@ -230,6 +254,24 @@ function BlockText({
             <span key={i} data-cp-start={seg.start} data-cp-end={seg.end}>
               {text}
             </span>
+          );
+        }
+        if (mark.isUserHl) {
+          // هایلایت شخصی کاربر — مقدم بر هایلایت جست‌وجو (§۷-الف-۳)
+          return (
+            <mark
+              key={i}
+              id={`userhl-${mark.hlUid ?? ""}`}
+              data-hl-uid={mark.hlUid ?? ""}
+              data-cp-start={seg.start}
+              data-cp-end={seg.end}
+              className={cn(
+                "rounded-sm px-0.5 text-foreground",
+                highlightClass(mark.hlColor ?? "yellow"),
+              )}
+            >
+              {text}
+            </mark>
           );
         }
         if (mark.isHl) {
@@ -527,6 +569,8 @@ interface BlockViewProps {
   block: PageBlock;
   prefs: ReaderPrefs;
   highlight: { start: number; end: number; blockId?: string | null } | null;
+  /** هایلایت‌های شخصی همین بلوک (§۷-الف-۳) — از PageRenderer بر اساس block_id فیلتر شده */
+  userHls?: ReadonlyArray<Pick<Highlight, "uid" | "start" | "end" | "color">>;
   collapsed: boolean;
   footnoteLabelFor: (refUid: string) => string | null;
   onFootnoteClick: (refUid: string, anchorId: string) => void;
@@ -544,6 +588,7 @@ function BlockView({
   block,
   prefs,
   highlight,
+  userHls,
   collapsed,
   footnoteLabelFor,
   onFootnoteClick,
@@ -564,6 +609,7 @@ function BlockView({
       block={block}
       semantic={semantic}
       highlight={highlight}
+      userHls={userHls}
       footnoteLabelFor={footnoteLabelFor}
       onFootnoteClick={onFootnoteClick}
       onLinkClick={onLinkClick}
@@ -710,6 +756,10 @@ export interface PageRendererProps {
   flashBlockId?: string | null;
   /** بازهٔ highlight نتیجهٔ جست‌وجو (code point در بلوک) */
   highlight?: { start: number; end: number; blockId?: string | null } | null;
+  /** هایلایت‌های شخصی کاربر برای همین صفحه — لنگر: blockId + بازهٔ cp (§۷-الف-۳) */
+  userHighlights?: ReadonlyArray<Pick<Highlight, "uid" | "block_id" | "start" | "end" | "color">>;
+  /** انتخاب متن → هایلایت با رنگ (اگر داده نشود دکمهٔ هایلایت نشان داده نمی‌شود) */
+  onHighlightSelection?: (sel: ReaderSelection, color: HighlightColor) => void;
   collapsedSanads: ReadonlySet<string>;
   onToggleSanad: (blockId: string) => void;
   onFootnoteClick: (refUid: string, anchorId: string) => void;
@@ -727,6 +777,8 @@ export function PageRenderer({
   sectionUidByBlockId,
   flashBlockId,
   highlight,
+  userHighlights,
+  onHighlightSelection,
   collapsedSanads,
   onToggleSanad,
   onFootnoteClick,
@@ -758,6 +810,17 @@ export function PageRenderer({
     setSel(null);
     setSelRect(null);
   }, []);
+
+  /* هایلایت‌های شخصی به تفکیک بلوک — identity پایدار برای memoizedهای BlockText (§۷-الف-۳) */
+  const userHlByBlock = useMemo(() => {
+    const map = new Map<string, Array<Pick<Highlight, "uid" | "start" | "end" | "color">>>();
+    for (const h of userHighlights ?? []) {
+      const arr = map.get(h.block_id);
+      if (arr) arr.push({ uid: h.uid, start: h.start, end: h.end, color: h.color });
+      else map.set(h.block_id, [{ uid: h.uid, start: h.start, end: h.end, color: h.color }]);
+    }
+    return map;
+  }, [userHighlights]);
 
   const computeSelection = useCallback(() => {
     const wrapper = wrapRef.current;
@@ -878,6 +941,7 @@ export function PageRenderer({
                   block={block}
                   prefs={prefs}
                   highlight={hlHere && highlight ? highlight : null}
+                  userHls={userHlByBlock.get(block.id)}
                   collapsed={collapsedSanads.has(block.id)}
                   footnoteLabelFor={footnoteLabelFor}
                   onFootnoteClick={onFootnoteClick}
@@ -893,15 +957,15 @@ export function PageRenderer({
         })
       )}
 
-      {/* دکمهٔ شناور «ثبت فیش» روی انتخاب متن */}
+      {/* نوار شناور روی انتخاب متن: ثبت فیش + (در صورت فعال بودن) هایلایت چندرنگ */}
       {sel && selRect ? (
         <div
-          className="absolute z-20"
-          style={{ top: Math.max(selRect.top - 44, 4), left: selRect.left }}
+          className="absolute z-20 flex items-center gap-1 rounded-xl border border-border bg-surface p-1 shadow-md"
+          style={{ top: Math.max(selRect.top - 48, 4), left: selRect.left }}
         >
           <Button
             size="sm"
-            className="min-h-11 gap-1.5 shadow-md md:min-h-9"
+            className="min-h-11 gap-1.5 md:min-h-9"
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => {
               onSelection(sel);
@@ -912,6 +976,28 @@ export function PageRenderer({
             <Quote className="size-4" aria-hidden="true" />
             ثبت فیش
           </Button>
+          {onHighlightSelection ? (
+            <>
+              <div aria-hidden="true" className="mx-0.5 h-6 w-px bg-border" />
+              <div role="group" aria-label="هایلایت متن با رنگ" className="flex items-center gap-1">
+                {HIGHLIGHT_COLORS.map((c) => (
+                  <button
+                    key={c.value}
+                    type="button"
+                    title={`هایلایت ${c.label}`}
+                    aria-label={`هایلایت ${c.label}`}
+                    className={`size-5 rounded-full ${c.dotClass} min-h-0 w-5 ring-primary ring-offset-1 ring-offset-surface transition-transform hover:scale-110 hover:ring-2 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-primary`}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      onHighlightSelection(sel, c.value);
+                      clearSelection();
+                      window.getSelection()?.removeAllRanges();
+                    }}
+                  />
+                ))}
+              </div>
+            </>
+          ) : null}
         </div>
       ) : null}
     </div>

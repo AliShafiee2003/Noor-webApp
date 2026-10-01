@@ -1,8 +1,10 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+// نمودار دادهٔ میزکار — §۷-الف:
+// هایلایت/یادداشت خصوصی کاربر، اشتراک‌های صریح و لغوشدنی، و کارهای PDF.
+// هویت کاربر همان uid سامانهٔ Go است (نشست معتبر پیش‌نیاز همهٔ مسیرهاست)؛
+// این جدول‌ها دادهٔ خصوصی کاربران‌اند و در نمای ادمین سامانه دیده نمی‌شوند.
 
 generator client {
   provider = "prisma-client-js"
@@ -29,4 +31,73 @@ model Post {
   authorId  String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+/** هایلایت روی متن انتخابی — لنگر پایدار: شناسهٔ بلوک + بازهٔ code point (§۷-الف-۳) */
+model Highlight {
+  id          String   @id @default(cuid())
+  userUid     String
+  documentUid String
+  pageUid     String
+  blockId     String
+  startCp     Int
+  endCp       Int
+  text        String
+  color       String   @default("yellow")
+  note        String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userUid, documentUid])
+  @@index([userUid, pageUid])
+}
+
+/**
+ * اشتراک صریح و لغوشدنی (§۷-الف-۳) — فقط برای یادداشت/هایلایت لازم است؛
+ * اشتراک صفحه/پاراگراف/روایت همان نشانی عمیق است و برای کاربران واردشده
+ * همان سامانه از قبل کار می‌کند. مقصد به‌صورت snapshot ثبت می‌شود تا
+ * رفع اشتراک واقعاً دسترسی را قطع کند و به دادهٔ زندهٔ مالک وابسته نماند.
+ */
+model ShareLink {
+  id          String    @id @default(cuid())
+  userUid     String
+  kind        String // "note" | "highlight"
+  itemId      String
+  documentUid String
+  pageUid     String?
+  pageLabel   String?
+  workTitle   String?
+  /** محتوای اشتراک — برای note: متن یادداشت؛ برای highlight: متن هایلایت */
+  payload     String
+  meta        String? // JSON: رنگ/بازهٔ هایلایت یا شناسهٔ روایت
+  revoked     Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  expiresAt   DateTime?
+  revokedAt   DateTime?
+
+  @@index([userUid])
+  @@index([kind, itemId])
+}
+
+/** کار تولید PDF کتاب — پس‌زمینه‌ای با پیشرفت و لینک دانلود خصوصی منقضی‌شدنی (§۷-الف-۲) */
+model PdfJob {
+  id             String    @id @default(cuid())
+  userUid        String
+  documentUid    String
+  documentLabel  String
+  workUid        String?
+  workTitle      String?
+  /** پارامترها: {from,to} برچسب چاپی یا "all" + include_notes */
+  paramsJson     String
+  status         String    @default("queued") // queued|running|done|failed
+  progress       Int       @default(0) // 0..100
+  statusNote     String?
+  filePath       String?
+  fileBytes      Int?
+  downloadToken  String?
+  tokenExpiresAt DateTime?
+  createdAt      DateTime  @default(now())
+  finishedAt     DateTime?
+
+  @@index([userUid, createdAt])
 }

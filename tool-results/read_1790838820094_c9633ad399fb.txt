@@ -1,0 +1,816 @@
+     1→"use client";
+     2→
+     3→/**
+     4→ * میز مطالعه (کتاب‌خوان) — PRD §۱۱ (READ-01..17)
+     5→ * دسکتاپ ≥1440: فهرست راست / متن وسط / زمینه چپ (پنل‌های قابل تغییر اندازه)
+     6→ * 1024–1439: متن + زمینه (فهرست در Sheet)؛ <768: تک‌ستونی با drawer.
+     7→ */
+     8→
+     9→import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+    10→import { useQuery, useQueryClient } from "@tanstack/react-query";
+    11→import {
+    12→  BookOpenText,
+    13→  Bookmark as BookmarkIcon,
+    14→  BookmarkCheck,
+    15→  ChevronLeft,
+    16→  ChevronRight,
+    17→  Copy,
+    18→  List,
+    19→  Loader2,
+    20→  PanelLeftClose,
+    21→  PanelLeftOpen,
+    22→  Search,
+    23→  SlidersHorizontal,
+    24→  StickyNote,
+    25→} from "lucide-react";
+    26→import type { Bookmark as BookmarkT, Note as NoteT } from "@/lib/types";
+    27→import { Button } from "@/components/ui/button";
+    28→import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+    29→import { Skeleton } from "@/components/ui/skeleton";
+    30→import { api } from "@/lib/api";
+    31→import { faNum } from "@/lib/format";
+    32→import type {
+    33→  BlockLink,
+    34→  PageBlock,
+    35→  PagePayload,
+    36→  PageRef,
+    37→  TocSection,
+    38→  WorkDetail,
+    39→} from "@/lib/types";
+    40→import { blockOffsets } from "@/lib/types";
+    41→import { useWorkspaceStore } from "@/store/workspace";
+    42→import { useIsCompact } from "@/hooks/use-mobile";
+    43→import { PageRenderer, type ReaderSelection } from "@/components/reader/page-renderer";
+    44→import { TocPanel } from "@/components/reader/toc-panel";
+    45→import { FootnotePanel, type FootnotePanelData } from "@/components/reader/footnote-panel";
+    46→import { FicheDialog } from "@/components/reader/fiche-dialog";
+    47→import { HadithLocationsDialog } from "@/components/search/hadith-locations-dialog";
+    48→import { ReaderToolbar } from "@/components/reader/reader-toolbar";
+    49→import { SettingsPopover } from "@/components/reader/settings-popover";
+    50→import { NotesPanel } from "@/components/reader/notes-panel";
+    51→
+    52→export function ReaderView({ documentUid }: { documentUid: string }) {
+    53→  const queryClient = useQueryClient();
+    54→  const prefs = useWorkspaceStore((s) => s.prefs);
+    55→  const isCompact = useIsCompact();
+    56→
+    57→  /* ---------- پارامترهای hash: صفحهٔ فعلی و highlight نتیجه ---------- */
+    58→  const [params, setParams] = useState(() => readHashParams());
+    59→  useEffect(() => {
+    60→    const onHash = () => setParams(readHashParams());
+    61→    window.addEventListener("hashchange", onHash);
+    62→    return () => window.removeEventListener("hashchange", onHash);
+    63→  }, []);
+    64→  const requestedPageUid = params.get("pg") || null;
+    65→  const hl = parseHighlight(params.get("hl"));
+    66→
+    67→  /* ---------- داده‌ها ---------- */
+    68→  const workQuery = useQuery({
+    69→    queryKey: ["reader-work", documentUid],
+    70→    queryFn: async () => {
+    71→      const works = await api.get<{ items: WorkDetail[] }>("/works");
+    72→      for (const w of works.items) {
+    73→        const full = await api.get<WorkDetail>(`/works/${w.uid}`);
+    74→        if (full.documents.some((d) => d.uid === documentUid)) return full;
+    75→      }
+    76→      throw new Error("این سند در کتابخانهٔ موجود نیست.");
+    77→    },
+    78→    retry: false,
+    79→  });
+    80→
+    81→  const tocQuery = useQuery({
+    82→    queryKey: ["reader-toc", documentUid],
+    83→    queryFn: () =>
+    84→      api.get<{ sections: TocSection[]; release_uid: string }>(
+    85→        `/documents/${documentUid}/toc`,
+    86→      ),
+    87→    retry: false,
+    88→  });
+    89→
+    90→  const pagesQuery = useQuery({
+    91→    queryKey: ["reader-pages", documentUid],
+    92→    queryFn: () =>
+    93→      api.get<{ items: PageRef[] }>(`/documents/${documentUid}/pages`),
+    94→    retry: false,
+    95→  });
+    96→
+    97→  const pageRefs: PageRef[] = pagesQuery.data?.items ?? [];
+    98→
+    99→  /* صفحهٔ هدف: از hash یا ادامهٔ مطالعه (بازیابی موضع — READ-12) */
+   100→  const [fallbackPageUid, setFallbackPageUid] = useState<string | null>(null);
+   101→  const positionQuery = useQuery({
+   102→    queryKey: ["workspace-position", documentUid],
+   103→    queryFn: () => api.get<{ positions: Record<string, { page_uid?: string }> }>("/workspace"),
+   104→    staleTime: 10_000,
+   105→  });
+   106→  useEffect(() => {
+   107→    if (requestedPageUid || fallbackPageUid || !pagesQuery.isSuccess) return;
+   108→    const saved = positionQuery.data?.positions?.[documentUid]?.page_uid;
+   109→    if (saved && pageRefs.some((p) => p.page_uid === saved)) {
+   110→      setFallbackPageUid(saved);
+   111→    } else if (pageRefs.length > 0) {
+   112→      setFallbackPageUid(pageRefs[0].page_uid);
+   113→    }
+   114→  }, [requestedPageUid, fallbackPageUid, pagesQuery.isSuccess, pageRefs, positionQuery.data, documentUid]);
+   115→
+   116→  const currentPageUid = requestedPageUid ?? fallbackPageUid;
+   117→
+   118→  const pageQuery = useQuery({
+   119→    queryKey: ["reader-page", documentUid, currentPageUid],
+   120→    enabled: !!currentPageUid,
+   121→    queryFn: () =>
+   122→      api.get<PagePayload>(`/documents/${documentUid}/pages/${currentPageUid}`),
+   123→    retry: false,
+   124→  });
+   125→
+   126→  const bookmarksQuery = useQuery({
+   127→    queryKey: ["reader-bookmarks"],
+   128→    queryFn: () => api.get<{ items: BookmarkT[] }>("/bookmarks"),
+   129→  });
+   130→
+   131→  /* یادداشت‌های شخصی (RES) — شمار برای نشان؛ دادهٔ کامل در NotesPanel با همان کلید */
+   132→  const notesCountQuery = useQuery({
+   133→    queryKey: ["notes", documentUid],
+   134→    queryFn: () => api.get<{ items: NoteT[] }>("/notes", { document_uid: documentUid }),
+   135→    staleTime: 15_000,
+   136→    retry: false,
+   137→  });
+   138→  const pageNoteCount =
+   139→    notesCountQuery.data?.items.filter((n) => n.page_uid === currentPageUid).length ?? 0;
+   140→  const docNoteCount = notesCountQuery.data?.items.length ?? 0;
+   141→
+   142→  /* ---------- نگاشت بلوک→بخش برای لنگر فهرست ---------- */
+   143→  const sectionUidByBlockId = useMemo(() => {
+   144→    const map: Record<string, string> = {};
+   145→    const walk = (secs: TocSection[]) => {
+   146→      for (const s of secs) {
+   147→        if (s.block_id) map[s.block_id] = s.uid;
+   148→        walk(s.children ?? []);
+   149→      }
+   150→    };
+   151→    walk(tocQuery.data?.sections ?? []);
+   152→    return map;
+   153→  }, [tocQuery.data]);
+   154→
+   155→  const activeSectionUid = useMemo(() => {
+   156→    if (!pageQuery.data) return null;
+   157→    for (const b of pageQuery.data.blocks) {
+   158→      const uid = sectionUidByBlockId[b.id];
+   159→      if (uid) return uid;
+   160→    }
+   161→    return null;
+   162→  }, [pageQuery.data, sectionUidByBlockId]);
+   163→
+   164→  /* ---------- حالت‌های محلی ---------- */
+   165→  const [tocOpen, setTocOpen] = useState(false);
+   166→  const [flashBlockId, setFlashBlockId] = useState<string | null>(null);
+   167→  const [footnote, setFootnote] = useState<FootnotePanelData | null>(null);
+   168→  const [selection, setSelection] = useState<ReaderSelection | null>(null);
+   169→  const [ficheOpen, setFicheOpen] = useState(false);
+   170→  const [saveFlash, setSaveFlash] = useState<string | null>(null);
+   171→  /** تب پنل زمینه: پاورقی/آیه/روایت یا یادداشت‌ها */
+   172→  const [ctxTab, setCtxTab] = useState<"context" | "notes">("context");
+   173→  /** شیت یادداشت‌ها در موبایل/تبلت */
+   174→  const [notesSheetOpen, setNotesSheetOpen] = useState(false);
+   175→  /* §۴۷: پرس‌وجوی میان‌کتابی روایت از پنل زمینه */
+   176→  const [hadithLookupUid, setHadithLookupUid] = useState<string | null>(null);
+   177→  /* RES: دامنهٔ روایت برای یادداشت روی روایت مشخص */
+   178→  const [hadithNoteScope, setHadithNoteScope] = useState<{
+   179→    localUid: string;
+   180→    revayatIndex?: string | null;
+   181→  } | null>(null);
+   182→
+   183→  /* تغییر صفحهٔ مقصد → پنل زمینه بسته می‌شود (پنل مالِ همان صفحه است) */
+   184→  useEffect(() => {
+   185→    setFootnote(null);
+   186→    setSelection(null);
+   187→    setHadithNoteScope(null);
+   188→  }, [currentPageUid]);
+   189→
+   190→  /* بازشدن پاورقی/ارجاع → تب زمینه فعال می‌شود تا محتوا دیده شود */
+   191→  useEffect(() => {
+   192→    if (footnote) setCtxTab("context");
+   193→  }, [footnote]);
+   194→
+   195→  /* highlight نتیجهٔ جست‌وجو → بلوک مقصد */
+   196→  /* آفست hl سطح سند است؛ با source_offsets بلوک‌ها به مختصات درون‌بلوکی نگاشت می‌شود (بدون hlb) */
+   197→  const highlight = useMemo(() => {
+   198→    if (!hl || !pageQuery.data) return null;
+   199→    const explicitBlock = params.get("hlb");
+   200→    if (explicitBlock) return { start: hl[0], end: hl[1], blockId: explicitBlock };
+   201→    for (const block of pageQuery.data.blocks) {
+   202→      const raw = block.source_offsets;
+   203→      const range = Array.isArray(raw)
+   204→        ? { start: raw[0], end: raw[1] }
+   205→        : raw && typeof raw.start === "number" && typeof raw.end === "number"
+   206→          ? { start: raw.start, end: raw.end }
+   207→          : null;
+   208→      if (range && hl[0] >= range.start && hl[0] < range.end) {
+   209→        const relStart = hl[0] - range.start;
+   210→        const relEnd = Math.max(relStart + 1, Math.min(hl[1], range.end) - range.start);
+   211→        return { start: relStart, end: relEnd, blockId: block.id };
+   212→      }
+   213→    }
+   214→    return null;
+   215→  }, [hl, pageQuery.data, params]);
+   216→
+   217→  /* ---------- پرش فهرست / صفحه ---------- */
+   218→  const goToPage = useCallback(
+   219→    (pageUid: string, extra: Record<string, string> = {}) => {
+   220→      const q = new URLSearchParams({ pg: pageUid, ...extra });
+   221→      window.location.hash = `#/read/${documentUid}?${q.toString()}`;
+   222→      setFootnote(null);
+   223→    },
+   224→    [documentUid],
+   225→  );
+   226→
+   227→  const onJumpSection = useCallback(
+   228→    (s: TocSection) => {
+   229→      // مقصد فهرست: صفحهٔ دارای آن بلوک (از سمت کاربر: بخش فعلیِ همان صفحه)
+   230→      // block_id به صفحه نگاشت نمی‌شود در قرارداد؛ برای سادگی، اگر در صفحهٔ فعلی هست flash می‌کنیم
+   231→      setTocOpen(false);
+   232→      if (pageQuery.data?.blocks.some((b) => b.id === s.block_id)) {
+   233→        setFlashBlockId(s.block_id ?? null);
+   234→        window.setTimeout(() => setFlashBlockId(null), 1800);
+   235→      } else if (s.block_id) {
+   236→        // اسکرول در حالت پیوسته روی همان صفحهٔ فعلی
+   237→        const el = document.getElementById(`blk-${s.block_id}`);
+   238→        if (el) {
+   239→          el.scrollIntoView({ behavior: "smooth", block: "start" });
+   240→          setFlashBlockId(s.block_id);
+   241→          window.setTimeout(() => setFlashBlockId(null), 1800);
+   242→        }
+   243→      }
+   244→    },
+   245→    [pageQuery.data],
+   246→  );
+   247→
+   248→  /* ---------- ذخیرهٔ موضع (READ-12) — PUT /workspace/position با debounce ---------- */
+   249→  const putTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+   250→  useEffect(() => {
+   251→    if (!currentPageUid || !pageQuery.isSuccess) return;
+   252→    if (putTimer.current) clearTimeout(putTimer.current);
+   253→    putTimer.current = setTimeout(() => {
+   254→      void api.put("/workspace/position", {
+   255→        document_uid: documentUid,
+   256→        position: { page_uid: currentPageUid, progress: 0 },
+   257→      });
+   258→    }, 900);
+   259→    return () => {
+   260→      if (putTimer.current) clearTimeout(putTimer.current);
+   261→    };
+   262→  }, [currentPageUid, pageQuery.isSuccess, documentUid]);
+   263→
+   264→  /* ---------- نشانک ---------- */
+   265→  const isBookmarked = bookmarksQuery.data?.items.some(
+   266→    (b) => b.document_uid === documentUid && b.page_uid === currentPageUid,
+   267→  ) ?? false;
+   268→  const [bookmarkPending, setBookmarkPending] = useState(false);
+   269→  const toggleBookmark = useCallback(async () => {
+   270→    if (!currentPageUid || bookmarkPending) return;
+   271→    setBookmarkPending(true);
+   272→    try {
+   273→      if (isBookmarked) {
+   274→        const existing = bookmarksQuery.data?.items.find(
+   275→          (b) => b.document_uid === documentUid && b.page_uid === currentPageUid,
+   276→        );
+   277→        if (existing) await api.del(`/bookmarks/${existing.uid}`);
+   278→      } else {
+   279→        await api.post("/bookmarks", {
+   280→          document_uid: documentUid,
+   281→          page_uid: currentPageUid,
+   282→          label: pageQuery.data?.label ?? "",
+   283→        });
+   284→      }
+   285→      await queryClient.invalidateQueries({ queryKey: ["reader-bookmarks"] });
+   286→    } finally {
+   287→      setBookmarkPending(false);
+   288→    }
+   289→  }, [currentPageUid, bookmarkPending, isBookmarked, bookmarksQuery.data, documentUid, pageQuery.data?.label, queryClient]);
+   290→
+   291→  /* ---------- کپی نشانی (READ-17) ---------- */
+   292→  const copyAddress = useCallback(async () => {
+   293→    const parts = [
+   294→      workQuery.data?.title ?? "",
+   295→      "جلد " + (workQuery.data?.documents.find((d) => d.uid === documentUid)?.label ?? ""),
+   296→      "صفحهٔ " + (pageQuery.data?.label ?? ""),
+   297→    ].filter(Boolean);
+   298→    const text = parts.join("، ") + "\n" + window.location.hash;
+   299→    try {
+   300→      await navigator.clipboard.writeText(text);
+   301→      setSaveFlash("نشانی کپی شد");
+   302→    } catch {
+   303→      setSaveFlash("کپی ممکن نشد؛ دستی انتخاب کنید");
+   304→    }
+   305→    window.setTimeout(() => setSaveFlash(null), 1600);
+   306→  }, [workQuery.data, documentUid, pageQuery.data?.label]);
+   307→
+   308→  /* ---------- انتخاب متن → فیش ---------- */
+   309→  const onSelection = useCallback((sel: ReaderSelection | null) => {
+   310→    setSelection(sel);
+   311→    if (sel) setFicheOpen(true);
+   312→  }, []);
+   313→
+   314→  const onFootnoteClick = useCallback(
+   315→    (refUid: string) => {
+   316→      const fn = pageQuery.data?.footnotes.find((f) => f.uid === refUid);
+   317→      if (fn) {
+   318→        setFootnote({ kind: "footnote", uid: fn.uid, label: fn.label, text: fn.text });
+   319→      } else {
+   320→        setFootnote({ kind: "link", originalAddress: "پاورقی " + refUid });
+   321→      }
+   322→    },
+   323→    [pageQuery.data],
+   324→  );
+   325→
+   326→  const onLinkClick = useCallback((link: BlockLink) => {
+   327→    // همهٔ ارجاع‌ها در این نسخه حل‌نشده‌اند — نشانی اصلی حفظ می‌شود (REL-10)
+   328→    setFootnote({ kind: "link", originalAddress: link.original_address || "ارجاع" });
+   329→  }, []);
+   330→
+   331→  /* ---------- پنل آیه (QUR-01/02) و اطلاعات روایت (HAD-08) ---------- */
+   332→  const onVerseClick = useCallback((block: PageBlock) => {
+   333→    const cit = block.citations?.[0];
+   334→    if (!cit) return;
+   335→    setFootnote({
+   336→      kind: "verse",
+   337→      verse: {
+   338→        citation: cit,
+   339→        quotedText: block.text,
+   340→        inHadith: block.hadith_uid ?? cit.in_hadith ?? null,
+   341→        hasParent: cit.has_parent,
+   342→      },
+   343→    });
+   344→  }, []);
+   345→
+   346→  const onHadithClick = useCallback((block: PageBlock) => {
+   347→    if (!block.hadith_uid) return;
+   348→    setFootnote({
+   349→      kind: "hadith",
+   350→      hadith: {
+   351→        localUid: block.hadith_uid,
+   352→        revayatIndex: block.revayat_index ?? null,
+   353→      },
+   354→    });
+   355→  }, []);
+   356→
+   357→  /* ---------- RES: ثبت فیش این روایت — متن کامل روایتِ همین صفحه ----------
+   358→     همهٔ بلوک‌های همان روایت در صفحه جمع می‌شود (روایت ممکن است چند بلوک باشد؛
+   359→     بازه = آغاز نخستین تا پایان آخرین بلوک). متن با \n میان بلوک‌ها می‌پیوندد. */
+   360→  const hadithFiche = useCallback(
+   361→    (localUid: string) => {
+   362→      if (!pageQuery.data) return false;
+   363→      const parts = pageQuery.data.blocks.filter((b) => b.hadith_uid === localUid);
+   364→      if (parts.length === 0) return false;
+   365→      const first = blockOffsets(parts[0]);
+   366→      const last = blockOffsets(parts[parts.length - 1]);
+   367→      if (!first || !last) return false;
+   368→      setSelection({
+   369→        blockId: parts[0].id,
+   370→        start: first.start,
+   371→        end: last.end,
+   372→        text: parts.map((b) => b.text).join("\n"),
+   373→        hadithUid: localUid,
+   374→      });
+   375→      setFicheOpen(true);
+   376→      return true;
+   377→    },
+   378→    [pageQuery.data],
+   379→  );
+   380→
+   381→  const onHadithFiche = useCallback(
+   382→    (localUid: string) => {
+   383→      const ok = hadithFiche(localUid);
+   384→      if (ok && isCompact) {
+   385→        setFootnote(null);
+   386→      }
+   387→    },
+   388→    [hadithFiche, isCompact],
+   389→  );
+   390→
+   391→  const onSearchInDocument = useCallback(
+   392→    (q: string) => {
+   393→      window.location.hash = `#/search?q=${encodeURIComponent(q)}&mode=normalized_phrase&scope=document&doc=${documentUid}`;
+   394→    },
+   395→    [documentUid],
+   396→  );
+   397→
+   398→  /* ---------- ناوبری صفحه‌ای ---------- */
+   399→  const pageIdx = pageRefs.findIndex((p) => p.page_uid === currentPageUid);
+   400→  const prevRef = pageIdx > 0 ? pageRefs[pageIdx - 1] : null;
+   401→  const nextRef = pageIdx >= 0 && pageIdx < pageRefs.length - 1 ? pageRefs[pageIdx + 1] : null;
+   402→
+   403→  /* ---------- بارگذاری keyboard ---------- */
+   404→  useEffect(() => {
+   405→    const onKey = (e: KeyboardEvent) => {
+   406→      const tag = (e.target as HTMLElement)?.tagName;
+   407→      if (tag === "INPUT" || tag === "TEXTAREA" || (e.target as HTMLElement)?.isContentEditable) return;
+   408→      if (e.key === "ArrowLeft" && nextRef) goToPage(nextRef.page_uid);
+   409→      if (e.key === "ArrowRight" && prevRef) goToPage(prevRef.page_uid);
+   410→    };
+   411→    window.addEventListener("keydown", onKey);
+   412→    return () => window.removeEventListener("keydown", onKey);
+   413→  }, [nextRef, prevRef, goToPage]);
+   414→
+   415→  /* ---------- حالت‌های بارگذاری/خطا ---------- */
+   416→  const errMsg =
+   417→    workQuery.error instanceof Error
+   418→      ? workQuery.error.message
+   419→      : pagesQuery.error instanceof Error
+   420→        ? pagesQuery.error.message
+   421→        : "";
+   422→
+   423→  if (workQuery.isPending || pagesQuery.isPending) {
+   424→    return (
+   425→      <div className="mx-auto w-full max-w-3xl space-y-4 p-4">
+   426→        <Skeleton className="h-10 w-2/3" />
+   427→        <Skeleton className="h-4 w-1/3" />
+   428→        <Skeleton className="h-64 w-full" />
+   429→        <p className="flex items-center gap-2 text-sm text-muted-foreground">
+   430→          <Loader2 className="size-4 animate-spin" /> در حال بازکردن متن…
+   431→        </p>
+   432→      </div>
+   433→    );
+   434→  }
+   435→
+   436→  if (workQuery.isError || pagesQuery.isError) {
+   437→    return (
+   438→      <div className="mx-auto max-w-md p-8 text-center">
+   439→        <p className="text-sm text-destructive">
+   440→          بازکردن این سند ممکن نشد{errMsg ? ": " + errMsg : ""}
+   441→        </p>
+   442→        <Button variant="outline" className="mt-3" onClick={() => { workQuery.refetch(); pagesQuery.refetch(); }}>
+   443→          تلاش دوباره
+   444→        </Button>
+   445→      </div>
+   446→    );
+   447→  }
+   448→
+   449→  const work = workQuery.data!;
+   450→  const docLabel = work.documents.find((d) => d.uid === documentUid)?.label ?? "";
+   451→
+   452→  const tocPanel = (
+   453→    <TocPanel
+   454→      sections={tocQuery.data?.sections ?? []}
+   455→      isLoading={tocQuery.isPending}
+   456→      error={tocQuery.isError ? "فهرست در دسترس نیست." : null}
+   457→      onRetry={() => tocQuery.refetch()}
+   458→      activeSectionUid={activeSectionUid}
+   459→      onJumpSection={onJumpSection}
+   460→      bookmarks={bookmarksQuery.data?.items.filter((b) => b.document_uid === documentUid) ?? []}
+   461→      bookmarksLoading={bookmarksQuery.isPending}
+   462→      onJumpBookmark={(b) => goToPage(b.page_uid)}
+   463→      onDeleteBookmark={async (b) => {
+   464→        await api.del(`/bookmarks/${b.uid}`);
+   465→        await queryClient.invalidateQueries({ queryKey: ["reader-bookmarks"] });
+   466→      }}
+   467→    />
+   468→  );
+   469→
+   470→  return (
+   471→    <div className="flex h-[calc(100vh-8.5rem)] min-h-0 flex-col" dir="rtl">
+   472→      <ReaderToolbar
+   473→        workTitle={work.title}
+   474→        documentLabel={docLabel}
+   475→        pageLabel={pageQuery.data?.label ?? "…"}
+   476→        display={prefs.display}
+   477→        onDisplayChange={(d) => useWorkspaceStore.getState().updatePrefs({ display: d })}
+   478→        pageRefs={pageRefs}
+   479→        currentPageUid={currentPageUid}
+   480→        onJumpToPage={(ref) => goToPage(ref.page_uid)}
+   481→        documentUid={documentUid}
+   482→        onSearchInDocument={onSearchInDocument}
+   483→        bookmarked={isBookmarked}
+   484→        bookmarkPending={bookmarkPending}
+   485→        onToggleBookmark={() => void toggleBookmark()}
+   486→        onCopyAddress={() => void copyAddress()}
+   487→        settingsTrigger={
+   488→          <SettingsPopover
+   489→            trigger={
+   490→              <Button variant="ghost" size="icon" aria-label="تنظیمات خواندن" className="size-11">
+   491→                <SlidersHorizontal className="size-4" />
+   492→              </Button>
+   493→            }
+   494→          />
+   495→        }
+   496→        highlightActive={!!hl}
+   497→        onClearHighlight={() => {
+   498→          const q = new URLSearchParams(window.location.hash.split("?")[1] ?? "");
+   499→          q.delete("hl");
+   500→          q.delete("hlb");
+   501→          window.location.hash = `#/read/${documentUid}?${q.toString()}`;
+   502→        }}
+   503→        onPrev={prevRef ? () => goToPage(prevRef.page_uid) : null}
+   504→        onNext={nextRef ? () => goToPage(nextRef.page_uid) : null}
+   505→        saveIndicator={saveFlash ? <span className="text-xs text-muted-foreground">{saveFlash}</span> : null}
+   506→      />
+   507→
+   508→      <div className="flex min-h-0 flex-1">
+   509→        {/* فهرست — دسکتاپ */}
+   510→        <aside className="hidden w-72 shrink-0 border-e border-border lg:block xl:w-80">
+   511→          <div className="flex items-center justify-between border-b border-border px-3 py-2">
+   512→            <span className="text-sm font-medium">فهرست و نشانک‌ها</span>
+   513→          </div>
+   514→          <div className="h-[calc(100%-2.6rem)] overflow-y-auto">{tocPanel}</div>
+   515→        </aside>
+   516→
+   517→        {/* فهرست — موبایل/تبلت */}
+   518→        <Sheet open={tocOpen} onOpenChange={setTocOpen}>
+   519→          <SheetTrigger asChild>
+   520→            <Button variant="ghost" size="icon" aria-label="فهرست" className="size-11 self-start m-2 lg:hidden">
+   521→              <List className="size-5" />
+   522→            </Button>
+   523→          </SheetTrigger>
+   524→          <SheetContent side="right" className="w-80 p-0">
+   525→            <SheetHeader className="border-b border-border py-3">
+   526→              <SheetTitle className="text-sm">فهرست و نشانک‌ها</SheetTitle>
+   527→            </SheetHeader>
+   528→            <div className="h-[calc(100%-3.4rem)] overflow-y-auto">{tocPanel}</div>
+   529→          </SheetContent>
+   530→        </Sheet>
+   531→
+   532→        {/* سطح اصلی متن */}
+   533→        <main className="min-w-0 flex-1 overflow-y-auto bg-reader" aria-label="متن کتاب">
+   534→          {pageQuery.isPending ? (
+   535→            <div className="mx-auto max-w-[760px] space-y-4 p-6">
+   536→              <Skeleton className="h-6 w-1/2" />
+   537→              <Skeleton className="h-40 w-full" />
+   538→            </div>
+   539→          ) : pageQuery.isError || !pageQuery.data ? (
+   540→            <div className="mx-auto max-w-md p-10 text-center text-sm">
+   541→              این صفحه در سند موجود نیست.
+   542→              <div>
+   543→                <Button variant="outline" size="sm" className="mt-3" onClick={() => pageQuery.refetch()}>
+   544→                  تلاش دوباره
+   545→                </Button>
+   546→              </div>
+   547→            </div>
+   548→          ) : (
+   549→            <>
+   550→              {pageQuery.data.overlay_applied && (
+   551→                <div className="mx-auto max-w-[760px] px-4 pt-3">
+   552→                  <p className="rounded-md border border-border bg-surface px-3 py-2 text-xs text-muted-foreground">
+   553→                    این صفحه شامل اصلاح سامانه است. <span className="bidi-ltr">{pageQuery.data.overlay_revision_uid}</span>
+   554→                  </p>
+   555→                </div>
+   556→              )}
+   557→              <PageRenderer
+   558→                page={pageQuery.data}
+   559→                prefs={prefs}
+   560→                sectionUidByBlockId={sectionUidByBlockId}
+   561→                flashBlockId={flashBlockId}
+   562→                highlight={highlight}
+   563→                collapsedSanads={new Set()}
+   564→                onToggleSanad={() => undefined}
+   565→                onFootnoteClick={onFootnoteClick}
+   566→                onLinkClick={onLinkClick}
+   567→                onVerseClick={onVerseClick}
+   568→                onHadithClick={onHadithClick}
+   569→                onSelection={onSelection}
+   570→              />
+   571→              {/* ناوبری پایین صفحه */}
+   572→              <div className="mx-auto flex max-w-[760px] items-center justify-between px-4 pb-10 pt-2">
+   573→                {prevRef ? (
+   574→                  <Button variant="outline" size="sm" onClick={() => goToPage(prevRef.page_uid)}>
+   575→                    <ChevronRight className="size-4" /> صفحهٔ قبل ({prevRef.label})
+   576→                  </Button>
+   577→                ) : <span />}
+   578→                {nextRef ? (
+   579→                  <Button variant="outline" size="sm" onClick={() => goToPage(nextRef.page_uid)}>
+   580→                    صفحهٔ بعد ({nextRef.label}) <ChevronLeft className="size-4" />
+   581→                  </Button>
+   582→                ) : <span />}
+   583→              </div>
+   584→            </>
+   585→          )}
+   586→        </main>
+   587→
+   588→        {/* پنل زمینه — دسکتاپ */}
+   589→        <aside className="hidden w-80 shrink-0 border-s border-border xl:block">
+   590→          {/* تب‌های زمینه / یادداشت */}
+   591→          <div role="tablist" aria-label="پنل کناری متن" className="flex border-b border-border">
+   592→            <button
+   593→              role="tab"
+   594→              aria-selected={ctxTab === "context"}
+   595→              onClick={() => setCtxTab("context")}
+   596→              className={`min-h-11 flex-1 border-b-2 px-2 text-xs font-medium transition-colors md:min-h-9 ${
+   597→                ctxTab === "context"
+   598→                  ? "border-primary bg-primary/5 text-foreground"
+   599→                  : "border-transparent text-muted-foreground hover:bg-accent/60"
+   600→              }`}
+   601→            >
+   602→              زمینه
+   603→            </button>
+   604→            <button
+   605→              role="tab"
+   606→              aria-selected={ctxTab === "notes"}
+   607→              onClick={() => setCtxTab("notes")}
+   608→              className={`min-h-11 flex-1 border-b-2 px-2 text-xs font-medium transition-colors md:min-h-9 ${
+   609→                ctxTab === "notes"
+   610→                  ? "border-primary bg-primary/5 text-foreground"
+   611→                  : "border-transparent text-muted-foreground hover:bg-accent/60"
+   612→              }`}
+   613→            >
+   614→              یادداشت‌ها
+   615→              {docNoteCount > 0 ? (
+   616→                <span className="ms-1 inline-flex min-w-5 justify-center rounded-full bg-primary/15 px-1 text-[10px] font-semibold text-primary">
+   617→                  {faNum(docNoteCount)}
+   618→                </span>
+   619→              ) : null}
+   620→            </button>
+   621→          </div>
+   622→          <div className="h-[calc(100%-2.75rem)] overflow-y-auto">
+   623→            {ctxTab === "notes" ? (
+   624→              <NotesPanel
+   625→                documentUid={documentUid}
+   626→                currentPageUid={currentPageUid}
+   627→                pageLabel={pageQuery.data?.label ?? null}
+   628→                hadithScope={hadithNoteScope}
+   629→                onClearHadithScope={() => setHadithNoteScope(null)}
+   630→                onJumpToPage={(pg) => goToPage(pg)}
+   631→              />
+   632→            ) : footnote ? (
+   633→              <FootnotePanel
+   634→                data={footnote}
+   635→                onBack={() => setFootnote(null)}
+   636→                onHadithLookup={setHadithLookupUid}
+   637→                documentUid={documentUid}
+   638→                onHadithFiche={onHadithFiche}
+   639→                onHadithNote={(localUid, revayatIndex) => {
+   640→                  setHadithNoteScope({ localUid, revayatIndex });
+   641→                  setCtxTab("notes");
+   642→                }}
+   643→              />
+   644→            ) : (
+   645→              <p className="p-4 text-sm text-muted-foreground">
+   646→                برای دیدن پاورقی یا ارجاع، روی نشان آن در متن کلیک کنید.
+   647→              </p>
+   648→            )}
+   649→          </div>
+   650→        </aside>
+   651→      </div>
+   652→
+   653→      {/* پاورقی — فقط زیر xl: sheet پایین.
+   654→          نکته: محتوای Sheet در body پرتال می‌شود؛ xl:hidden روی والدِ آن
+   655→          اثری ندارد — پس رندر شیت باید صریحاً به isCompact مقید باشد. */}
+   656→      {footnote && isCompact ? (
+   657→        <Sheet open={!!footnote} onOpenChange={(o) => !o && setFootnote(null)}>
+   658→          <SheetContent side="bottom" className="max-h-[60vh] overflow-y-auto">
+   659→            <SheetHeader>
+   660→              <SheetTitle className="text-sm">پاورقی / ارجاع</SheetTitle>
+   661→            </SheetHeader>
+   662→            <FootnotePanel
+   663→              data={footnote}
+   664→              onBack={() => setFootnote(null)}
+   665→              onHadithLookup={setHadithLookupUid}
+   666→              documentUid={documentUid}
+   667→              onHadithFiche={onHadithFiche}
+   668→              onHadithNote={(localUid, revayatIndex) => {
+   669→                setHadithNoteScope({ localUid, revayatIndex });
+   670→                setFootnote(null);
+   671→                setNotesSheetOpen(true);
+   672→              }}
+   673→            />
+   674→          </SheetContent>
+   675→        </Sheet>
+   676→      ) : null}
+   677→
+   678→      {/* یادداشت‌ها — موبایل/تبلت: شیت پایین */}
+   679→      <Sheet open={notesSheetOpen} onOpenChange={setNotesSheetOpen}>
+   680→        <SheetContent side="bottom" className="flex h-[75vh] flex-col overflow-hidden">
+   681→          <SheetHeader className="border-b border-border pb-2">
+   682→            <SheetTitle className="flex items-center gap-1.5 text-sm">
+   683→              <StickyNote className="size-4 text-primary" aria-hidden="true" />
+   684→              یادداشت‌های این سند
+   685→            </SheetTitle>
+   686→          </SheetHeader>
+   687→          <div className="min-h-0 flex-1 overflow-hidden">
+   688→            <NotesPanel
+   689→              documentUid={documentUid}
+   690→              currentPageUid={currentPageUid}
+   691→              pageLabel={pageQuery.data?.label ?? null}
+   692→              hadithScope={hadithNoteScope}
+   693→              onClearHadithScope={() => {
+   694→                setHadithNoteScope(null);
+   695→              }}
+   696→              onJumpToPage={(pg) => {
+   697→                setNotesSheetOpen(false);
+   698→                goToPage(pg);
+   699→              }}
+   700→            />
+   701→          </div>
+   702→        </SheetContent>
+   703→      </Sheet>
+   704→
+   705→      <FicheDialog
+   706→        open={ficheOpen}
+   707→        onOpenChange={(o) => {
+   708→          setFicheOpen(o);
+   709→          if (!o) setSelection(null);
+   710→        }}
+   711→        selection={selection}
+   712→        documentUid={documentUid}
+   713→        documentLabel={docLabel}
+   714→        page={pageQuery.data ?? null}
+   715→        sectionUid={activeSectionUid}
+   716→        work={work ? { uid: work.uid, title: work.title } : null}
+   717→      />
+   718→
+   719→      {/* پرس‌وجوی میان‌کتابی روایت (§۴۷) — از پنل زمینه */}
+   720→      <HadithLocationsDialog
+   721→        documentUid={documentUid}
+   722→        localHadithUid={hadithLookupUid ?? ""}
+   723→        open={!!hadithLookupUid}
+   724→        onOpenChange={(o) => !o && setHadithLookupUid(null)}
+   725→        onNoteRequest={(localUid, revayatIndex) => {
+   726→          setHadithLookupUid(null);
+   727→          setHadithNoteScope({ localUid, revayatIndex });
+   728→          if (isCompact) {
+   729→            setNotesSheetOpen(true);
+   730→          } else {
+   731→            setCtxTab("notes");
+   732→          }
+   733→        }}
+   734→      />
+   735→
+   736→      {/* دکمه‌های شناور برای موبایل */}
+   737→      <div className="fixed bottom-20 left-3 z-30 flex gap-2 xl:hidden">
+   738→        <Button
+   739→          size="icon"
+   740→          variant={pageNoteCount > 0 ? "default" : "outline"}
+   741→          aria-label={`یادداشت‌ها${pageNoteCount > 0 ? ` (${pageNoteCount} در این صفحه)` : ""}`}
+   742→          title={pageNoteCount > 0 ? `${pageNoteCount} یادداشت در این صفحه` : "یادداشت‌ها"}
+   743→          className="size-11 rounded-full bg-surface"
+   744→          onClick={() => setNotesSheetOpen(true)}
+   745→        >
+   746→          <span className="relative">
+   747→            <StickyNote className="size-4" />
+   748→            {pageNoteCount > 0 ? (
+   749→              <span className="absolute -end-1.5 -top-2 min-w-3.5 rounded-full bg-primary px-0.5 text-center text-[9px] font-bold leading-3.5 text-primary-foreground">
+   750→                {faNum(pageNoteCount)}
+   751→              </span>
+   752→            ) : null}
+   753→          </span>
+   754→        </Button>
+   755→        <Button
+   756→          size="icon"
+   757→          variant="outline"
+   758→          aria-label="کپی نشانی"
+   759→          className="size-11 rounded-full bg-surface"
+   760→          onClick={() => void copyAddress()}
+   761→        >
+   762→          <Copy className="size-4" />
+   763→        </Button>
+   764→        <Button
+   765→          size="icon"
+   766→          variant={isBookmarked ? "default" : "outline"}
+   767→          aria-label="نشانک"
+   768→          className="size-11 rounded-full bg-surface"
+   769→          onClick={() => void toggleBookmark()}
+   770→          disabled={bookmarkPending}
+   771→        >
+   772→          {isBookmarked ? <BookmarkCheck className="size-4" /> : <BookmarkIcon className="size-4" />}
+   773→        </Button>
+   774→        <Button
+   775→          size="icon"
+   776→          variant="outline"
+   777→          aria-label="فهرست"
+   778→          className="size-11 rounded-full bg-surface"
+   779→          onClick={() => setTocOpen(true)}
+   780→        >
+   781→          <BookOpenText className="size-4" />
+   782→        </Button>
+   783→        <SettingsPopover
+   784→          trigger={
+   785→            <Button
+   786→              size="icon"
+   787→              variant="outline"
+   788→              aria-label="تنظیمات خواندن"
+   789→              className="size-11 rounded-full bg-surface"
+   790→            >
+   791→              <SlidersHorizontal className="size-4" />
+   792→            </Button>
+   793→          }
+   794→        />
+   795→      </div>
+   796→    </div>
+   797→  );
+   798→}
+   799→
+   800→/* ---------- کمکی‌های hash ---------- */
+   801→
+   802→function readHashParams(): URLSearchParams {
+   803→  const hash = window.location.hash;
+   804→  const qi = hash.indexOf("?");
+   805→  return new URLSearchParams(qi >= 0 ? hash.slice(qi + 1) : "");
+   806→}
+   807→
+   808→function parseHighlight(raw: string | null): [number, number] | null {
+   809→  if (!raw) return null;
+   810→  const parts = raw.split(":");
+   811→  const s = Number.parseInt(parts[0] ?? "", 10);
+   812→  const e = Number.parseInt(parts[1] ?? "", 10);
+   813→  if (!Number.isFinite(s) || !Number.isFinite(e) || e <= s) return null;
+   814→  return [s, e];
+   815→}
+   816→

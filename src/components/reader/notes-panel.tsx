@@ -18,10 +18,12 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
   Check,
+  Highlighter,
   Loader2,
   Pencil,
   RotateCcw,
   ScrollText,
+  Share2,
   StickyNote,
   Trash2,
   TriangleAlert,
@@ -43,7 +45,9 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Skeleton } from "@/components/ui/skeleton";
 import { api, ApiError, errorMessage } from "@/lib/api";
 import { faDateTime, faNum } from "@/lib/format";
-import type { Note } from "@/lib/types";
+import { HIGHLIGHT_COLORS } from "@/lib/highlight-color";
+import { useToast } from "@/hooks/use-toast";
+import type { Highlight, HighlightColor, Note, ShareCreateResponse } from "@/lib/types";
 
 interface NotesPanelProps {
   documentUid: string;
@@ -57,9 +61,36 @@ interface NotesPanelProps {
   onClearHadithScope?: () => void;
   /** نشانی عمیق یادداشت‌ها: پرش به صفحهٔ مقصد یادداشت‌های صفحهٔ دیگر */
   onJumpToPage?: (pageUid: string) => void;
+  /** عنوان اثر برای فرادادهٔ لینک اشتراک (§۷-الف-۳) */
+  workTitle?: string | null;
+  /** اعتبار لنگر هر هایلایت روی صفحهٔ خودش — ناموجود در نقشه = نامعلوم (نمایش هشدار نمی‌دهیم) */
+  anchorStatus?: Record<string, "ok" | "missing">;
 }
 
-type Tab = "page" | "document" | "hadith";
+type Tab = "page" | "document" | "hadith" | "highlights";
+
+/** کپی مطمئن متن در کلیپ‌بورد (حتی در بسترهای غیر امن) */
+async function copyToClipboard(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand("copy");
+      ta.remove();
+      return ok;
+    } catch {
+      return false;
+    }
+  }
+}
 
 export function NotesPanel({
   documentUid,
@@ -68,8 +99,11 @@ export function NotesPanel({
   hadithScope = null,
   onClearHadithScope,
   onJumpToPage,
+  workTitle = null,
+  anchorStatus,
 }: NotesPanelProps) {
   const queryClient = useQueryClient();
+  const { toast } = useToast();
   const [tab, setTab] = useState<Tab>("page");
   const [draft, setDraft] = useState("");
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
@@ -110,8 +144,21 @@ export function NotesPanel({
     retry: false,
   });
 
+  /* هایلایت‌های شخصی (§۷-الف-۳) — مسیر BFF با نگاشت Prisma */
+  const highlightsQuery = useQuery({
+    queryKey: ["annotations", documentUid],
+    queryFn: ({ signal }) =>
+      api.get<{ items: Highlight[] }>("/annotations", { document_uid: documentUid }, signal),
+    staleTime: 15_000,
+    retry: false,
+  });
+
   const refresh = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: ["notes", documentUid] });
+  }, [queryClient, documentUid]);
+
+  const refreshAnnotations = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: ["annotations", documentUid] });
   }, [queryClient, documentUid]);
 
   const notes = notesQuery.data?.items ?? [];
@@ -210,6 +257,102 @@ export function NotesPanel({
     }
   };
 
+  /* ---------- هایلایت‌ها (§۷-الف-۳) ---------- */
+  const highlights = highlightsQuery.data?.items ?? [];
+  const [deletingHl, setDeletingHl] = useState<Highlight | null>(null);
+  const [hlPendingUid, setHlPendingUid] = useState<string | null>(null);
+  /** هایلایتی که همین حالا در حال ساخت لینک اشتراکش هستیم */
+  const [sharingUid, setSharingUid] = useState<string | null>(null);
+
+  const changeColor = async (h: Highlight, color: HighlightColor) => {
+    if (h.color === color) return;
+    setHlPendingUid(h.uid);
+    try {
+      await api.patch<Highlight>(`/annotations/${h.uid}`, { color });
+      refreshAnnotations();
+    } catch (err) {
+      toast({
+        title: errorMessage(err, "تغییر رنگ هایلایت ناموفق بود؛ دوباره تلاش کنید."),
+        variant: "destructive",
+      });
+    } finally {
+      setHlPendingUid(null);
+    }
+  };
+
+  const removeHighlight = async (h: Highlight) => {
+    setHlPendingUid(h.uid);
+    try {
+      await api.del(`/annotations/${h.uid}`);
+      setDeletingHl(null);
+      refreshAnnotations();
+    } catch (err) {
+      toast({ title: errorMessage(err, "حذف هایلایت ممکن نشد."), variant: "destructive" });
+    } finally {
+      setHlPendingUid(null);
+    }
+  };
+
+  /** ساخت لینک اشتراک + کپی نشانی مطلق (§۷-الف-۳) — خطای سرور با پیام فارسی */
+  const shareItem = async (args: {
+    kind: "note" | "highlight";
+    itemId: string;
+    pageUid?: string | null;
+    pageLabel?: string | null;
+    payload: string;
+    meta: Record<string, unknown>;
+  }) => {
+    setSharingUid(args.itemId);
+    try {
+      const resp = await api.post<ShareCreateResponse>("/shares", {
+        kind: args.kind,
+        item_id: args.itemId,
+        document_uid: documentUid,
+        page_uid: args.pageUid ?? undefined,
+        page_label: args.pageLabel ?? undefined,
+        work_title: workTitle ?? undefined,
+        payload: args.payload,
+        meta: args.meta,
+      });
+      const url = `${window.location.origin}/${resp.url_path}`;
+      const copied = await copyToClipboard(url);
+      toast({
+        title: copied
+          ? "لینک اشتراک کپی شد؛ فقط برای کاربران واردشدهٔ همین سامانه کار می‌کند."
+          : "لینک اشتراک ساخته شد؛ کپی خودکار ممکن نشد و نشانی زیر در دسترس است.",
+        description: copied ? undefined : url,
+        variant: copied ? "default" : "destructive",
+      });
+    } catch (err) {
+      toast({
+        title: errorMessage(err, "ساخت لینک اشتراک ناموفق بود؛ دوباره تلاش کنید."),
+        variant: "destructive",
+      });
+    } finally {
+      setSharingUid(null);
+    }
+  };
+
+  const shareHighlight = (h: Highlight) =>
+    shareItem({
+      kind: "highlight",
+      itemId: h.uid,
+      pageUid: h.page_uid,
+      pageLabel: h.page_uid === currentPageUid ? pageLabel ?? null : null,
+      payload: h.text,
+      meta: { color: h.color, start: h.start, end: h.end, block_id: h.block_id },
+    });
+
+  const shareNote = (n: Note) =>
+    shareItem({
+      kind: "note",
+      itemId: n.uid,
+      pageUid: n.page_uid ?? null,
+      pageLabel: n.page_label && n.page_label !== "—" ? n.page_label : null,
+      payload: n.body,
+      meta: { revayat_index: n.local_hadith_uid ?? null },
+    });
+
   return (
     <div className="flex h-full min-h-0 flex-col" aria-label="یادداشت‌های شخصی این سند">
       {/* سرفصل + تب‌ها */}
@@ -246,6 +389,18 @@ export function NotesPanel({
               این روایت {hadithNotes.length > 0 ? `(${faNum(hadithNotes.length)})` : ""}
             </button>
           ) : null}
+          <button
+            role="tab"
+            aria-selected={tab === "highlights"}
+            onClick={() => switchTab("highlights")}
+            className={`min-h-11 flex-1 rounded-t-lg border-b-2 px-2 text-xs font-medium transition-colors md:min-h-8 ${
+              tab === "highlights"
+                ? "border-primary bg-primary/5 text-foreground"
+                : "border-transparent text-muted-foreground hover:bg-accent/60"
+            }`}
+          >
+            هایلایت‌ها {highlights.length > 0 ? `(${faNum(highlights.length)})` : ""}
+          </button>
           <button
             role="tab"
             aria-selected={tab === "document"}
@@ -297,7 +452,8 @@ export function NotesPanel({
           </div>
         ) : null}
 
-        {/* سرهم‌بندی یادداشت تازه */}
+        {/* سرهم‌بندی یادداشت تازه — در تب هایلایت‌ها نمایش داده نمی‌شود */}
+        {tab !== "highlights" ? (
         <div className="rounded-xl border border-border bg-surface p-2.5">
           <Textarea
             aria-label="متن یادداشت تازه"
@@ -349,8 +505,134 @@ export function NotesPanel({
             </p>
           ) : null}
         </div>
+        ) : null}
 
-        {/* فهرست */}
+        {/* فهرست هایلایت‌ها (تب هایلایت‌ها) */}
+        {tab === "highlights" ? (
+          <div className="mt-3 space-y-2.5">
+            {highlightsQuery.isPending ? (
+              <div className="space-y-2" aria-busy="true">
+                <Skeleton className="h-20 w-full" />
+                <Skeleton className="h-20 w-full" />
+                <span className="sr-only">در حال بارگیری هایلایت‌ها…</span>
+              </div>
+            ) : highlightsQuery.isError ? (
+              <div className="space-y-2 rounded-xl border border-destructive/40 bg-destructive/5 p-3">
+                <p className="flex items-start gap-1.5 text-xs text-destructive">
+                  <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                  {errorMessage(highlightsQuery.error, "فهرست هایلایت‌ها در دسترس نیست.")}
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="min-h-9 gap-1.5"
+                  onClick={() => void highlightsQuery.refetch()}
+                >
+                  <RotateCcw className="size-3.5" aria-hidden="true" /> تلاش دوباره
+                </Button>
+              </div>
+            ) : highlights.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-border p-4 text-center">
+                <Highlighter className="mx-auto size-5 text-muted-foreground/60" aria-hidden="true" />
+                <p className="mt-1.5 text-xs font-medium">برای این سند هایلایتی ندارید</p>
+                <p className="mt-1 text-[11px] leading-5 text-muted-foreground">
+                  در متن کتاب‌خوان بخشی را انتخاب کنید و از نوار شناور یکی از رنگ‌ها را بزنید تا اینجا بیاید.
+                </p>
+              </div>
+            ) : (
+              highlights.map((h) => {
+                const dot = HIGHLIGHT_COLORS.find((c) => c.value === h.color);
+                return (
+                  <article
+                    key={h.uid}
+                    className="anim-rise quiet-card rounded-xl border border-border bg-surface p-3"
+                  >
+                    {anchorStatus?.[h.uid] === "missing" ? (
+                      <p className="mb-2 flex items-start gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-[11px] leading-5 text-amber-700 dark:text-amber-400">
+                        <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                        لنگر یافت نشد — متن نسخه تغییر کرده است
+                      </p>
+                    ) : null}
+                    <p className="line-clamp-2 text-[13px] leading-7 text-foreground" title={h.text}>
+                      {h.text}
+                    </p>
+                    <div className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-border/60 pt-2">
+                      <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+                        <span
+                          className={`inline-block size-3 rounded-full ${dot?.dotClass ?? "bg-yellow-500"}`}
+                          aria-hidden="true"
+                        />
+                        <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5">
+                          <Highlighter className="size-3" aria-hidden="true" />
+                          {h.page_uid === currentPageUid ? "همین صفحه" : "صفحهٔ دیگر"}
+                        </span>
+                        {h.created_at ? <span>{faDateTime(h.created_at)}</span> : null}
+                        {/* نشانی عمیق: پرش به صفحهٔ مقصد هایلایت */}
+                        {h.page_uid && h.page_uid !== currentPageUid && onJumpToPage ? (
+                          <button
+                            type="button"
+                            className="inline-flex min-h-6 items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary transition-colors hover:bg-primary/15 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-primary"
+                            onClick={() => onJumpToPage(h.page_uid as string)}
+                            title="رفتن به صفحهٔ این هایلایت"
+                          >
+                            پرش به این صفحه
+                            <ArrowLeft className="size-3" aria-hidden="true" />
+                          </button>
+                        ) : null}
+                      </div>
+                      <div className="flex items-center gap-1">
+                        {/* تغییر رنگ: پنج لکهٔ کوچک — رنگ فعلی حلقه دارد */}
+                        <div role="group" aria-label="تغییر رنگ هایلایت" className="flex items-center gap-1">
+                          {HIGHLIGHT_COLORS.map((c) => (
+                            <button
+                              key={c.value}
+                              type="button"
+                              title={`رنگ ${c.label}`}
+                              aria-label={`تغییر رنگ این هایلایت به ${c.label}`}
+                              aria-pressed={h.color === c.value}
+                              disabled={hlPendingUid === h.uid}
+                              className={`size-4 min-h-0 w-4 rounded-full p-0 transition-transform hover:scale-110 disabled:opacity-50 ${c.dotClass} ${
+                                h.color === c.value
+                                  ? "ring-2 ring-primary ring-offset-1 ring-offset-surface"
+                                  : ""
+                              }`}
+                              onClick={() => void changeColor(h, c.value)}
+                            />
+                          ))}
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label="اشتراک‌گذاری هایلایت"
+                          title="اشتراک‌گذاری هایلایت (کپی لینک)"
+                          className="size-8"
+                          disabled={sharingUid === h.uid}
+                          onClick={() => void shareHighlight(h)}
+                        >
+                          {sharingUid === h.uid ? (
+                            <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+                          ) : (
+                            <Share2 className="size-3.5" />
+                          )}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label="حذف هایلایت"
+                          title="حذف هایلایت"
+                          className="size-8 text-destructive hover:text-destructive"
+                          onClick={() => setDeletingHl(h)}
+                        >
+                          <Trash2 className="size-3.5" />
+                        </Button>
+                      </div>
+                    </div>
+                  </article>
+                );
+              })
+            )}
+          </div>
+        ) : (
         <div className="mt-3 space-y-2.5">
           {notesQuery.isPending ? (
             <div className="space-y-2" aria-busy="true">
@@ -480,6 +762,21 @@ export function NotesPanel({
                         <Button
                           variant="ghost"
                           size="icon"
+                          aria-label="اشتراک‌گذاری یادداشت"
+                          title="اشتراک‌گذاری یادداشت (کپی لینک)"
+                          className="size-8"
+                          disabled={sharingUid === n.uid}
+                          onClick={() => void shareNote(n)}
+                        >
+                          {sharingUid === n.uid ? (
+                            <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+                          ) : (
+                            <Share2 className="size-3.5" />
+                          )}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
                           aria-label="ویرایش یادداشت"
                           title="ویرایش یادداشت"
                           className="size-8"
@@ -505,6 +802,7 @@ export function NotesPanel({
             ))
           )}
         </div>
+        )}
       </div>
 
       {/* تعارض ویرایش (RES-14) */}
@@ -582,6 +880,37 @@ export function NotesPanel({
                 </>
               ) : (
                 "حذف یادداشت"
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* تأیید حذف هایلایت (§۷-الف-۳) */}
+      <AlertDialog open={deletingHl !== null} onOpenChange={(o) => !o && setDeletingHl(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>حذف این هایلایت؟</AlertDialogTitle>
+            <AlertDialogDescription>
+              حذف هایلایت بازگشت‌پذیر نیست و متن برجسته‌شده از کتاب‌خوان پاک می‌شود.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="min-h-11">انصراف</AlertDialogCancel>
+            <AlertDialogAction
+              className="min-h-11 bg-destructive text-white hover:bg-destructive/90"
+              disabled={hlPendingUid === deletingHl?.uid}
+              onClick={(e) => {
+                e.preventDefault();
+                if (deletingHl) void removeHighlight(deletingHl);
+              }}
+            >
+              {hlPendingUid === deletingHl?.uid ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" aria-hidden="true" /> در حال حذف…
+                </>
+              ) : (
+                "حذف هایلایت"
               )}
             </AlertDialogAction>
           </AlertDialogFooter>

@@ -713,3 +713,85 @@ export interface AdminAuditRow {
   detail?: string | null;
   created_at?: string | null;
 }
+
+/* ---------- §۷-الف: هایلایت، اشتراک و خروجی‌ها ---------- */
+
+/** رنگ‌های مجاز هایلایت — مقدار ذخیره‌شده و کلاس CSS آن در highlight-color.ts */
+export type HighlightColor = "yellow" | "green" | "blue" | "pink" | "orange";
+
+/** هایلایت شخصی — لنگر: block_id + بازهٔ code point درون بلوک (§۷-الف-۳) */
+export interface Highlight {
+  uid: string;
+  document_uid: string;
+  page_uid: string;
+  block_id: string;
+  start: number;
+  end: number;
+  text: string;
+  color: HighlightColor;
+  note?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+/** خلاصهٔ اشتراک فعال (فهرست تنظیمات) */
+export interface ShareLinkInfo {
+  uid: string;
+  kind: "note" | "highlight";
+  document_uid: string;
+  page_uid?: string | null;
+  page_label?: string | null;
+  work_title?: string | null;
+  /** پیش‌نمایش محتوای اشتراک‌شده */
+  excerpt: string;
+  created_at?: string | null;
+  expires_at?: string | null;
+  url_path: string;
+}
+
+/** پاسخ ساخت اشتراک */
+export interface ShareCreateResponse {
+  uid: string;
+  url_path: string;
+}
+
+/** محتوای حل‌شدهٔ یک اشتراک برای کاربر واردشده */
+export interface SharedItem {
+  kind: "note" | "highlight";
+  owner_name: string;
+  document_uid: string;
+  page_uid?: string | null;
+  page_label?: string | null;
+  work_title?: string | null;
+  /** برای note: متن یادداشت؛ برای highlight: متن هایلایت */
+  payload: string;
+  meta?: { color?: HighlightColor; start?: number; end?: number; block_id?: string; revayat_index?: string | null } | null;
+  created_at?: string | null;
+}
+
+/** کار تولید PDF (§۷-الف-۲) */
+export interface PdfJob {
+  uid: string;
+  document_uid: string;
+  document_label: string;
+  work_title?: string | null;
+  status: "queued" | "running" | "done" | "failed";
+  progress: number;
+  status_note?: string | null;
+  file_bytes?: number | null;
+  created_at?: string | null;
+  finished_at?: string | null;
+  /** مسیر نسبی دانلود خصوصی (با توکن منقضی‌شدنی) — فقط برای کار done */
+  download_url?: string | null;
+  token_expires_at?: string | null;
+  params?: { from?: string | null; to?: string | null; whole: boolean; include_notes: boolean };
+}
+
+/** نتیجهٔ خروجی جست‌وجو (پاسخ POST /export/search به‌صورت فایل؛ این متادیتا از هدرها می‌آید) */
+export interface SearchExportMeta {
+  partial: boolean;
+  rows: number;
+  total_verified: number | null;
+  offset_next: number | null;
+  format: "csv" | "xlsx" | "markdown";
+}

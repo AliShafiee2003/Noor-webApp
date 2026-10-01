@@ -108,6 +108,13 @@ Mutationها باید هدر `X-Noor-CSRF` داشته باشند (token از `GE
 - `GET /exports/{uid}` → `{status:queued|running|done|failed,download_ready}`
 - `GET /exports/{uid}/download` → فقط owner؛ retention ۷ روز؛ CSV ایمن‌شده در برابر formula injection.
 
+## §۷-الف — خروجی‌ها، حاشیه‌نویسی و اشتراک‌گذاری (پل BFF لایهٔ Next — احراز از نشست Go، بدون دورزدن RBAC)
+- `POST /api/v1/export/search {request:SearchRequest, format:"csv"|"xlsx"|"markdown", offset?}` → فایل؛ زنجیرهٔ `/search` + `/search/{session}/continue` با کوکی همان کاربر (نتیجهٔ تأییدشدهٔ همان پرسش)؛ سقف ۵۰۰۰ ردیف؛ هدرهای `X-Export-Partial/Rows/Offset-Next/Total`؛ CSV با BOM؛ نام فایل فارسی (RFC 5987)؛ metadata (تاریخ/پارامترها/وضعیت جزئی) داخل فایل.
+- `GET /api/v1/annotations?document_uid=` / `POST {document_uid,page_uid,block_id,start,end,text,color}` — هایلایت چندرنگ با لنگر بلوک+cp؛ `PATCH /annotations/{uid} {color?,note?}` / `DELETE` — فقط owner.
+- `POST /api/v1/shares {kind:"note"|"highlight", item_id, document_uid, page_uid?, page_label?, work_title?, payload, meta?}` → `{uid,url_path:"#read/…?shared=…"}`؛ snapshot محتواست تا لغو واقعاً قطع دسترسی کند؛ `GET /shares` فهرست فعال من؛ `DELETE /shares/{uid}` لغو؛ `GET /shares/{uid}` برای هر کاربر واردشده (410 در لغو/انقضا) — اشتراک صفحه/پاراگراف/روایت همان نشانی عمیق است و رکورد لازم ندارد.
+- `POST /api/v1/pdf-jobs {document_uid, from?, to?, include_notes?}` → 202؛ کار پس‌زمینه‌ای (سقف ۲ هم‌زمان سراسری/۱ برای کاربر)؛ PDF با جهت RTL، قلم‌های سه‌گانه، سبک آیه، پاورقی پایان صفحه، صفحهٔ شناسنامه (اثر/جلد/مؤلف/ناشر/بازه/اصلاحات overlay)؛ `GET /pdf-jobs` + `/{uid}` با پیشرفت؛ `GET /pdf-jobs/{uid}/download?token=` لینک خصوصی منقضی‌شدنی (۲۴ ساعت؛ 403/410).
+- ذخیره‌گاه هایلایت/اشتراک/PDF-job: SQLite لایهٔ BFF (Prisma) با `userUid` نشست Go — دادهٔ خصوصی کاربر خارج از نمای ادمین (سازگار با ADMIN-10).
+
 ## مدیریت (فقط admin + در موارد حساس X-Noor-MFA)
 - `GET /admin/overview` → موجودی، وضعیت پردازش، release فعال، خطاهای بازگشایی/پارس/نمایه، فضای دیسک، آخرین backup. (دادهٔ پژوهشی کاربران نمایش داده نمی‌شود — ADMIN-10)
 - `GET /admin/jobs` / `POST /admin/jobs/{uid}/cancel`
