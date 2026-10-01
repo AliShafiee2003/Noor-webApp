@@ -65,9 +65,10 @@ function StatusChip({ status }: { status: PdfJob["status"] }) {
   );
 }
 
-/** حجم فایل با یک رقم اعشار و ارقام فارسی */
+/** حجم فایل — زیر یک مگابایت کیلوبایت نشان داده می‌شود تا «۰.۰ مگابایت» نداشته باشیم */
 function formatSize(bytes: number | null | undefined): string {
   if (!bytes || bytes <= 0) return "";
+  if (bytes < 1024 * 1024) return `${faNum(Math.max(1, Math.round(bytes / 1024)))} کیلوبایت`;
   return `${faNum((bytes / (1024 * 1024)).toFixed(1))} مگابایت`;
 }
 
@@ -176,7 +177,7 @@ export function PdfExportDialog({
         <DialogHeader>
           <DialogTitle>خروجی PDF از کتاب</DialogTitle>
           <DialogDescription>
-            PDF از متن واقعی همین نسخه ساخته می‌شود؛ با جهت راست‌به‌چپ و قلم‌های سه‌گانه.
+            از متن واقعی همین نسخه، فایلی با جهت راست‌به‌چپ، قلم‌های سه‌گانه و صفحه‌بندی خوانا ساخته می‌شود؛ سپس می‌توانید آن را دانلود کنید.
           </DialogDescription>
         </DialogHeader>
 
@@ -338,17 +339,19 @@ export function PdfExportDialog({
                     ) : null}
 
                     {job.status === "done" ? (
-                      <div className="mt-2 flex flex-wrap items-center gap-2">
-                        {job.file_bytes ? (
-                          <span className="text-xs text-muted-foreground">
-                            {formatSize(job.file_bytes)}
-                          </span>
-                        ) : null}
-                        {job.token_expires_at ? (
-                          <span className="text-[11px] text-muted-foreground">
-                            اعتبار لینک: تا {faDateTime(job.token_expires_at)}
-                          </span>
-                        ) : null}
+                      <div className="mt-2 space-y-1.5">
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                          {job.file_bytes ? (
+                            <span className="text-xs text-muted-foreground">
+                              {formatSize(job.file_bytes)}
+                            </span>
+                          ) : null}
+                          {job.token_expires_at ? (
+                            <span className="text-[11px] text-muted-foreground">
+                              اعتبار لینک: تا {faDateTime(job.token_expires_at)}
+                            </span>
+                          ) : null}
+                        </div>
                         {job.download_url ? (
                           <Button asChild size="sm" className="min-h-11 gap-1.5 md:min-h-8">
                             <a href={job.download_url} download>

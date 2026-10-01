@@ -10,13 +10,14 @@
  * - هایلایت شخصی کاربر (§۷-الف-۳): رندر چندرنگ لنگردار (block_id + بازهٔ cp) و
  *   دکمه‌های رنگ در نوار شناور — هردو اختیاری؛ بدون propهای جدید رفتار قبلی دست‌نخورده است.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bookmark, Landmark, Quote, ScrollText, UserRound } from "lucide-react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Bookmark, Landmark, Quote, ScrollText, Trash2, UserRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { faNum } from "@/lib/format";
 import { isLatinBlock } from "@/lib/script";
 import { highlightClass, HIGHLIGHT_COLORS } from "@/lib/highlight-color";
+import { useTooltipTempo } from "@/lib/tooltip-tempo";
 import { cn } from "@/lib/utils";
 import {
   QURAN_FONT_SIZE_DEFAULT,
@@ -179,6 +180,9 @@ function BlockText({
   highlight,
   userHls,
   onFootnoteClick,
+  onFootnoteEnter,
+  onFootnoteLeave,
+  onHighlightClick,
   onLinkClick,
   semantic,
 }: {
@@ -188,11 +192,18 @@ function BlockText({
   /** هایلایت‌های شخصی همین بلوک — لنگر: بازهٔ code point (§۷-الف-۳) */
   userHls?: ReadonlyArray<Pick<Highlight, "uid" | "start" | "end" | "color">>;
   onFootnoteClick: (refUid: string, anchorId: string) => void;
+  /** هاور روی شمارهٔ پاورقی → پاپ‌آپ متن پاورقی (با ریتم هوشمند) */
+  onFootnoteEnter: (refUid: string, label: string, el: HTMLElement) => void;
+  onFootnoteLeave: () => void;
+  /** کلیک روی هایلایت شخصی → منوی تغییر رنگ/حذف */
+  onHighlightClick?: (uid: string, color: string, el: HTMLElement) => void;
   onLinkClick: (link: BlockLink) => void;
   semantic: boolean;
 }) {
   const cps = useMemo(() => Array.from(block.text), [block.text]);
   const cpLen = cps.length;
+  /* ریتم تولتیپ: اولین هاور با تأخیر، هاورهای بعدی بی‌درنگ (درخواست کاربر) */
+  const { delay: tempoDelay, onHoverEnter, onOpened } = useTooltipTempo();
 
   const marks = useMemo<Mark[]>(() => {
     const out: Mark[] = [];
@@ -258,6 +269,7 @@ function BlockText({
         }
         if (mark.isUserHl) {
           // هایلایت شخصی کاربر — مقدم بر هایلایت جست‌وجو (§۷-الف-۳)
+          // کلیک روی هایلایت → منوی تغییر رنگ/حذف (بازخورد فوری روی خود متن)
           return (
             <mark
               key={i}
@@ -266,9 +278,16 @@ function BlockText({
               data-cp-start={seg.start}
               data-cp-end={seg.end}
               className={cn(
-                "rounded-sm px-0.5 text-foreground",
+                "cursor-pointer rounded-sm px-0.5 text-foreground transition-shadow hover:ring-2 hover:ring-foreground/25",
                 highlightClass(mark.hlColor ?? "yellow"),
               )}
+              title="تغییر رنگ یا حذف هایلایت"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (mark.hlUid) {
+                  onHighlightClick?.(mark.hlUid, mark.hlColor ?? "yellow", e.currentTarget);
+                }
+              }}
             >
               {text}
             </mark>
@@ -297,10 +316,14 @@ function BlockText({
               id={anchorId}
               data-cp-start={seg.start}
               data-cp-end={seg.end}
-              className="mx-0.5 inline cursor-pointer align-super text-[0.62em] font-semibold text-link hover:underline"
+              className="mx-0.5 inline cursor-pointer whitespace-nowrap align-super text-[0.62em] font-semibold text-link hover:underline"
               onClick={() => onFootnoteClick(mark.refUid as string, anchorId)}
-              aria-label={`نمایش پاورقی ${label}`}
-              title="نمایش پاورقی"
+              onMouseEnter={(e) => onFootnoteEnter(mark.refUid as string, label, e.currentTarget)}
+              onMouseLeave={onFootnoteLeave}
+              onFocus={(e) => onFootnoteEnter(mark.refUid as string, label, e.currentTarget)}
+              onBlur={onFootnoteLeave}
+              aria-label={`پاورقی ${label} — هاور برای پیش‌نمایش، کلیک برای بازکردن در پنل`}
+              title={`پاورقی ${label}`}
             >
               ({label})
             </button>
@@ -344,8 +367,14 @@ function BlockText({
             );
           case "G":
             return (
-              <Tooltip key={i}>
-                <TooltipTrigger asChild>
+              <Tooltip
+                key={i}
+                delayDuration={tempoDelay}
+                onOpenChange={(o) => {
+                  if (o) onOpened();
+                }}
+              >
+                <TooltipTrigger asChild onMouseEnter={onHoverEnter}>
                   <span
                     data-cp-start={seg.start}
                     data-cp-end={seg.end}
@@ -362,8 +391,14 @@ function BlockText({
             );
           case "K":
             return (
-              <Tooltip key={i}>
-                <TooltipTrigger asChild>
+              <Tooltip
+                key={i}
+                delayDuration={tempoDelay}
+                onOpenChange={(o) => {
+                  if (o) onOpened();
+                }}
+              >
+                <TooltipTrigger asChild onMouseEnter={onHoverEnter}>
                   <span
                     data-cp-start={seg.start}
                     data-cp-end={seg.end}
@@ -378,8 +413,14 @@ function BlockText({
             );
           case "maasoom":
             return (
-              <Tooltip key={i}>
-                <TooltipTrigger asChild>
+              <Tooltip
+                key={i}
+                delayDuration={tempoDelay}
+                onOpenChange={(o) => {
+                  if (o) onOpened();
+                }}
+              >
+                <TooltipTrigger asChild onMouseEnter={onHoverEnter}>
                   <span
                     data-cp-start={seg.start}
                     data-cp-end={seg.end}
@@ -574,6 +615,9 @@ interface BlockViewProps {
   collapsed: boolean;
   footnoteLabelFor: (refUid: string) => string | null;
   onFootnoteClick: (refUid: string, anchorId: string) => void;
+  onFootnoteEnter: (refUid: string, label: string, el: HTMLElement) => void;
+  onFootnoteLeave: () => void;
+  onHighlightClick?: (uid: string, color: string, el: HTMLElement) => void;
   onLinkClick: (link: BlockLink) => void;
   onToggleSanad: (blockId: string) => void;
   /** QUR-01: بازکردن پنل آیه */
@@ -584,7 +628,8 @@ interface BlockViewProps {
   semantic: boolean;
 }
 
-function BlockView({
+/** memo: در حالت پیوسته و رندرهای مکرر، بلوک‌های بی‌تغییر دوباره reconcile نمی‌شوند */
+const BlockView = memo(function BlockView({
   block,
   prefs,
   highlight,
@@ -592,6 +637,9 @@ function BlockView({
   collapsed,
   footnoteLabelFor,
   onFootnoteClick,
+  onFootnoteEnter,
+  onFootnoteLeave,
+  onHighlightClick,
   onLinkClick,
   onToggleSanad,
   onVerseClick,
@@ -612,6 +660,9 @@ function BlockView({
       userHls={userHls}
       footnoteLabelFor={footnoteLabelFor}
       onFootnoteClick={onFootnoteClick}
+      onFootnoteEnter={onFootnoteEnter}
+      onFootnoteLeave={onFootnoteLeave}
+      onHighlightClick={onHighlightClick}
       onLinkClick={onLinkClick}
     />
   );
@@ -743,7 +794,7 @@ function BlockView({
       );
     }
   }
-}
+});
 
 /* ---------- رندر صفحه ---------- */
 
@@ -760,6 +811,10 @@ export interface PageRendererProps {
   userHighlights?: ReadonlyArray<Pick<Highlight, "uid" | "block_id" | "start" | "end" | "color">>;
   /** انتخاب متن → هایلایت با رنگ (اگر داده نشود دکمهٔ هایلایت نشان داده نمی‌شود) */
   onHighlightSelection?: (sel: ReaderSelection, color: HighlightColor) => void;
+  /** تغییر رنگ هایلایت موجود (کلیک روی هایلایت در متن) */
+  onHighlightUpdate?: (uid: string, color: HighlightColor) => void;
+  /** حذف هایلایت موجود (کلیک روی هایلایت در متن) */
+  onHighlightDelete?: (uid: string) => void;
   collapsedSanads: ReadonlySet<string>;
   onToggleSanad: (blockId: string) => void;
   onFootnoteClick: (refUid: string, anchorId: string) => void;
@@ -779,6 +834,8 @@ export function PageRenderer({
   highlight,
   userHighlights,
   onHighlightSelection,
+  onHighlightUpdate,
+  onHighlightDelete,
   collapsedSanads,
   onToggleSanad,
   onFootnoteClick,
@@ -790,6 +847,115 @@ export function PageRenderer({
   const wrapRef = useRef<HTMLDivElement>(null);
   const [selRect, setSelRect] = useState<{ top: number; left: number } | null>(null);
   const [sel, setSel] = useState<ReaderSelection | null>(null);
+
+  /* ---------- پاپ‌آپ هاور پاورقی (ریتم هوشمند: اولین هاور ۳ ثانیه، بعدی فوری) ---------- */
+  const { delay: tempoDelay, onHoverEnter, onOpened } = useTooltipTempo();
+  const [fnPopup, setFnPopup] = useState<{
+    refUid: string;
+    label: string;
+    text: string;
+    top: number;
+    left: number;
+    width: number;
+  } | null>(null);
+  const fnOpenTimer = useRef<number | null>(null);
+  const fnCloseTimer = useRef<number | null>(null);
+
+  const clearFnTimers = useCallback(() => {
+    if (fnOpenTimer.current) {
+      window.clearTimeout(fnOpenTimer.current);
+      fnOpenTimer.current = null;
+    }
+    if (fnCloseTimer.current) {
+      window.clearTimeout(fnCloseTimer.current);
+      fnCloseTimer.current = null;
+    }
+  }, []);
+
+  const closeFnPopup = useCallback(() => {
+    setFnPopup(null);
+  }, []);
+
+  const onFootnoteEnter = useCallback(
+    (refUid: string, label: string, el: HTMLElement) => {
+      onHoverEnter();
+      clearFnTimers();
+      fnOpenTimer.current = window.setTimeout(() => {
+        fnOpenTimer.current = null;
+        const wrap = wrapRef.current;
+        if (!wrap) return;
+        const fn = page.footnotes.find((f) => f.uid === refUid);
+        const r = el.getBoundingClientRect();
+        const w = wrap.getBoundingClientRect();
+        const width = Math.min(288, w.width - 12);
+        const top = r.bottom - w.top + 6;
+        const left = Math.max(6, Math.min(r.left - w.left, w.width - width - 6));
+        setFnPopup({ refUid, label, text: fn?.text ?? "", top, left, width });
+        onOpened();
+      }, tempoDelay);
+    },
+    [clearFnTimers, onHoverEnter, onOpened, page.footnotes, tempoDelay],
+  );
+
+  const onFootnoteLeave = useCallback(() => {
+    /* تایمر بازشدن لغو می‌شود؛ بسته‌شدن نرم ۱۸۰ms تا حرکت به خود پاپ‌آپ */
+    if (fnOpenTimer.current) {
+      window.clearTimeout(fnOpenTimer.current);
+      fnOpenTimer.current = null;
+    }
+    if (fnCloseTimer.current) window.clearTimeout(fnCloseTimer.current);
+    fnCloseTimer.current = window.setTimeout(() => {
+      fnCloseTimer.current = null;
+      setFnPopup(null);
+    }, 180);
+  }, []);
+
+  /* پاک‌شدن پاپ‌آپ‌ها با اسکرول/تغییر متن — مثل نوار انتخاب */
+  useEffect(() => {
+    if (!fnPopup) return;
+    const onScroll = () => setFnPopup(null);
+    window.addEventListener("scroll", onScroll, true);
+    return () => window.removeEventListener("scroll", onScroll, true);
+  }, [fnPopup]);
+
+  /* ---------- منوی هایلایت شخصی (تغییر رنگ / حذف) — با کلیک روی خود هایلایت ---------- */
+  const [hlMenu, setHlMenu] = useState<{
+    uid: string;
+    color: string;
+    top: number;
+    left: number;
+  } | null>(null);
+
+  const onHighlightClick = useCallback(
+    (uid: string, color: string, el: HTMLElement) => {
+      if (uid.startsWith("temp-")) return; // هنوز در حال ذخیره — هنوز کنترلی ندارد
+      const wrap = wrapRef.current;
+      if (!wrap) return;
+      const r = el.getBoundingClientRect();
+      const w = wrap.getBoundingClientRect();
+      const top = Math.max(4, r.top - w.top - 46);
+      const left = Math.max(6, Math.min(r.left - w.left, w.width - 268));
+      setHlMenu({ uid, color, top, left });
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!hlMenu) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t?.closest("[data-hl-menu]")) return;
+      if (t?.closest("mark[data-hl-uid]")) return;
+      setHlMenu(null);
+    };
+    const onScroll = () => setHlMenu(null);
+    document.addEventListener("mousedown", onDown);
+    window.addEventListener("scroll", onScroll, true);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      window.removeEventListener("scroll", onScroll, true);
+    };
+  }, [hlMenu]);
 
   /* هایلایت نتیجهٔ جست‌وجو: پس از رندر، به آن اسکرول می‌شود (یک بار برای هر بازه) */
   const hlKey = highlight ? `${highlight.start}:${highlight.end}:${highlight.blockId ?? ""}` : "";
@@ -883,6 +1049,8 @@ export function PageRenderer({
     return () => window.removeEventListener("scroll", onScroll, true);
   }, [sel, clearSelection]);
 
+  useEffect(() => clearFnTimers, [clearFnTimers]);
+
   const footnoteLabelFor = useCallback(
     (refUid: string) => {
       const fn = page.footnotes.find((f) => f.uid === refUid);
@@ -945,6 +1113,9 @@ export function PageRenderer({
                   collapsed={collapsedSanads.has(block.id)}
                   footnoteLabelFor={footnoteLabelFor}
                   onFootnoteClick={onFootnoteClick}
+                  onFootnoteEnter={onFootnoteEnter}
+                  onFootnoteLeave={onFootnoteLeave}
+                  onHighlightClick={onHighlightClick}
                   onLinkClick={onLinkClick}
                   onToggleSanad={onToggleSanad}
                   onVerseClick={onVerseClick}
@@ -998,6 +1169,95 @@ export function PageRenderer({
               </div>
             </>
           ) : null}
+        </div>
+      ) : null}
+
+      {/* پاپ‌آپ پیش‌نمایش پاورقی — با هاور روی شمارهٔ پاورقی (بدون کلیک) */}
+      {fnPopup ? (
+        <div
+          role="tooltip"
+          data-testid="footnote-popup"
+          className="absolute z-30 rounded-xl border border-border bg-popover p-3 shadow-lg"
+          style={{ top: fnPopup.top, left: fnPopup.left, width: fnPopup.width }}
+          onMouseEnter={() => {
+            if (fnCloseTimer.current) {
+              window.clearTimeout(fnCloseTimer.current);
+              fnCloseTimer.current = null;
+            }
+          }}
+          onMouseLeave={closeFnPopup}
+        >
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary">
+              <sup className="font-bold">({fnPopup.label})</sup>
+              متن پاورقی
+            </span>
+            <button
+              type="button"
+              className="text-[10px] text-muted-foreground hover:text-foreground hover:underline"
+              onClick={() => {
+                closeFnPopup();
+                onFootnoteClick(fnPopup.refUid, "");
+              }}
+            >
+              بازکردن در پنل
+            </button>
+          </div>
+          <p
+            lang="ar"
+            dir="rtl"
+            className="max-h-40 overflow-y-auto whitespace-pre-wrap text-[13px] leading-6 text-foreground/90"
+          >
+            {fnPopup.text || "متن این پاورقی در نسخهٔ فعلی در دسترس نیست."}
+          </p>
+        </div>
+      ) : null}
+
+      {/* منوی کنترل هایلایت شخصی — با کلیک روی هایلایت: تغییر رنگ / حذف */}
+      {hlMenu ? (
+        <div
+          data-hl-menu
+          role="menu"
+          aria-label="کنترل هایلایت"
+          className="absolute z-30 flex items-center gap-1 rounded-xl border border-border bg-surface p-1.5 shadow-md"
+          style={{ top: hlMenu.top, left: hlMenu.left }}
+        >
+          <div role="group" aria-label="تغییر رنگ هایلایت" className="flex items-center gap-1">
+            {HIGHLIGHT_COLORS.map((c) => (
+              <button
+                key={c.value}
+                type="button"
+                role="menuitemradio"
+                aria-checked={hlMenu.color === c.value}
+                title={c.label}
+                aria-label={`رنگ ${c.label}`}
+                className={cn(
+                  "size-5 rounded-full min-h-0 w-5 transition-transform hover:scale-110",
+                  c.dotClass,
+                  hlMenu.color === c.value
+                    ? "ring-2 ring-foreground/70 ring-offset-1 ring-offset-surface"
+                    : "ring-1 ring-foreground/10",
+                )}
+                onClick={() => {
+                  onHighlightUpdate?.(hlMenu.uid, c.value);
+                  setHlMenu(null);
+                }}
+              />
+            ))}
+          </div>
+          <div aria-hidden="true" className="mx-0.5 h-5 w-px bg-border" />
+          <button
+            type="button"
+            role="menuitem"
+            className="inline-flex min-h-8 items-center gap-1 rounded-lg px-2 text-xs font-medium text-destructive transition-colors hover:bg-destructive/10"
+            onClick={() => {
+              onHighlightDelete?.(hlMenu.uid);
+              setHlMenu(null);
+            }}
+          >
+            <Trash2 className="size-3.5" aria-hidden="true" />
+            حذف
+          </button>
         </div>
       ) : null}
     </div>

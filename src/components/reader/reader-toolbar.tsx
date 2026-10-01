@@ -10,6 +10,7 @@ import { useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
+  BookOpenCheck,
   BookOpenText,
   BookmarkCheck,
   BookmarkPlus,
@@ -44,6 +45,9 @@ export interface ReaderToolbarProps {
   onCopyAddress: () => void;
   /** §۷-الف-۲: بازکردن دیالوگ خروجی PDF از این کتاب */
   onExportPdf: () => void;
+  /** حالت مطالعهٔ مینیمال — درخواست کاربر: صفحهٔ شلوغ نباشد */
+  studyMode: boolean;
+  onToggleStudyMode: () => void;
   settingsTrigger: React.ReactNode;
   highlightActive: boolean;
   onClearHighlight: () => void;
@@ -178,6 +182,8 @@ export function ReaderToolbar(props: ReaderToolbarProps) {
     onToggleBookmark,
     onCopyAddress,
     onExportPdf,
+    studyMode,
+    onToggleStudyMode,
     settingsTrigger,
     highlightActive,
     onClearHighlight,
@@ -247,6 +253,17 @@ export function ReaderToolbar(props: ReaderToolbarProps) {
             title="خروجی PDF از این کتاب (§۷-الف)"
           >
             <FileDown className="size-4" aria-hidden="true" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-9"
+            onClick={onToggleStudyMode}
+            aria-label="حالت مطالعهٔ مینیمال"
+            aria-pressed={studyMode}
+            title="حالت مطالعه: فقط متن؛ فهرست و یادداشت‌ها با آیکون در دسترس‌اند"
+          >
+            <BookOpenCheck className="size-4" aria-hidden="true" />
           </Button>
           {settingsTrigger}
         </div>

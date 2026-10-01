@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  BookOpenCheck,
   BookOpenText,
   Bookmark as BookmarkIcon,
   BookmarkCheck,
@@ -24,6 +25,7 @@ import {
   FileDown,
   List,
   Loader2,
+  Minimize2,
   PanelLeftClose,
   PanelLeftOpen,
   Search,
@@ -68,8 +70,14 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
 
   /* ---------- پارامترهای hash: صفحهٔ فعلی و highlight نتیجه ---------- */
   const [params, setParams] = useState(() => readHashParams());
+  /* گارد اسکرول خودکار پیوسته — با هر hashchange واقعی ریست می‌شود */
+  const lastAutoScrollRef = useRef<string | null>(null);
   useEffect(() => {
-    const onHash = () => setParams(readHashParams());
+    const onHash = () => {
+      /* ناوبری واقعی (نه replaceStateِ ردیابی اسکرول): اجازهٔ اسکرول مجدد به مقصد */
+      lastAutoScrollRef.current = null;
+      setParams(readHashParams());
+    };
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
@@ -314,6 +322,55 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
     localUid: string;
     revayatIndex?: string | null;
   } | null>(null);
+  /* ---------- حالت مطالعهٔ مینیمال (درخواست کاربر) ----------
+     صفحهٔ شلوغ نباشد؛ فهرست/یادداشت‌ها/تنظیمات فقط با آیکون در دسترس؛
+     پاورقی با هاور پیش‌نمایش می‌شود و کلیک، پنل/شیت را باز می‌کند.
+     انتخاب در حافظهٔ دستگاه می‌ماند (localStorage) نه سرور — ترجیح شخصیِ محیطی. */
+  const [studyMode, setStudyMode] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return window.localStorage.getItem("noor-study-mode") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggleStudyMode = useCallback((v: boolean) => {
+    setStudyMode(v);
+    try {
+      window.localStorage.setItem("noor-study-mode", v ? "1" : "0");
+    } catch {
+      /* بی‌اهمیت */
+    }
+  }, []);
+  /* شیت زمینه (پاورقی/آیه/روایت) در حالت مطالعه — پنل کناری وجود ندارد */
+  const [studyCtxOpen, setStudyCtxOpen] = useState(false);
+  useEffect(() => {
+    if (footnote && studyMode) setStudyCtxOpen(true);
+    if (!footnote) setStudyCtxOpen(false);
+  }, [footnote, studyMode]);
+  /* در حالت مطالعه، تغییر صفحه پاپ‌آپ زمینه را هم می‌بندد */
+  useEffect(() => {
+    if (!studyMode) return;
+    setStudyCtxOpen(false);
+  }, [currentPageUid, studyMode]);
+  /* خروج با Escape — فقط وقتی Escape توسط شیت/پاپ‌اوری مصرف نشده باشد
+     (اگر شیت فهرست/یادداشت/تنظیمات باز است، Escape فقط همان را می‌بندد) */
+  useEffect(() => {
+    if (!studyMode) return;
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      if (e.key !== "Escape") return;
+      if (e.defaultPrevented) return;
+      const openOverlay = document.querySelector(
+        '[data-state="open"][role="dialog"], [data-radix-popper-content-wrapper]',
+      );
+      if (openOverlay) return;
+      toggleStudyMode(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [studyMode, toggleStudyMode]);
 
   const flash = useCallback((msg: string) => {
     setSaveFlash(msg);
@@ -353,12 +410,16 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
     [continuous, documentUid],
   );
 
-  /* اسکرول به صفحهٔ مقصد در حالت پیوسته — پس از آماده‌شدن پود همان صفحه */
+  /* اسکرول به صفحهٔ مقصد در حالت پیوسته — فقط یک بار برای هر مقصد.
+     ریشهٔ باگ «برگشت به بالا»: payloadByUid با رسیدن هر صفحه هویت تازه می‌گیرد
+     و بدون این گارد، افکت هر بار به صفحهٔ درخواستی اسکرول می‌کرد. */
   useEffect(() => {
     if (!continuous || !requestedPageUid) return;
+    if (lastAutoScrollRef.current === requestedPageUid) return;
     if (!payloadByUid[requestedPageUid]) return; // هنوز بارگذاری نشده — با آماده‌شدن دوباره اجرا می‌شود
     const el = document.getElementById(`pgsec-${requestedPageUid}`);
     if (el) {
+      lastAutoScrollRef.current = requestedPageUid;
       el.scrollIntoView({ behavior: "auto", block: "start" });
       contCurrentRef.current = requestedPageUid;
       setContCurrentUid(requestedPageUid);
@@ -380,6 +441,7 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
     const id = window.setTimeout(() => {
       const el = document.getElementById(`pgsec-${target}`);
       if (el) {
+        lastAutoScrollRef.current = target;
         el.scrollIntoView({ behavior: "auto", block: "start" });
         contCurrentRef.current = target;
         setContCurrentUid(target);
@@ -526,11 +588,30 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
     if (sel) setFicheOpen(true);
   }, []);
 
-  /* §۷-الف-۳: انتخاب متن → هایلایت چندرنگ (لنگر: بلوک + بازهٔ cp) */
+  /* §۷-الف-۳: انتخاب متن → هایلایت چندرنگ (لنگر: بلوک + بازهٔ cp)
+     نقاشی خوش‌بینانه: هایلایت فوراً دیده می‌شود؛ اگر ثبت شکست خورد پس گرفته می‌شود */
   const onHighlightSelection = useCallback(
     async (sel: ReaderSelection, color: HighlightColor) => {
       const pageUid = blockPage[sel.blockId];
       if (!pageUid) return;
+      const qk = ["annotations", documentUid] as const;
+      const tempUid = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      const optimistic: HighlightT = {
+        uid: tempUid,
+        document_uid: documentUid,
+        page_uid: pageUid,
+        block_id: sel.blockId,
+        start: sel.start,
+        end: sel.end,
+        text: sel.text.slice(0, 4000),
+        color,
+        note: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      queryClient.setQueryData<{ items: HighlightT[] }>(qk, (old) => ({
+        items: [...(old?.items ?? []), optimistic],
+      }));
       try {
         await api.post("/annotations", {
           document_uid: documentUid,
@@ -541,17 +622,69 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
           text: sel.text.slice(0, 4000),
           color,
         });
-        await queryClient.invalidateQueries({ queryKey: ["annotations", documentUid] });
         flash("هایلایت ثبت شد");
       } catch (err) {
+        queryClient.setQueryData<{ items: HighlightT[] }>(qk, (old) => ({
+          items: (old?.items ?? []).filter((h) => h.uid !== tempUid),
+        }));
         toast({
           title: "ثبت هایلایت ناموفق بود",
           description: errorMessage(err, "دوباره تلاش کنید."),
           variant: "destructive",
         });
+      } finally {
+        void queryClient.invalidateQueries({ queryKey: qk });
       }
     },
     [blockPage, documentUid, queryClient, flash],
+  );
+
+  /* تغییر رنگ هایلایت موجود — خوش‌بینانه؛ خطا با بازخوانی جبران می‌شود */
+  const onHighlightUpdate = useCallback(
+    async (uid: string, color: HighlightColor) => {
+      const qk = ["annotations", documentUid] as const;
+      const prev = queryClient.getQueryData<{ items: HighlightT[] }>(qk);
+      queryClient.setQueryData<{ items: HighlightT[] }>(qk, (old) => ({
+        items: (old?.items ?? []).map((h) =>
+          h.uid === uid ? { ...h, color, updated_at: new Date().toISOString() } : h,
+        ),
+      }));
+      try {
+        await api.patch(`/annotations/${uid}`, { color });
+        flash("رنگ هایلایت عوض شد");
+      } catch (err) {
+        if (prev) queryClient.setQueryData(qk, prev);
+        toast({
+          title: "تغییر رنگ ناموفق بود",
+          description: errorMessage(err, "دوباره تلاش کنید."),
+          variant: "destructive",
+        });
+      }
+    },
+    [documentUid, queryClient, flash],
+  );
+
+  /* حذف هایلایت — خوش‌بینانه */
+  const onHighlightDelete = useCallback(
+    async (uid: string) => {
+      const qk = ["annotations", documentUid] as const;
+      const prev = queryClient.getQueryData<{ items: HighlightT[] }>(qk);
+      queryClient.setQueryData<{ items: HighlightT[] }>(qk, (old) => ({
+        items: (old?.items ?? []).filter((h) => h.uid !== uid),
+      }));
+      try {
+        await api.del(`/annotations/${uid}`);
+        flash("هایلایت حذف شد");
+      } catch (err) {
+        if (prev) queryClient.setQueryData(qk, prev);
+        toast({
+          title: "حذف هایلایت ناموفق بود",
+          description: errorMessage(err, "دوباره تلاش کنید."),
+          variant: "destructive",
+        });
+      }
+    },
+    [documentUid, queryClient, flash],
   );
 
   /* ---------- پاورقی/ارجاع — در هر دو حالت از پود درست ---------- */
@@ -787,6 +920,8 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
         highlight={highlightByPage[payload.page_uid] ?? null}
         userHighlights={userHls.length > 0 ? userHls : undefined}
         onHighlightSelection={onHighlightSelection}
+        onHighlightUpdate={onHighlightUpdate}
+        onHighlightDelete={onHighlightDelete}
         collapsedSanads={collapsedSanads}
         onToggleSanad={toggleSanad}
         onFootnoteClick={(refUid) => openFootnoteFromPayload(payload, refUid)}
@@ -800,42 +935,73 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
 
   return (
     <div className="flex h-[calc(100vh-8.5rem)] min-h-0 flex-col" dir="rtl">
-      <ReaderToolbar
-        workTitle={work.title}
-        documentLabel={docLabel}
-        pageLabel={activePayload?.label ?? "…"}
-        display={display}
-        onDisplayChange={(d) => useWorkspaceStore.getState().updatePrefs({ display: d })}
-        pageRefs={pageRefs}
-        currentPageUid={currentPageUid}
-        onJumpToPage={(ref) => goToPage(ref.page_uid)}
-        documentUid={documentUid}
-        onSearchInDocument={onSearchInDocument}
-        bookmarked={isBookmarked}
-        bookmarkPending={bookmarkPending}
-        onToggleBookmark={() => void toggleBookmark()}
-        onCopyAddress={() => void copyAddress()}
-        onExportPdf={() => setPdfOpen(true)}
-        settingsTrigger={
-          <SettingsPopover
-            trigger={
-              <Button variant="ghost" size="icon" aria-label="تنظیمات خواندن" className="size-11 md:size-9">
-                <SlidersHorizontal className="size-4" />
-              </Button>
-            }
-          />
-        }
-        highlightActive={!!hl}
-        onClearHighlight={() => {
-          const q = new URLSearchParams(window.location.hash.split("?")[1] ?? "");
-          q.delete("hl");
-          q.delete("hlb");
-          window.location.hash = `#/read/${documentUid}?${q.toString()}`;
-        }}
-        onPrev={prevRef ? () => gotoNeighbor(prevRef) : null}
-        onNext={nextRef ? () => gotoNeighbor(nextRef) : null}
-        saveIndicator={saveFlash ? <span className="text-xs text-muted-foreground">{saveFlash}</span> : null}
-      />
+      {studyMode ? (
+        /* ---------- حالت مطالعهٔ مینیمال: فقط یک نوار باریک ---------- */
+        <div className="flex items-center justify-between gap-2 border-b border-border bg-surface/95 px-3 py-1.5 backdrop-blur">
+          <div className="flex min-w-0 items-center gap-2 text-[13px] leading-5">
+            <BookOpenCheck className="size-4 shrink-0 text-primary" aria-hidden="true" />
+            <span className="max-w-[12rem] truncate font-semibold text-foreground md:max-w-[18rem]">
+              {work.title}
+            </span>
+            <span aria-hidden="true" className="text-muted-foreground">/</span>
+            <span className="shrink-0 font-medium text-muted-foreground">
+              صفحهٔ {activePayload?.label ?? "…"}
+            </span>
+          </div>
+          <div className="flex items-center gap-1">
+            {saveFlash ? <span className="text-xs text-muted-foreground">{saveFlash}</span> : null}
+            <Button
+              variant="outline"
+              size="sm"
+              className="min-h-9 gap-1.5"
+              onClick={() => toggleStudyMode(false)}
+              title="خروج از حالت مطالعه (Esc)"
+            >
+              <Minimize2 className="size-4" aria-hidden="true" />
+              خروج از حالت مطالعه
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <ReaderToolbar
+          workTitle={work.title}
+          documentLabel={docLabel}
+          pageLabel={activePayload?.label ?? "…"}
+          display={display}
+          onDisplayChange={(d) => useWorkspaceStore.getState().updatePrefs({ display: d })}
+          pageRefs={pageRefs}
+          currentPageUid={currentPageUid}
+          onJumpToPage={(ref) => goToPage(ref.page_uid)}
+          documentUid={documentUid}
+          onSearchInDocument={onSearchInDocument}
+          bookmarked={isBookmarked}
+          bookmarkPending={bookmarkPending}
+          onToggleBookmark={() => void toggleBookmark()}
+          onCopyAddress={() => void copyAddress()}
+          onExportPdf={() => setPdfOpen(true)}
+          studyMode={false}
+          onToggleStudyMode={() => toggleStudyMode(true)}
+          settingsTrigger={
+            <SettingsPopover
+              trigger={
+                <Button variant="ghost" size="icon" aria-label="تنظیمات خواندن" className="size-11 md:size-9">
+                  <SlidersHorizontal className="size-4" />
+                </Button>
+              }
+            />
+          }
+          highlightActive={!!hl}
+          onClearHighlight={() => {
+            const q = new URLSearchParams(window.location.hash.split("?")[1] ?? "");
+            q.delete("hl");
+            q.delete("hlb");
+            window.location.hash = `#/read/${documentUid}?${q.toString()}`;
+          }}
+          onPrev={prevRef ? () => gotoNeighbor(prevRef) : null}
+          onNext={nextRef ? () => gotoNeighbor(nextRef) : null}
+          saveIndicator={saveFlash ? <span className="text-xs text-muted-foreground">{saveFlash}</span> : null}
+        />
+      )}
 
       {/* banner اشتراک (§۷-الف-۳): مقصد دقیق با هایلایت/یادداشت اشتراکی */}
       {sharedUid ? (
@@ -881,21 +1047,18 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
       ) : null}
 
       <div className="flex min-h-0 flex-1">
-        {/* فهرست — دسکتاپ */}
-        <aside className="hidden w-72 shrink-0 border-e border-border lg:block xl:w-80">
-          <div className="flex items-center justify-between border-b border-border px-3 py-2">
-            <span className="text-sm font-medium">فهرست و نشانک‌ها</span>
-          </div>
-          <div className="h-[calc(100%-2.6rem)] overflow-y-auto">{tocPanel}</div>
-        </aside>
+        {/* فهرست — دسکتاپ (در حالت مطالعه پنهان؛ از قرص شناور باز می‌شود) */}
+        {!studyMode ? (
+          <aside className="hidden w-72 shrink-0 border-e border-border lg:block xl:w-80">
+            <div className="flex items-center justify-between border-b border-border px-3 py-2">
+              <span className="text-sm font-medium">فهرست و نشانک‌ها</span>
+            </div>
+            <div className="h-[calc(100%-2.6rem)] overflow-y-auto">{tocPanel}</div>
+          </aside>
+        ) : null}
 
-        {/* فهرست — موبایل/تبلت */}
+        {/* فهرست — شیت (موبایل/تبلت + حالت مطالعه) */}
         <Sheet open={tocOpen} onOpenChange={setTocOpen}>
-          <SheetTrigger asChild>
-            <Button variant="ghost" size="icon" aria-label="فهرست" className="size-11 self-start m-2 lg:hidden">
-              <List className="size-5" />
-            </Button>
-          </SheetTrigger>
           <SheetContent side="right" className="w-80 p-0">
             <SheetHeader className="border-b border-border py-3">
               <SheetTitle className="text-sm">فهرست و نشانک‌ها</SheetTitle>
@@ -1000,77 +1163,79 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
           )}
         </main>
 
-        {/* پنل زمینه — دسکتاپ */}
-        <aside className="hidden w-80 shrink-0 border-s border-border xl:block">
-          {/* تب‌های زمینه / یادداشت */}
-          <div role="tablist" aria-label="پنل کناری متن" className="flex border-b border-border">
-            <button
-              role="tab"
-              aria-selected={ctxTab === "context"}
-              onClick={() => setCtxTab("context")}
-              className={`min-h-11 flex-1 border-b-2 px-2 text-xs font-medium transition-colors md:min-h-9 ${
-                ctxTab === "context"
-                  ? "border-primary bg-primary/5 text-foreground"
-                  : "border-transparent text-muted-foreground hover:bg-accent/60"
-              }`}
-            >
-              زمینه
-            </button>
-            <button
-              role="tab"
-              aria-selected={ctxTab === "notes"}
-              onClick={() => setCtxTab("notes")}
-              className={`min-h-11 flex-1 border-b-2 px-2 text-xs font-medium transition-colors md:min-h-9 ${
-                ctxTab === "notes"
-                  ? "border-primary bg-primary/5 text-foreground"
-                  : "border-transparent text-muted-foreground hover:bg-accent/60"
-              }`}
-            >
-              یادداشت‌ها
-              {docNoteCount > 0 ? (
-                <span className="ms-1 inline-flex min-w-5 justify-center rounded-full bg-primary/15 px-1 text-[10px] font-semibold text-primary">
-                  {faNum(docNoteCount)}
-                </span>
-              ) : null}
-            </button>
-          </div>
-          <div className="h-[calc(100%-2.75rem)] overflow-y-auto">
-            {ctxTab === "notes" ? (
-              <NotesPanel
-                documentUid={documentUid}
-                currentPageUid={currentPageUid}
-                pageLabel={activePayload?.label ?? null}
-                hadithScope={hadithNoteScope}
-                onClearHadithScope={() => setHadithNoteScope(null)}
-                onJumpToPage={(pg) => goToPage(pg)}
-                workTitle={work.title}
-                anchorStatus={anchorStatus}
-              />
-            ) : footnote ? (
-              <FootnotePanel
-                data={footnote}
-                onBack={() => setFootnote(null)}
-                onHadithLookup={setHadithLookupUid}
-                documentUid={documentUid}
-                onHadithFiche={onHadithFiche}
-                onHadithNote={(localUid, revayatIndex) => {
-                  setHadithNoteScope({ localUid, revayatIndex });
-                  setCtxTab("notes");
-                }}
-              />
-            ) : (
-              <p className="p-4 text-sm text-muted-foreground">
-                برای دیدن پاورقی یا ارجاع، روی نشان آن در متن کلیک کنید.
-              </p>
-            )}
-          </div>
-        </aside>
+        {/* پنل زمینه — دسکتاپ (در حالت مطالعه پنهان) */}
+        {!studyMode ? (
+          <aside className="hidden w-80 shrink-0 border-s border-border xl:block">
+            {/* تب‌های زمینه / یادداشت */}
+            <div role="tablist" aria-label="پنل کناری متن" className="flex border-b border-border">
+              <button
+                role="tab"
+                aria-selected={ctxTab === "context"}
+                onClick={() => setCtxTab("context")}
+                className={`min-h-11 flex-1 border-b-2 px-2 text-xs font-medium transition-colors md:min-h-9 ${
+                  ctxTab === "context"
+                    ? "border-primary bg-primary/5 text-foreground"
+                    : "border-transparent text-muted-foreground hover:bg-accent/60"
+                }`}
+              >
+                زمینه
+              </button>
+              <button
+                role="tab"
+                aria-selected={ctxTab === "notes"}
+                onClick={() => setCtxTab("notes")}
+                className={`min-h-11 flex-1 border-b-2 px-2 text-xs font-medium transition-colors md:min-h-9 ${
+                  ctxTab === "notes"
+                    ? "border-primary bg-primary/5 text-foreground"
+                    : "border-transparent text-muted-foreground hover:bg-accent/60"
+                }`}
+              >
+                یادداشت‌ها
+                {docNoteCount > 0 ? (
+                  <span className="ms-1 inline-flex min-w-5 justify-center rounded-full bg-primary/15 px-1 text-[10px] font-semibold text-primary">
+                    {faNum(docNoteCount)}
+                  </span>
+                ) : null}
+              </button>
+            </div>
+            <div className="h-[calc(100%-2.75rem)] overflow-y-auto">
+              {ctxTab === "notes" ? (
+                <NotesPanel
+                  documentUid={documentUid}
+                  currentPageUid={currentPageUid}
+                  pageLabel={activePayload?.label ?? null}
+                  hadithScope={hadithNoteScope}
+                  onClearHadithScope={() => setHadithNoteScope(null)}
+                  onJumpToPage={(pg) => goToPage(pg)}
+                  workTitle={work.title}
+                  anchorStatus={anchorStatus}
+                />
+              ) : footnote ? (
+                <FootnotePanel
+                  data={footnote}
+                  onBack={() => setFootnote(null)}
+                  onHadithLookup={setHadithLookupUid}
+                  documentUid={documentUid}
+                  onHadithFiche={onHadithFiche}
+                  onHadithNote={(localUid, revayatIndex) => {
+                    setHadithNoteScope({ localUid, revayatIndex });
+                    setCtxTab("notes");
+                  }}
+                />
+              ) : (
+                <p className="p-4 text-sm text-muted-foreground">
+                  هاور روی شمارهٔ پاورقی، پیش‌نمایش متن را نشان می‌دهد؛ کلیک، همین پنل را باز می‌کند.
+                </p>
+              )}
+            </div>
+          </aside>
+        ) : null}
       </div>
 
-      {/* پاورقی — فقط زیر xl: sheet پایین.
+      {/* پاورقی — فقط زیر xl و بیرون از حالت مطالعه: sheet پایین.
           نکته: محتوای Sheet در body پرتال می‌شود؛ xl:hidden روی والدِ آن
           اثری ندارد — پس رندر شیت باید صریحاً به isCompact مقید باشد. */}
-      {footnote && isCompact ? (
+      {footnote && isCompact && !studyMode ? (
         <Sheet open={!!footnote} onOpenChange={(o) => !o && setFootnote(null)}>
           <SheetContent side="bottom" className="max-h-[60vh] overflow-y-auto">
             <SheetHeader>
@@ -1092,9 +1257,48 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
         </Sheet>
       ) : null}
 
-      {/* یادداشت‌ها — موبایل/تبلت: شیت پایین */}
+      {/* پاورقی/زمینه در حالت مطالعه — شیتِ کناری (دسکتاپ) یا پایین (موبایل) */}
+      {footnote && studyMode ? (
+        <Sheet open={studyCtxOpen} onOpenChange={(o) => !o && setFootnote(null)}>
+          <SheetContent
+            side={isCompact ? "bottom" : "left"}
+            className={
+              isCompact
+                ? "max-h-[60vh] overflow-y-auto"
+                : "h-full w-[24rem] overflow-y-auto p-0 sm:max-w-none"
+            }
+          >
+            <SheetHeader className="border-b border-border py-3">
+              <SheetTitle className="text-sm">پاورقی / ارجاع</SheetTitle>
+            </SheetHeader>
+            <div className={isCompact ? "" : "h-[calc(100%-3.4rem)] overflow-y-auto"}>
+              <FootnotePanel
+                data={footnote}
+                onBack={() => setFootnote(null)}
+                onHadithLookup={setHadithLookupUid}
+                documentUid={documentUid}
+                onHadithFiche={onHadithFiche}
+                onHadithNote={(localUid, revayatIndex) => {
+                  setHadithNoteScope({ localUid, revayatIndex });
+                  setFootnote(null);
+                  setNotesSheetOpen(true);
+                }}
+              />
+            </div>
+          </SheetContent>
+        </Sheet>
+      ) : null}
+
+      {/* یادداشت‌ها — شیت: موبایل پایین / دسکتاپ از سمت چپ (سمت پنل زمینه) */}
       <Sheet open={notesSheetOpen} onOpenChange={setNotesSheetOpen}>
-        <SheetContent side="bottom" className="flex h-[75vh] flex-col overflow-hidden">
+        <SheetContent
+          side={isCompact ? "bottom" : "left"}
+          className={
+            isCompact
+              ? "flex h-[75vh] flex-col overflow-hidden"
+              : "flex h-full w-[26rem] flex-col overflow-hidden p-0 sm:max-w-none"
+          }
+        >
           <SheetHeader className="border-b border-border pb-2">
             <SheetTitle className="flex items-center gap-1.5 text-sm">
               <StickyNote className="size-4 text-primary" aria-hidden="true" />
@@ -1155,7 +1359,7 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
         onNoteRequest={(localUid, revayatIndex) => {
           setHadithLookupUid(null);
           setHadithNoteScope({ localUid, revayatIndex });
-          if (isCompact) {
+          if (studyMode || isCompact) {
             setNotesSheetOpen(true);
           } else {
             setCtxTab("notes");
@@ -1163,8 +1367,9 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
         }}
       />
 
-      {/* دکمه‌های شناور برای موبایل */}
-      <div className="fixed bottom-20 left-3 z-30 flex gap-2 xl:hidden">
+      {/* دکمه‌های شناور برای موبایل — در حالت مطالعه قرصِ مینیمال جایگزین می‌شود */}
+      {!studyMode ? (
+        <div className="fixed bottom-20 left-3 z-30 flex gap-2 xl:hidden">
         <Button
           size="icon"
           variant={pageNoteCount > 0 ? "default" : "outline"}
@@ -1232,7 +1437,79 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
             </Button>
           }
         />
+        <Button
+          size="icon"
+          variant="outline"
+          aria-label="حالت مطالعهٔ مینیمال"
+          title="حالت مطالعه: صفحهٔ مینیمال با آیکون‌های فهرست و یادداشت"
+          className="size-11 rounded-full bg-surface"
+          onClick={() => toggleStudyMode(true)}
+        >
+          <BookOpenCheck className="size-4" />
+        </Button>
       </div>
+      ) : null}
+
+      {/* حالت مطالعهٔ مینیمال — قرص شناور: فهرست / یادداشت‌ها / تنظیمات / خروج */}
+      {studyMode ? (
+        <div
+          className="fixed bottom-24 left-1/2 z-40 flex -translate-x-1/2 items-center gap-1 rounded-full border border-border bg-surface/95 p-1.5 shadow-lg backdrop-blur md:bottom-6"
+          role="toolbar"
+          aria-label="ابزار حالت مطالعه"
+        >
+          <Button
+            size="icon"
+            variant="ghost"
+            aria-label="فهرست و نشانک‌ها"
+            title="فهرست و نشانک‌ها"
+            className="size-10 rounded-full"
+            onClick={() => setTocOpen(true)}
+          >
+            <List className="size-4.5" />
+          </Button>
+          <Button
+            size="icon"
+            variant="ghost"
+            aria-label={`یادداشت‌ها${docNoteCount > 0 ? ` (${faNum(docNoteCount)})` : ""}`}
+            title="یادداشت‌ها و هایلایت‌ها"
+            className="size-10 rounded-full"
+            onClick={() => setNotesSheetOpen(true)}
+          >
+            <span className="relative">
+              <StickyNote className="size-4.5" />
+              {docNoteCount > 0 ? (
+                <span className="absolute -end-1.5 -top-1.5 min-w-3.5 rounded-full bg-primary px-0.5 text-center text-[9px] font-bold leading-3.5 text-primary-foreground">
+                  {faNum(docNoteCount)}
+                </span>
+              ) : null}
+            </span>
+          </Button>
+          <SettingsPopover
+            trigger={
+              <Button
+                size="icon"
+                variant="ghost"
+                aria-label="تنظیمات خواندن"
+                title="تنظیمات خواندن (قلم/اندازه/حالت نمایش)"
+                className="size-10 rounded-full"
+              >
+                <SlidersHorizontal className="size-4.5" />
+              </Button>
+            }
+          />
+          <div aria-hidden="true" className="mx-0.5 h-5 w-px bg-border" />
+          <Button
+            size="icon"
+            variant="ghost"
+            aria-label="خروج از حالت مطالعه"
+            title="خروج از حالت مطالعه (Esc)"
+            className="size-10 rounded-full text-primary hover:bg-primary/10"
+            onClick={() => toggleStudyMode(false)}
+          >
+            <Minimize2 className="size-4.5" />
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 }
