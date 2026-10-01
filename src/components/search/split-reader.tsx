@@ -21,14 +21,18 @@ import {
   Copy,
   FileText,
   Loader2,
+  StickyNote,
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { api, errorMessage } from "@/lib/api";
 import { HashLink } from "@/lib/hash-router";
+import { faNum } from "@/lib/format";
 import type {
   BlockLink,
+  Note,
   PageBlock,
   PagePayload,
   PageRef,
@@ -38,6 +42,7 @@ import { useWorkspaceStore } from "@/store/workspace";
 import { PageRenderer, type ReaderSelection } from "@/components/reader/page-renderer";
 import { FootnotePanel, type FootnotePanelData } from "@/components/reader/footnote-panel";
 import { FicheDialog } from "@/components/reader/fiche-dialog";
+import { NotesPanel } from "@/components/reader/notes-panel";
 import { HadithLocationsDialog } from "@/components/search/hadith-locations-dialog";
 
 /** مختصات پنل کنار نتایج — از نتیجهٔ انتخاب‌شده ساخته می‌شود */
@@ -142,6 +147,21 @@ export function SplitReaderPanel({ locator, onClose, onNavigate }: PanelProps) {
   const [flash, setFlash] = useState<string | null>(null);
   /* §۴۷: پرس‌وجوی میان‌کتابی روایت از پنل زمینهٔ پنل کنار نتایج */
   const [hadithLookupUid, setHadithLookupUid] = useState<string | null>(null);
+  /* RES: یادداشت‌ها در همین پنل — شیت پایین با پشتیبانی دامنهٔ روایت */
+  const [notesOpen, setNotesOpen] = useState(false);
+  const [hadithNoteScope, setHadithNoteScope] = useState<{
+    localUid: string;
+    revayatIndex?: string | null;
+  } | null>(null);
+
+  /* شمار یادداشت‌های سند برای نشان دکمه (همان کلید کوئری کتاب‌خوان) */
+  const notesCountQuery = useQuery({
+    queryKey: ["notes", documentUid],
+    queryFn: () => api.get<{ items: Note[] }>("/notes", { document_uid: documentUid }),
+    staleTime: 15_000,
+    retry: false,
+  });
+  const docNoteCount = notesCountQuery.data?.items.length ?? 0;
 
   /* با تعویض صفحه درون پنل، پنل زمینه و انتخاب پاک می‌شود
      (الگوی مجاز React: تنظیم state حین رندر هنگام تغییر prop) */
@@ -291,6 +311,21 @@ export function SplitReaderPanel({ locator, onClose, onNavigate }: PanelProps) {
           <Button
             variant="ghost"
             size="icon"
+            aria-label="یادداشت‌های این سند"
+            title="یادداشت‌های شخصی (RES) — ساخت/ویرایش در همین پنل"
+            className="relative size-8"
+            onClick={() => setNotesOpen(true)}
+          >
+            <StickyNote className="size-3.5" />
+            {docNoteCount > 0 ? (
+              <span className="absolute -end-0.5 -top-0.5 inline-flex min-w-4 justify-center rounded-full bg-primary px-1 text-[9px] font-semibold leading-4 text-primary-foreground">
+                {faNum(docNoteCount)}
+              </span>
+            ) : null}
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
             aria-label="کپی ارجاع متنی با نشانی عمیق"
             title="ارجاع متنی + نشانی عمیق برای یادداشت‌های شما (RES-08)"
             className="size-8"
@@ -373,7 +408,16 @@ export function SplitReaderPanel({ locator, onClose, onNavigate }: PanelProps) {
       {/* پنل زمینه (پاورقی/آیه/روایت) */}
       {ctx ? (
         <div className="max-h-56 overflow-y-auto border-t border-border">
-          <FootnotePanel data={ctx} onBack={() => setCtx(null)} onHadithLookup={setHadithLookupUid} />
+          <FootnotePanel
+            data={ctx}
+            onBack={() => setCtx(null)}
+            onHadithLookup={setHadithLookupUid}
+            onHadithNote={(localUid, revayatIndex) => {
+              setHadithNoteScope({ localUid, revayatIndex });
+              setCtx(null);
+              setNotesOpen(true);
+            }}
+          />
         </div>
       ) : null}
 
@@ -420,6 +464,27 @@ export function SplitReaderPanel({ locator, onClose, onNavigate }: PanelProps) {
         sectionUid={null}
         work={{ uid: locator.workUid, title: locator.workTitle }}
       />
+
+      {/* یادداشت‌های شخصی — شیت پایین با همان NotesPanel کتاب‌خوان (RES) */}
+      <Sheet open={notesOpen} onOpenChange={setNotesOpen}>
+        <SheetContent side="bottom" className="flex h-[75vh] flex-col overflow-hidden">
+          <SheetHeader className="border-b border-border pb-2">
+            <SheetTitle className="flex items-center gap-1.5 text-sm">
+              <StickyNote className="size-4 text-primary" aria-hidden="true" />
+              یادداشت‌های این سند — کنار نتایج
+            </SheetTitle>
+          </SheetHeader>
+          <div className="min-h-0 flex-1 overflow-hidden">
+            <NotesPanel
+              documentUid={documentUid}
+              currentPageUid={resolvedPageUid || null}
+              pageLabel={pageQuery.data?.label ?? null}
+              hadithScope={hadithNoteScope}
+              onClearHadithScope={() => setHadithNoteScope(null)}
+            />
+          </div>
+        </SheetContent>
+      </Sheet>
 
       {/* پرس‌وجوی میان‌کتابی روایت (§۴۷) — از پنل زمینهٔ پنل */}
       <HadithLocationsDialog

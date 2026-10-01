@@ -1683,7 +1683,7 @@ export function AdminView() {
       </header>
 
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="mb-4 h-auto flex-wrap">
+        <TabsList aria-label="بخش‌های مدیریت سامانه" className="mb-4 h-auto flex-wrap">
           {TAB_ITEMS.map((item) => (
             <TabsTrigger key={item.value} value={item.value} className="min-h-9">
               {item.label}

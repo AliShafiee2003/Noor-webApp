@@ -20,6 +20,7 @@ import {
   Loader2,
   Pencil,
   RotateCcw,
+  ScrollText,
   StickyNote,
   Trash2,
   TriangleAlert,
@@ -49,11 +50,21 @@ interface NotesPanelProps {
   currentPageUid: string | null;
   /** برچسب چاپی صفحهٔ فعلی برای نمایش (مثل «۴۲» یا «—») */
   pageLabel?: string | null;
+  /** دامنهٔ روایت (RES): یادداشت روی روایت مشخص — از پنل زمینهٔ روایت */
+  hadithScope?: { localUid: string; revayatIndex?: string | null } | null;
+  /** پایان دامنهٔ روایت — بازگشت به دامنهٔ صفحه/سند */
+  onClearHadithScope?: () => void;
 }
 
-type Tab = "page" | "document";
+type Tab = "page" | "document" | "hadith";
 
-export function NotesPanel({ documentUid, currentPageUid, pageLabel }: NotesPanelProps) {
+export function NotesPanel({
+  documentUid,
+  currentPageUid,
+  pageLabel,
+  hadithScope = null,
+  onClearHadithScope,
+}: NotesPanelProps) {
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<Tab>("page");
   const [draft, setDraft] = useState("");
@@ -68,6 +79,18 @@ export function NotesPanel({ documentUid, currentPageUid, pageLabel }: NotesPane
     setSaveState("idle");
     setActionError(null);
   }, [currentPageUid]);
+
+  /* با ورود به دامنهٔ روایت، تب «این روایت» فعال می‌شود؛ با پایان آن به صفحه برمی‌گردیم */
+  useEffect(() => {
+    if (hadithScope) {
+      setTab("hadith");
+      setDraft("");
+      setSaveState("idle");
+      setActionError(null);
+    } else {
+      setTab((t) => (t === "hadith" ? "page" : t));
+    }
+  }, [hadithScope]);
   const [editing, setEditing] = useState<{ uid: string; body: string; version: number } | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
   /** تعارض RES-14 */
@@ -89,7 +112,10 @@ export function NotesPanel({ documentUid, currentPageUid, pageLabel }: NotesPane
 
   const notes = notesQuery.data?.items ?? [];
   const pageNotes = notes.filter((n) => n.page_uid === currentPageUid);
-  const shown = tab === "page" ? pageNotes : notes;
+  const hadithNotes = hadithScope
+    ? notes.filter((n) => n.local_hadith_uid === hadithScope.localUid)
+    : [];
+  const shown = tab === "page" ? pageNotes : tab === "hadith" ? hadithNotes : notes;
   const shownSorted = [...shown].sort((a, b) => (b.updated_at ?? "").localeCompare(a.updated_at ?? ""));
 
   /* ---------- پیش‌نویس صفحه ---------- */
@@ -100,16 +126,19 @@ export function NotesPanel({ documentUid, currentPageUid, pageLabel }: NotesPane
   const saveNew = async () => {
     const body = draft.trim();
     if (!body || saveState === "saving") return;
+    const hadithTarget = tab === "hadith" ? hadithScope : null;
+    if (hadithTarget && !hadithTarget.localUid) return;
     setSaveState("saving");
     setActionError(null);
     try {
       await api.post<Note>("/notes", {
         document_uid: documentUid,
         page_uid: currentPageUid ?? undefined,
+        local_hadith_uid: hadithTarget ? hadithTarget.localUid : undefined,
         body,
       });
       setDraft("");
-      draftsByPage.current.delete(currentPageUid ?? "__doc");
+      draftsByPage.current.delete(hadithTarget ? `h:${hadithTarget.localUid}` : (currentPageUid ?? "__doc"));
       setSaveState("saved");
       window.setTimeout(() => setSaveState((s) => (s === "saved" ? "idle" : s)), 2200);
       refresh();
@@ -199,6 +228,20 @@ export function NotesPanel({ documentUid, currentPageUid, pageLabel }: NotesPane
           >
             این صفحه {pageNotes.length > 0 ? `(${faNum(pageNotes.length)})` : ""}
           </button>
+          {hadithScope ? (
+            <button
+              role="tab"
+              aria-selected={tab === "hadith"}
+              onClick={() => switchTab("hadith")}
+              className={`min-h-11 flex-1 rounded-t-lg border-b-2 px-2 text-xs font-medium transition-colors md:min-h-8 ${
+                tab === "hadith"
+                  ? "border-primary bg-primary/5 text-foreground"
+                  : "border-transparent text-muted-foreground hover:bg-accent/60"
+              }`}
+            >
+              این روایت {hadithNotes.length > 0 ? `(${faNum(hadithNotes.length)})` : ""}
+            </button>
+          ) : null}
           <button
             role="tab"
             aria-selected={tab === "document"}
@@ -227,6 +270,28 @@ export function NotesPanel({ documentUid, currentPageUid, pageLabel }: NotesPane
             ثبت می‌شود.
           </p>
         ) : null}
+        {tab === "hadith" && hadithScope ? (
+          <div className="mb-2 flex items-start justify-between gap-2 rounded-lg border border-primary/30 bg-primary/5 px-2.5 py-2">
+            <p className="text-[11px] leading-5 text-foreground">
+              <ScrollText className="me-1 inline size-3.5 text-primary" aria-hidden="true" />
+              یادداشت به{" "}
+              {hadithScope.revayatIndex ? `روایت ${faNum(hadithScope.revayatIndex)}` : "این روایت"} از{" "}
+              {pageLabel && pageLabel !== "—" ? `صفحهٔ ${faNum(pageLabel)}` : "صفحهٔ فعلی"} ثبت می‌شود؛
+              در فهرست کل سند با نشان «روایت» دیده می‌شود.
+            </p>
+            {onClearHadithScope ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 shrink-0 gap-1 px-2 text-[11px]"
+                onClick={onClearHadithScope}
+              >
+                <X className="size-3" aria-hidden="true" />
+                پایان دامنهٔ روایت
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
 
         {/* سرهم‌بندی یادداشت تازه */}
         <div className="rounded-xl border border-border bg-surface p-2.5">
@@ -237,7 +302,10 @@ export function NotesPanel({ documentUid, currentPageUid, pageLabel }: NotesPane
             value={draft}
             onChange={(e) => {
               setDraft(e.target.value);
-              draftsByPage.current.set(currentPageUid ?? "__doc", e.target.value);
+              draftsByPage.current.set(
+                tab === "hadith" && hadithScope ? `h:${hadithScope.localUid}` : (currentPageUid ?? "__doc"),
+                e.target.value,
+              );
               setSaveState("idle");
               setActionError(null);
             }}
@@ -263,11 +331,11 @@ export function NotesPanel({ documentUid, currentPageUid, pageLabel }: NotesPane
             <Button
               size="sm"
               className="min-h-9 gap-1.5"
-              disabled={!draft.trim() || saveState === "saving" || !currentPageUid}
+              disabled={!draft.trim() || saveState === "saving" || (!currentPageUid && tab !== "document")}
               onClick={() => void saveNew()}
             >
               <Check className="size-3.5" aria-hidden="true" />
-              ذخیرهٔ یادداشت
+              {tab === "hadith" ? "ذخیرهٔ یادداشت روایت" : "ذخیرهٔ یادداشت"}
             </Button>
           </div>
           {actionError ? (
@@ -300,12 +368,18 @@ export function NotesPanel({ documentUid, currentPageUid, pageLabel }: NotesPane
             <div className="rounded-xl border border-dashed border-border p-4 text-center">
               <StickyNote className="mx-auto size-5 text-muted-foreground/60" aria-hidden="true" />
               <p className="mt-1.5 text-xs font-medium">
-                {tab === "page" ? "برای این صفحه یادداشتی ندارید" : "برای این سند یادداشتی ندارید"}
+                {tab === "page"
+                  ? "برای این صفحه یادداشتی ندارید"
+                  : tab === "hadith"
+                    ? "برای این روایت یادداشتی ندارید"
+                    : "برای این سند یادداشتی ندارید"}
               </p>
               <p className="mt-1 text-[11px] leading-5 text-muted-foreground">
                 {tab === "page"
                   ? "یادداشت شما فقط در همین مرورگرِ حساب شما دیده می‌شود؛ برای شروع، در کادر بالا بنویسید."
-                  : "به صفحه‌های دیگر بروید یا از تب «این صفحه» یادداشت تازه بسازید."}
+                  : tab === "hadith"
+                    ? "در پنل زمینهٔ همین روایت، دکمهٔ «ثبت یادداشت روی این روایت» را بزنید."
+                    : "به صفحه‌های دیگر بروید یا از تب «این صفحه» یادداشت تازه بسازید."}
               </p>
             </div>
           ) : (
@@ -362,6 +436,12 @@ export function NotesPanel({ documentUid, currentPageUid, pageLabel }: NotesPane
                     </p>
                     <div className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-border/60 pt-2">
                       <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+                        {n.local_hadith_uid ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-primary">
+                            <ScrollText className="size-3" aria-hidden="true" />
+                            روایت
+                          </span>
+                        ) : null}
                         <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5">
                           <StickyNote className="size-3" aria-hidden="true" />
                           {n.page_uid

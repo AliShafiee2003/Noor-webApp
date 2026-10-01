@@ -171,11 +171,17 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
   const [notesSheetOpen, setNotesSheetOpen] = useState(false);
   /* §۴۷: پرس‌وجوی میان‌کتابی روایت از پنل زمینه */
   const [hadithLookupUid, setHadithLookupUid] = useState<string | null>(null);
+  /* RES: دامنهٔ روایت برای یادداشت روی روایت مشخص */
+  const [hadithNoteScope, setHadithNoteScope] = useState<{
+    localUid: string;
+    revayatIndex?: string | null;
+  } | null>(null);
 
   /* تغییر صفحهٔ مقصد → پنل زمینه بسته می‌شود (پنل مالِ همان صفحه است) */
   useEffect(() => {
     setFootnote(null);
     setSelection(null);
+    setHadithNoteScope(null);
   }, [currentPageUid]);
 
   /* بازشدن پاورقی/ارجاع → تب زمینه فعال می‌شود تا محتوا دیده شود */
@@ -578,12 +584,18 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
                 documentUid={documentUid}
                 currentPageUid={currentPageUid}
                 pageLabel={pageQuery.data?.label ?? null}
+                hadithScope={hadithNoteScope}
+                onClearHadithScope={() => setHadithNoteScope(null)}
               />
             ) : footnote ? (
               <FootnotePanel
                 data={footnote}
                 onBack={() => setFootnote(null)}
                 onHadithLookup={setHadithLookupUid}
+                onHadithNote={(localUid, revayatIndex) => {
+                  setHadithNoteScope({ localUid, revayatIndex });
+                  setCtxTab("notes");
+                }}
               />
             ) : (
               <p className="p-4 text-sm text-muted-foreground">
@@ -606,6 +618,11 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
                 data={footnote}
                 onBack={() => setFootnote(null)}
                 onHadithLookup={setHadithLookupUid}
+                onHadithNote={(localUid, revayatIndex) => {
+                  setHadithNoteScope({ localUid, revayatIndex });
+                  setFootnote(null);
+                  setNotesSheetOpen(true);
+                }}
               />
             </SheetContent>
           </Sheet>
@@ -626,6 +643,10 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
               documentUid={documentUid}
               currentPageUid={currentPageUid}
               pageLabel={pageQuery.data?.label ?? null}
+              hadithScope={hadithNoteScope}
+              onClearHadithScope={() => {
+                setHadithNoteScope(null);
+              }}
             />
           </div>
         </SheetContent>

@@ -6,7 +6,7 @@
  * - در دسکتاپ ستون چپ؛ در موبایل داخل Sheet.
  * - بستن با «بازگشت» — فوکوس به ارجاع برمی‌گردد (مدیریت فوکوس در والد).
  */
-import { ArrowRight, BookOpen, Footprints, Landmark, LibraryBig, Link2Off, ScrollText } from "lucide-react";
+import { ArrowRight, BookOpen, Footprints, Landmark, LibraryBig, Link2Off, ScrollText, StickyNote } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { faNum } from "@/lib/format";
 import type { AyahCitation } from "@/lib/types";
@@ -50,11 +50,14 @@ export function FootnotePanel({
   data,
   onBack,
   onHadithLookup,
+  onHadithNote,
 }: {
   data: FootnotePanelData | null;
   onBack: () => void;
   /** §۴۷: پرس‌وجوی میان‌کتابی روایت — والد دیالوگ را با شناسهٔ محلی باز می‌کند */
   onHadithLookup?: (localUid: string) => void;
+  /** RES: ثبت یادداشت روی همین روایت — والد به تب یادداشت‌ها با دامنهٔ روایت می‌رود */
+  onHadithNote?: (localUid: string, revayatIndex?: string | null) => void;
 }) {
   if (!data) {
     return (
@@ -191,6 +194,16 @@ export function FootnotePanel({
               >
                 <LibraryBig className="size-4" aria-hidden="true" />
                 این روایت در کدام کتاب‌ها آمده است؟
+              </Button>
+            ) : null}
+            {onHadithNote && h.localUid ? (
+              <Button
+                variant="outline"
+                className="min-h-11 w-full gap-2"
+                onClick={() => onHadithNote(h.localUid, h.revayatIndex ?? null)}
+              >
+                <StickyNote className="size-4" aria-hidden="true" />
+                ثبت یادداشت روی این روایت
               </Button>
             ) : null}
             <p className="rounded-xl border border-border bg-muted px-3 py-2.5 text-xs leading-6 text-muted-foreground">
