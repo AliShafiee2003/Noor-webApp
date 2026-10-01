@@ -47,6 +47,7 @@ curl "http://127.0.0.1:81/api/v1/status?XTransformPort=8080"
 
 ## عملیات
 - **پشتیبان‌گیری سازگار** (§۵۴): `./bin/adminctl -cmd backup -out ./data/backups/app-<ts>.sqlite` (VACUUM INTO)
+- **بازنشانی رمز کاربر** (کمک ادمین — §۵۰): `./bin/pwreset -username <user>` رمز تصادفی می‌سازد و چاپ می‌کند (یا `PWRESET_PASS='...'` از محیط)؛ همهٔ نشست‌های فعال همان کاربر باطل و رویداد در audit ثبت می‌شود.
 - **بازسازی نمایه**: مدیریت → کارها → «ساخت مجدد نمایه» (نسل جدید؛ انتشار pointer اتمیک؛ rollback از مدیریت → نسل‌ها)
 - **اصلاح منبع**: مدیریت → اصلاحات: پیش‌نویس → اعتبارسنجی → پیش‌نمایش → انتشار (با MFA) → rollback. اصل منابع هرگز تغییر نمی‌کند.
 - **logها**: `mini-services/noor-api/api.log` و `worker.log`؛ `dev.log` برای Next.
