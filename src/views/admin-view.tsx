@@ -414,22 +414,36 @@ function AdminOverviewTab() {
   const d = overviewQuery.data;
   return (
     <div className="space-y-4" aria-live="polite">
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <StatCard icon={Database} title="آثار" value={faNum(d.works_count)} />
-        <StatCard icon={Database} title="اسناد" value={faNum(d.documents_count)} />
-        <StatCard icon={Users} title="کاربران" value={faNum(d.users_count)} />
-        <StatCard icon={ShieldCheck} title="نشست‌های فعال" value={faNum(d.active_sessions)} />
-        <StatCard icon={History} title="اصلاحات در انتظار" value={faNum(d.pending_overlays)} hint="پیش‌نویس و اعتبارسنجی‌شده" />
-        <StatCard icon={RefreshCw} title="کارهای فعال" value={faNum(d.active_jobs)} />
-        <StatCard icon={HardDrive} title="فضای داده" value={formatBytes(d.data_dir_bytes)} />
-        <StatCard icon={Database} title="منابع ثبت‌شده" value={faNum(d.registered_sources)} />
-        <StatCard
-          icon={ShieldCheck}
-          title="نسخهٔ فعال محتوا"
-          value={d.release_uid ? "نسخهٔ منتشرشده" : "ثبت نشده"}
-          hint={d.release_uid ?? undefined}
-        />
-      </div>
+      <p className="text-xs text-muted-foreground" aria-label="وضعیت کارهای سامانه">
+        وضعیت کارهای سامانه: {faNum(d.active_jobs)} کار فعال • {faNum(d.pending_overlays)} اصلاح در
+        انتظار
+      </p>
+
+      <section aria-label="موجودی و حساب‌ها">
+        <h2 className="mb-2 text-sm font-semibold">موجودی و حساب‌ها</h2>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <StatCard icon={Database} title="آثار" value={faNum(d.works_count)} />
+          <StatCard icon={Database} title="اسناد" value={faNum(d.documents_count)} />
+          <StatCard icon={Users} title="کاربران" value={faNum(d.users_count)} />
+          <StatCard icon={ShieldCheck} title="نشست‌های فعال" value={faNum(d.active_sessions)} />
+          <StatCard icon={History} title="اصلاحات در انتظار" value={faNum(d.pending_overlays)} hint="پیش‌نویس و اعتبارسنجی‌شده" />
+          <StatCard icon={RefreshCw} title="کارهای فعال" value={faNum(d.active_jobs)} />
+        </div>
+      </section>
+
+      <section aria-label="نسخه‌ها و منابع">
+        <h2 className="mb-2 text-sm font-semibold">نسخه‌ها و منابع</h2>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <StatCard icon={HardDrive} title="فضای داده" value={formatBytes(d.data_dir_bytes)} />
+          <StatCard icon={Database} title="منابع ثبت‌شده" value={faNum(d.registered_sources)} />
+          <StatCard
+            icon={ShieldCheck}
+            title="نسخهٔ فعال محتوا"
+            value={d.release_uid ? "نسخهٔ منتشرشده" : "ثبت نشده"}
+            hint={d.release_uid ?? undefined}
+          />
+        </div>
+      </section>
 
       <div className="rounded-lg border border-border bg-surface p-4 text-sm">
         <p className="font-medium text-foreground">

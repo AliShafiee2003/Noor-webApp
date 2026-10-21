@@ -20,6 +20,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
+import { getCsrfToken } from "@/lib/api";
 import { faNum } from "@/lib/format";
 import type { SearchRequest } from "@/lib/types";
 
@@ -69,10 +70,15 @@ export function ExportMenu({ request, disabled = false, totalVerified }: ExportM
   const runExport = async (format: ExportFormat, offset = 0): Promise<void> => {
     setPendingFormat(format);
     try {
+      const csrf = getCsrfToken();
+      const headers: Record<string, string> = { "content-type": "application/json" };
+      if (csrf) {
+        headers["X-Noor-CSRF"] = csrf;
+      }
       const resp = await fetch("/api/v1/export/search", {
         method: "POST",
         credentials: "include",
-        headers: { "content-type": "application/json" },
+        headers,
         body: JSON.stringify({ request, format, offset }),
       });
 

@@ -18,6 +18,7 @@ export const coverageLabels: Record<CoverageState, string> = {
   partial: "پوشش ناقص",
   absent: "ندارد",
   failed: "پردازش ناموفق",
+  unknown: "نامشخص",
 };
 
 export const coverageKeys: Array<{

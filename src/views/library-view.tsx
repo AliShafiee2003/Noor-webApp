@@ -63,6 +63,11 @@ function WorkRow({ work }: { work: Work }) {
             </p>
           </div>
           <div className="flex shrink-0 flex-col items-end gap-1">
+            {work.published === false ? (
+              <Badge variant="destructive" className="font-normal text-xs">
+                از دسترس خارج شده
+              </Badge>
+            ) : null}
             {work.language ? (
               <Badge variant="outline">{languageLabel(work.language)}</Badge>
             ) : null}
@@ -293,6 +298,10 @@ export function LibraryView() {
           </Select>
         </div>
       </div>
+
+      <p className="mb-4 text-xs text-muted-foreground">
+        نشان‌ها نوع محتوای اثر را نشان می‌دهند؛ وضعیت پوشش هر جلد در صفحهٔ اثر آمده است.
+      </p>
 
       <LibraryResults
         key={filterKey}

@@ -5,11 +5,10 @@
  * خطاها فارسی از ApiError.message؛ پس از موفقیت بازگشت به مقصد ذخیره‌شده.
  */
 import { useState } from "react";
-import { BookOpenText, Loader2, RotateCcw } from "lucide-react";
+import { BookOpenText, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { P2EPasswordField, P2ETextField } from "@/components/design-system/p2e-field";
 import { consumePendingDestination, useRoute } from "@/lib/hash-router";
 import { useAuthStore } from "@/store/auth";
 
@@ -71,7 +70,7 @@ export function LoginView() {
   const mfaMode = status === "pending_mfa";
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-background px-4 py-10">
+    <div dir="rtl" className="flex min-h-dvh flex-col items-center justify-center bg-canvas px-4 py-10">
       <div className="mb-6 flex items-center gap-2 text-primary">
         <BookOpenText className="size-7" aria-hidden="true" />
         <span className="text-lg font-bold text-foreground">میزکار پژوهشی نور</span>
@@ -79,7 +78,7 @@ export function LoginView() {
 
       <Card className="w-full max-w-sm">
         <CardHeader>
-          <CardTitle>{mfaMode ? "تأیید دومرحله‌ای" : "ورود به میزکار"}</CardTitle>
+          <CardTitle role="heading" aria-level={1}>{mfaMode ? "تأیید دومرحله‌ای" : "ورود به میزکار"}</CardTitle>
           <CardDescription>
             {mfaMode
               ? "کد شش‌رقمی برنامهٔ تأیید دومرحله‌ای خود را وارد کنید."
@@ -90,13 +89,13 @@ export function LoginView() {
           {sessionError ? (
             <div
               role="alert"
-              className="mb-4 flex items-center justify-between gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm"
+              className="mb-4 flex min-w-0 flex-wrap items-center justify-between gap-3 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm"
             >
-              <span>{sessionError}</span>
+              <span className="min-w-0 flex-1 basis-40 break-words leading-6">{sessionError}</span>
               <Button
                 variant="outline"
                 size="sm"
-                className="min-h-11 shrink-0 gap-1 md:min-h-9"
+                className="min-h-11 shrink-0 gap-1"
                 onClick={() => void fetchSession()}
               >
                 <RotateCcw className="size-3.5" aria-hidden="true" />
@@ -106,78 +105,79 @@ export function LoginView() {
           ) : null}
 
           {error ? (
-            <p role="alert" className="mb-4 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-foreground">
+            <p id="login-error" role="alert" className="mb-4 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-foreground">
               {error}
             </p>
           ) : null}
 
           {mfaMode ? (
-            <form onSubmit={handleMfa} className="space-y-4" noValidate>
-              <div className="space-y-2">
-                <Label htmlFor="mfa-code">کد تأیید شش‌رقمی</Label>
-                <Input
-                  id="mfa-code"
-                  value={code}
-                  onChange={(e) => setCode(e.target.value.replace(/[^0-9]/g, "").slice(0, 6))}
-                  className="bidi-ltr min-h-11 text-center text-lg tracking-[0.5em]"
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  dir="ltr"
-                  required
-                  autoFocus
-                />
-              </div>
-              <Button type="submit" className="w-full min-h-11 gap-2" disabled={busy || code.length !== 6}>
-                {busy ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : null}
+            <form onSubmit={handleMfa} className="space-y-4" aria-describedby={error ? "login-error" : undefined} noValidate>
+              <P2ETextField
+                label="کد تأیید شش‌رقمی"
+                id="mfa-code"
+                value={code}
+                onChange={(event) => setCode(event.target.value.replace(/[۰-۹]/g, digit => String("۰۱۲۳۴۵۶۷۸۹".indexOf(digit))).replace(/[٠-٩]/g, digit => String("٠١٢٣٤٥٦٧٨٩".indexOf(digit))).replace(/[^0-9]/g, "").slice(0, 6))}
+                className="bidi-ltr text-center text-lg tracking-[0.5em]"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                dir="ltr"
+                maxLength={6}
+                disabled={busy}
+                required
+                autoFocus
+              />
+              <Button type="submit" className="w-full min-h-11 gap-2" loading={busy} disabled={code.length !== 6}>
                 تأیید و ورود
               </Button>
               <Button
                 type="button"
                 variant="ghost"
                 className="w-full min-h-11"
+                disabled={busy}
                 onClick={() => void handleCancelMfa()}
               >
                 انصراف و بازگشت به ورود
               </Button>
             </form>
           ) : (
-            <form onSubmit={handleLogin} className="space-y-4" noValidate>
-              <div className="space-y-2">
-                <Label htmlFor="username">نام کاربری</Label>
-                <Input
-                  id="username"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  className="bidi-ltr min-h-11"
-                  autoComplete="username"
-                  dir="ltr"
-                  required
-                  autoFocus
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="password">گذرواژه</Label>
-                <Input
-                  id="password"
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="bidi-ltr min-h-11"
-                  autoComplete="current-password"
-                  dir="ltr"
-                  required
-                />
-              </div>
-              <Button type="submit" className="w-full min-h-11 gap-2" disabled={busy || !username.trim() || !password}>
-                {busy ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : null}
-                ورود
+            <form onSubmit={handleLogin} className="space-y-4" aria-describedby={error ? "login-error" : undefined} noValidate>
+              <P2ETextField
+                label="نام کاربری"
+                id="username"
+                value={username}
+                onChange={(event) => setUsername(event.target.value)}
+                placeholder="نام کاربری خود را وارد کنید"
+                className="bidi-ltr placeholder:text-end"
+                autoComplete="username"
+                dir="ltr"
+                disabled={busy}
+                required
+                autoFocus
+              />
+              <P2EPasswordField
+                label="گذرواژه"
+                id="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                placeholder="گذرواژهٔ خود را وارد کنید"
+                className="bidi-ltr placeholder:text-end"
+                autoComplete="current-password"
+                dir="ltr"
+                disabled={busy}
+                required
+              />
+              <Button type="submit" className="w-full min-h-11 gap-2" loading={busy} disabled={!username.trim() || !password}>
+                ورود به میزکار
+              </Button>
+              <Button type="button" variant="ghost" className="w-full" disabled={busy} onClick={() => navigate("/recovery")}>
+                گذرواژه را فراموش کرده‌اید؟ از مدیر سامانه کد بازنشانی بگیرید.
               </Button>
             </form>
           )}
         </CardContent>
       </Card>
 
-      <p className="mt-6 max-w-sm text-center text-xs leading-6 text-muted-foreground">
+      <p className="mt-6 max-w-sm text-justify text-xs leading-6 text-muted-foreground">
         حساب کاربری با دعوت مدیر سامانه ساخته می‌شود. اگر کد دعوت دارید، از نشانی
         ارسالی استفاده کنید.
       </p>

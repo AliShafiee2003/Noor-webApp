@@ -1,7 +1,66 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "../design-system/tokens.css";
 
 @custom-variant dark (&:is(.dark *));
+
+/* قلم‌های محلی اختصاصی افزوده شده */
+@font-face {
+  font-family: "B Zar";
+  src: url("/fonts/b-zar/B-Zar.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "B Zar";
+  src: url("/fonts/b-zar/B-Zar-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "گرتا";
+  src: url("/fonts/bahij-greta-arabic/Bahij Greta Arabic.TTF") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "گرتا";
+  src: url("/fonts/bahij-greta-arabic/Bahij Greta Arabic Medium.TTF") format("truetype");
+  font-weight: 500;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "گرتا";
+  src: url("/fonts/bahij-greta-arabic/Bahij Greta Arabic Bold.TTF") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "Portada ARA";
+  src: url("/fonts/portada/PortadaARA-Regular.otf") format("opentype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "Portada ARA";
+  src: url("/fonts/portada/PortadaARA-Semibold.otf") format("opentype");
+  font-weight: 600;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "Portada ARA";
+  src: url("/fonts/portada/PortadaARA-Bold.otf") format("opentype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: block;
+}
 
 /*
  * توکن‌های رنگی DESIGN.md §۴۱ — دقیقاً همین مقادیر.
@@ -15,7 +74,7 @@
   --color-foreground: var(--text);
   --color-card: var(--surface);
   --color-card-foreground: var(--text);
-  --color-popover: var(--surface);
+  --color-popover: var(--elevated);
   --color-popover-foreground: var(--text);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--on-primary);
@@ -26,11 +85,19 @@
   --color-accent: var(--accent-soft);
   --color-accent-foreground: var(--text);
   --color-destructive: var(--destructive);
-  --color-destructive-foreground: #ffffff;
+  --color-destructive-foreground: var(--on-destructive);
   --color-border: var(--border);
   --color-input: var(--control-border);
   --color-ring: var(--ring);
   --color-warning: var(--warning);
+  --color-success: var(--success);
+  --color-chrome: var(--chrome);
+  --color-elevated: var(--elevated);
+  --color-input-surface: var(--input-surface);
+  --color-placeholder: var(--placeholder);
+  --color-primary-hover: var(--primary-hover);
+  --color-selected-foreground: var(--selected-foreground);
+  --color-scrim: var(--scrim);
 
   /* توکن‌های اختصاصی میزکار نور */
   --color-control-border: var(--control-border);
@@ -40,6 +107,7 @@
   --color-reader: var(--reader);
   --color-link: var(--link);
   --color-match: var(--match);
+  --color-match-foreground: var(--on-match);
   --color-ayah: var(--ayah);
   --color-ayah-soft: var(--ayah-soft);
   --color-sharh-soft: var(--sharh-soft);
@@ -50,7 +118,7 @@
   --font-quranic: var(--font-quran);
   --font-foreign: var(--font-latin);
 
-  --color-sidebar: var(--surface);
+  --color-sidebar: var(--chrome);
   --color-sidebar-foreground: var(--text);
   --color-sidebar-primary: var(--primary);
   --color-sidebar-primary-foreground: var(--on-primary);
@@ -106,7 +174,7 @@
   /* رنگ سایهٔ کارت‌ها — با قالب هماهنگ می‌شود */
   --shadow-color: 24 42 50;
 
-  --radius: 0.625rem;
+  --radius: 0.5rem;
 }
 
 .dark {
@@ -434,7 +502,7 @@
 
   /* highlight تطبیق: کنتراست کافی در هر دو حالت (§۴۱) */
   .hl-mark {
-    @apply rounded-sm px-0.5 text-foreground;
+    @apply rounded-sm px-0.5 text-match-foreground;
     background: var(--match);
   }
   :is(.dark) .hl-mark {

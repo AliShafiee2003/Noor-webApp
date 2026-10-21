@@ -22,6 +22,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"noor/internal/index"
 	"noor/internal/norm"
@@ -36,13 +37,16 @@ const (
 	Near             = "near"
 	Linguistic       = "linguistic"
 	LongQuote        = "long_quote"
+	SimilarQuote     = "similar_quote"
+	Tiered           = "tiered"
 )
 
 // Scope دامنهٔ جست‌وجو (§۴۸).
 type Scope struct {
-	Target         string   `json:"target"` // library|collection|work|document|section|titles|citations
+	Target         string   `json:"target"` // library|collection|work|document|section|titles|authors|citations
 	CollectionUIDs []string `json:"collection_uids,omitempty"`
 	WorkUID        *string  `json:"work_uid,omitempty"`
+	Author         *string  `json:"author,omitempty"`
 	DocumentUIDs   []string `json:"document_uids,omitempty"`
 	Roles          []string `json:"roles,omitempty"`
 	Language       *string  `json:"language,omitempty"`
@@ -58,15 +62,35 @@ type QuranRef struct {
 
 // Request درخواست جست‌وجو.
 type Request struct {
-	Query string `json:"query"`
-	Mode  string `json:"mode"`
-	Scope Scope  `json:"scope"`
-	Near  *struct {
-		Slop    int  `json:"slop"`
-		Ordered bool `json:"ordered"`
-	} `json:"near,omitempty"`
-	Sort     string `json:"sort"` // relevance|source
-	PageSize int    `json:"page_size"`
+	Query    string    `json:"query"`
+	Mode     string    `json:"mode"`
+	Scope    Scope     `json:"scope"`
+	Near     *NearOpts `json:"near,omitempty"`
+	Sort     string    `json:"sort"` // relevance|source
+	PageSize int       `json:"page_size"`
+	// گزینه‌های موتور FTS5 (§۱۵/§۲۰/§۲۳) — موتورهای دیگر نادیده می‌گیرند.
+	// Diacritics: "" یا "ignore" = اعراب نادیده؛ "respect" = هر علامتی که کاربر نوشته باید
+	// روی همان حرف در متن باشد (متن می‌تواند اعراب بیشتری داشته باشد؛ حرف بی‌حرکت متن سازگار
+	// است — §۱۵ پیش‌فرض)؛ "respect_strict" = حرف بی‌حرکت متن هم ناسازگار.
+	Diacritics string `json:"diacritics,omitempty"`
+	// Layers محدودسازی لایه‌ها در tiered/similar/long (L1..L5)؛ خالی = L1 تا L4.
+	Layers []string `json:"layers,omitempty"`
+	// MinScore آستانهٔ شباهت L4 در بازهٔ [0.5, 1]؛ صفر = پیش‌فرض ۰٫۷۰.
+	MinScore float64 `json:"min_score,omitempty"`
+	// NearSpelling فعال‌سازی L5 (واژهٔ نزدیک با یک ویرایش حرفی) — فقط با انتخاب صریح.
+	NearSpelling bool `json:"near_spelling,omitempty"`
+	// ExpandMorphology گسترش صرفی L3 (مفرد ↔ جمع با «ها») — فقط با انتخاب صریح؛ نتایج
+	// با match_type «L3 (صورت صرفی)» و برچسب تفاوت جدا گزارش می‌شوند.
+	ExpandMorphology bool `json:"expand_morphology,omitempty"`
+
+	// — قرارداد دوحالته (modes.go): canonicalize این دو را به حالت داخلی برمی‌گرداند و پاک می‌کند.
+	// Flex میزان انعطاف حالت text: exact | written | spelling | similar (پیش‌فرض).
+	Flex string `json:"flex,omitempty"`
+	// Words تنظیمات حالت words.
+	Words *WordsOpts `json:"words,omitempty"`
+	// ResultLayers فیلتر نمایش نتایج بر لایه (L1..L5). روی همان اجرای کش‌شده اعمال می‌شود و در
+	// کلید کش نیست؛ شمارش‌های قطعی و layer_counts همیشه کل جست‌وجو را گزارش می‌کنند.
+	ResultLayers []string `json:"result_layers,omitempty"`
 }
 
 // Result نتیجهٔ تأییدشده.
@@ -89,6 +113,25 @@ type Result struct {
 	// بازهٔ دقیق تطبیق در مختصات سند (نه فقط passage) — برای هایلایت کتاب‌خوان
 	MatchRange [2]int          `json:"match_offsets,omitempty"`
 	Citations  json.RawMessage `json:"citations,omitempty"`
+	// Layer لایهٔ تطبیق (L1 عین متن، L2 نرمال‌شده، L3 آزاد، L4 مشابه، L5 واژهٔ نزدیک) —
+	// فقط موتور FTS5 پر می‌کند.
+	Layer string `json:"layer,omitempty"`
+	// Diffs تفاوت‌های L3/L5 با پرسش («پیشوند و»، «همزه/الف»، …).
+	Diffs []string `json:"diffs,omitempty"`
+	// Similarity جزئیات هم‌ترازی L4 (و امتیاز لایه‌های دیگر در similar_quote).
+	Similarity *Similarity `json:"similarity,omitempty"`
+	// FullText متن کامل قطعه در صورت روایت یا استخراج
+	FullText string `json:"full_text,omitempty"`
+}
+
+// Similarity جزئیات امتیاز شباهت لفظی (§۲۳) — هرگز «درصد اطمینان علمی» نیست.
+type Similarity struct {
+	Score     float64    `json:"score"`
+	Coverage  float64    `json:"coverage"`
+	Counts    EditCounts `json:"counts"`
+	Diffs     []string   `json:"diffs,omitempty"`
+	Algorithm string     `json:"algorithm"`
+	Version   string     `json:"version"`
 }
 
 type Ref struct {
@@ -121,6 +164,21 @@ type Response struct {
 	// افزودهٔ سازگار با قرارداد؛ نبودش معنی «حالت عادی» دارد.
 	Notice  string   `json:"notice,omitempty"`
 	Results []Result `json:"results"`
+	// LayerCounts شمار اختصاصی هر لایه (فقط FTS5 در حالت‌های لایه‌ای).
+	LayerCounts map[string]int `json:"layer_counts,omitempty"`
+	// SimilarOccurrences شمار نتایج L4/L5 که در «شمار قطعی» (verified_occurrences) جمع نمی‌شوند.
+	SimilarOccurrences int `json:"similar_occurrences,omitempty"`
+	// TotalResults کل نتایج قابل‌پیمایش این نشست (قطعی + مشابه) برای صفحه‌بندی.
+	TotalResults int `json:"total_results,omitempty"`
+	// SimilarCoverage وضعیت پوشش L4: complete | partial (سقف‌های تعاملی) — §۲۲.
+	SimilarCoverage string `json:"similar_coverage,omitempty"`
+	// Engine نام موتور پاسخ‌دهنده و نسخهٔ قواعد (برای ثبت در فیش و خروجی).
+	Engine string `json:"engine,omitempty"`
+	// EffectiveMode/EffectiveFlex حالت داخلی اجراشده و سطح انعطاف معادل آن (قرارداد text/words).
+	EffectiveMode string `json:"effective_mode,omitempty"`
+	EffectiveFlex string `json:"effective_flex,omitempty"`
+	// ResultLayers فیلتر نمایش اعمال‌شده؛ total_results و صفحه‌بندی روی فهرست فیلترشده است.
+	ResultLayers []string `json:"result_layers,omitempty"`
 }
 
 // BookGroup گروه‌بندی «کتاب‌های دارای تطبیق تأییدشده».
@@ -328,6 +386,18 @@ func (e *LocalEngine) dbHandle() (*sql.DB, error) {
 	return nil, errors.New("نمایهٔ جست‌وجو در دسترس نیست")
 }
 
+// Close بستن اتصال باز به دیتابیس نمایه.
+func (e *LocalEngine) Close() error {
+	e.dbMu.Lock()
+	defer e.dbMu.Unlock()
+	if e.db != nil {
+		err := e.db.Close()
+		e.db = nil
+		return err
+	}
+	return nil
+}
+
 // ensureRelease اگر اتصالِ فعلی نسلِ درخواستی را ندارد، اتصال را نوسازی می‌کند
 // (مقاوم در برابر inode reuse بین نسل‌ها).
 func (e *LocalEngine) ensureRelease(db *sql.DB, releaseUID string) (*sql.DB, error) {
@@ -356,30 +426,59 @@ func (e *LocalEngine) FullScanCount() int64 { return e.statScans.Load() }
 
 func (e *LocalEngine) validate(req *Request) error { return validateRequest(req) }
 
-// validateRequest قواعد مشترک اعتبارسنجی پرس‌وجو (هر دو موتور).
+// validateRequest قواعد مشترک اعتبارسنجی پرس‌وجو (هر سه موتور). نخست قرارداد text/words
+// به حالت داخلی برگردانده می‌شود تا همهٔ قواعد بعدی (و کلید کش) فقط حالت داخلی را ببینند.
 func validateRequest(req *Request) error {
+	if err := canonicalize(req); err != nil {
+		return err
+	}
+	n := utf8.RuneCountInString(req.Query)
 	// جست‌وجوی صرفاً استنادی (بدون عبارت) مجاز است — QUR-03
-	if len([]rune(req.Query)) == 0 && req.Scope.Quran == nil {
+	if n == 0 && req.Scope.Quran == nil {
 		return errors.New("عبارت جست‌وجو خالی است")
 	}
-	modeOK := false
-	for _, m := range []string{StrictPhrase, NormalizedPhrase, AllWords, AnyWords, Near, Linguistic, LongQuote} {
-		if req.Mode == m {
-			modeOK = true
-		}
-	}
-	if !modeOK {
+	if !isKnownMode(req.Mode) {
 		return fmt.Errorf("حالت جست‌وجو معتبر نیست")
 	}
-	limit := 2048
-	if req.Mode == LongQuote {
-		limit = 8192
+	limit := maxWordsQueryRunes
+	if isTextMode(req.Mode) {
+		limit = maxTextQueryRunes
 	}
-	if len([]rune(req.Query)) > limit {
-		return errors.New("عبارت بیش از حد مجاز است؛ برای نقل‌قول بلند از حالت مخصوص آن استفاده کنید")
+	if n > limit {
+		return fmt.Errorf("عبارت بیش از حد مجاز است (حداکثر %s نویسه)", faNum(limit))
+	}
+	if req.Mode == AnyWords {
+		if k := len(dedupStrings(norm.Tokenize(req.Query))); k > maxAnyWords {
+			return fmt.Errorf("«حداقل یک واژه» حداکثر %s واژهٔ متمایز می‌پذیرد (%s داده شد)", faNum(maxAnyWords), faNum(k))
+		}
+	}
+	for _, l := range req.ResultLayers {
+		switch l {
+		case "L1", "L2", "L3", "L4", "L5":
+		default:
+			return fmt.Errorf("لایهٔ نمایش %q معتبر نیست (L1 تا L5)", l)
+		}
+	}
+	if len(req.ResultLayers) > 0 && !isTextMode(req.Mode) {
+		return errors.New("فیلتر لایه (result_layers) فقط در حالت text معتبر است")
 	}
 	if req.PageSize < 5 || req.PageSize > 50 {
 		req.PageSize = 20
+	}
+	switch req.Diacritics {
+	case "", "ignore", "respect", "respect_strict":
+	default:
+		return fmt.Errorf("گزینهٔ اعراب معتبر نیست (ignore، respect یا respect_strict)")
+	}
+	for _, l := range req.Layers {
+		switch l {
+		case "L1", "L2", "L3", "L4", "L5":
+		default:
+			return fmt.Errorf("لایهٔ %q معتبر نیست (L1 تا L5)", l)
+		}
+	}
+	if req.MinScore != 0 && (req.MinScore < 0.5 || req.MinScore > 1) {
+		return fmt.Errorf("آستانهٔ شباهت باید بین ۰٫۵ و ۱ باشد")
 	}
 	return nil
 }
@@ -389,17 +488,38 @@ func (e *LocalEngine) Search(ctx context.Context, req *Request, releaseUID strin
 	if err := e.validate(req); err != nil {
 		return nil, err
 	}
-	if req.Scope.Target == "titles" {
-		hits, err := e.SearchTitles(ctx, req.Query, req.PageSize)
+	if req.Scope.Target == "titles" || req.Scope.Target == "authors" {
+		var hits []TitleHit
+		var err error
+		if req.Scope.Target == "authors" {
+			hits, err = e.SearchAuthors(ctx, req.Query, req.PageSize)
+		} else {
+			hits, err = e.SearchTitles(ctx, req.Query, req.PageSize)
+			if err == nil && req.Scope.Author != nil && *req.Scope.Author != "" {
+				authorFold := norm.Fold(*req.Scope.Author)
+				var filteredHits []TitleHit
+				for _, h := range hits {
+					if strings.Contains(norm.Fold(h.Author), authorFold) {
+						filteredHits = append(filteredHits, h)
+					}
+				}
+				hits = filteredHits
+			}
+		}
 		if err != nil {
 			return nil, err
 		}
 		resp := &Response{ReleaseUID: releaseUID, CompletionState: "complete", CountRelation: "exact", Results: []Result{}}
 		for _, h := range hits {
+			pageLabel := "نام کتاب"
+			if req.Scope.Target == "authors" {
+				pageLabel = "پدیدآور"
+			}
 			resp.Results = append(resp.Results, Result{
 				PassageUID: "title-" + h.WorkUID, MatchType: "exact",
 				Work: Ref{UID: h.WorkUID, Title: h.Title, Label: h.ShortTitle},
-				Page: Ref{Label: "نام کتاب"},
+				Section: &Ref{Title: h.Author},
+				Page: Ref{Label: pageLabel},
 			})
 		}
 		resp.VerifiedBooks = len(hits)
@@ -547,6 +667,8 @@ func (e *LocalEngine) buildResponse(sid, release string, req *Request, verified 
 		CountRelation:         rel,
 		ContinuationAvailable: continuation,
 		Results:               page,
+		EffectiveMode:         req.Mode,
+		EffectiveFlex:         effectiveFlex(req.Mode),
 	}
 	if len(notices) > 0 {
 		resp.Notice = strings.Join(notices, " ")
@@ -687,6 +809,65 @@ func (e *LocalEngine) evictMemSessionsLocked() {
 	}
 }
 
+func runeLev1(a, b []rune) bool {
+	la, lb := len(a), len(b)
+	if la < 4 || lb < 4 || la-lb > 1 || lb-la > 1 {
+		return false
+	}
+	if la == lb {
+		diff := 0
+		for i := 0; i < la; i++ {
+			if a[i] != b[i] {
+				diff++
+				if diff > 1 {
+					return false
+				}
+			}
+		}
+		return diff <= 1
+	}
+	shorter, longer := a, b
+	if la > lb {
+		shorter, longer = b, a
+	}
+	for i := 0; i < len(longer); i++ {
+		match := true
+		si := 0
+		for li := 0; li < len(longer); li++ {
+			if li == i {
+				continue
+			}
+			if longer[li] != shorter[si] {
+				match = false
+				break
+			}
+			si++
+		}
+		if match {
+			return true
+		}
+	}
+	return false
+}
+
+func slidingLev1(pattern, target []rune) bool {
+	L := len(pattern)
+	if L < 6 || len(target) < L-1 {
+		return false
+	}
+	for _, wlen := range []int{L - 1, L, L + 1} {
+		if wlen < 4 || wlen > len(target) {
+			continue
+		}
+		for i := 0; i+wlen <= len(target); i++ {
+			if runeLev1(pattern, target[i:i+wlen]) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // SearchTitles جست‌وجوی نام کتاب.
 func (e *LocalEngine) SearchTitles(ctx context.Context, q string, pageSize int) ([]TitleHit, error) {
 	db, err := e.dbHandle()
@@ -694,6 +875,9 @@ func (e *LocalEngine) SearchTitles(ctx context.Context, q string, pageSize int) 
 		return nil, err
 	}
 	nf := norm.Fold(q)
+	nfComp := strings.ReplaceAll(strings.ReplaceAll(nf, " ", ""), "\u200c", "")
+	nfRunes := []rune(nfComp)
+	toks := norm.Tokenize(nf)
 	rows, err := db.Query(`SELECT work_uid, title, short_title, author FROM titles ORDER BY work_uid`)
 	if err != nil {
 		return nil, err
@@ -705,7 +889,95 @@ func (e *LocalEngine) SearchTitles(ctx context.Context, q string, pageSize int) 
 		if err := rows.Scan(&uid, &title, &short, &author); err != nil {
 			continue
 		}
-		if nf == "" || strings.Contains(norm.Fold(title), nf) || strings.Contains(norm.Fold(short), nf) {
+		tFold := norm.Fold(title)
+		sFold := norm.Fold(short)
+		tComp := strings.ReplaceAll(strings.ReplaceAll(tFold, " ", ""), "\u200c", "")
+		sComp := strings.ReplaceAll(strings.ReplaceAll(sFold, " ", ""), "\u200c", "")
+		matched := nf == "" || strings.Contains(tFold, nf) || strings.Contains(sFold, nf) ||
+			(nfComp != "" && (strings.Contains(tComp, nfComp) || strings.Contains(sComp, nfComp)))
+		if !matched && len(toks) > 1 {
+			allToks := true
+			titleToks := norm.Tokenize(tFold + " " + sFold)
+			for _, tk := range toks {
+				tkRunes := []rune(tk)
+				foundTk := false
+				for _, ttk := range titleToks {
+					if strings.Contains(ttk, tk) || runeLev1(tkRunes, []rune(ttk)) {
+						foundTk = true
+						break
+					}
+				}
+				if !foundTk {
+					allToks = false
+					break
+				}
+			}
+			matched = allToks
+		}
+		if !matched && len(nfRunes) >= 6 {
+			matched = slidingLev1(nfRunes, []rune(tComp)) || slidingLev1(nfRunes, []rune(sComp))
+		}
+		if matched {
+			out = append(out, TitleHit{WorkUID: uid, Title: title, ShortTitle: short, Author: author})
+		}
+		if len(out) >= pageSize {
+			break
+		}
+	}
+	return out, nil
+}
+
+// SearchAuthors جست‌وجوی نام پدیدآور / مؤلف.
+func (e *LocalEngine) SearchAuthors(ctx context.Context, q string, pageSize int) ([]TitleHit, error) {
+	db, err := e.dbHandle()
+	if err != nil {
+		return nil, err
+	}
+	nf := norm.Fold(q)
+	nfComp := strings.ReplaceAll(strings.ReplaceAll(nf, " ", ""), "\u200c", "")
+	nfRunes := []rune(nfComp)
+	toks := norm.Tokenize(nf)
+	rows, err := db.Query(`SELECT work_uid, title, short_title, author FROM titles ORDER BY work_uid`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []TitleHit
+	for rows.Next() {
+		var uid, title, short, author string
+		if err := rows.Scan(&uid, &title, &short, &author); err != nil {
+			continue
+		}
+		aFold := norm.Fold(author)
+		aComp := strings.ReplaceAll(strings.ReplaceAll(aFold, " ", ""), "\u200c", "")
+		matched := nf == "" || strings.Contains(aFold, nf) || (nfComp != "" && strings.Contains(aComp, nfComp))
+		if !matched && len(toks) > 1 {
+			allToks := true
+			anySignificant := false
+			authorToks := norm.Tokenize(aFold)
+			for _, tk := range toks {
+				tkRunes := []rune(tk)
+				foundTk := false
+				for _, atk := range authorToks {
+					if strings.Contains(atk, tk) || runeLev1(tkRunes, []rune(atk)) {
+						foundTk = true
+						break
+					}
+				}
+				if foundTk {
+					if len(tkRunes) >= 4 {
+						anySignificant = true
+					}
+				} else {
+					allToks = false
+				}
+			}
+			matched = allToks || anySignificant
+		}
+		if !matched && len(nfRunes) >= 6 {
+			matched = slidingLev1(nfRunes, []rune(aComp))
+		}
+		if matched {
 			out = append(out, TitleHit{WorkUID: uid, Title: title, ShortTitle: short, Author: author})
 		}
 		if len(out) >= pageSize {
@@ -855,7 +1127,7 @@ func (e *LocalEngine) run(ctx context.Context, db *sql.DB, req *Request, release
 			return nil, runState{}, fmt.Errorf("scan candidate: %w", err)
 		}
 		// فیلتر دامنهٔ اثر/سند/زبان در verifier هم اعمال می‌شود (دفاع در عمق)
-		if !scopeAllows(req, &r) {
+		if !scopeAllows(req, &r, e.catalog) {
 			continue
 		}
 		if !citationAllows(req, &r) {
@@ -877,7 +1149,7 @@ func (e *LocalEngine) run(ctx context.Context, db *sql.DB, req *Request, release
 				continue // overlap تکراری نتیجه نمی‌سازد؛ رخدادهای واقعی جدا می‌مانند
 			}
 			seen[key] = true
-			if len(req.Scope.Roles) > 0 && !matchInsideRoles(r.RoleRanges, h.Range) {
+			if len(req.Scope.Roles) > 0 && !matchInsideRoles(r.RoleRanges, h.Range, req.Scope.Roles...) {
 				continue // فیلتر نقش: محل واقعی تطبیق باید داخل نقش باشد (§۴۵)
 			}
 			out = append(out, e.toResult(&r, h, matchType))
@@ -955,12 +1227,9 @@ type hit struct {
 // vs سقف‌های مواضعِ هر قطعه را می‌شمارد تا پاسخ صادقانه lower_bound اعلام شود.
 func verifyInTextRaw(req *Request, r *candRow, vs *verifyStats) ([]hit, string) {
 	orig := []rune(r.TextOriginal)
-	n1 := []rune(r.TextN1)
-	var n1Map []int
-	_ = json.Unmarshal([]byte(r.N1Map), &n1Map)
 	switch req.Mode {
 	case StrictPhrase:
-		q := []rune(req.Query)
+		q := []rune(strings.TrimSpace(req.Query))
 		var out []hit
 		start := 0
 		for {
@@ -970,7 +1239,7 @@ func verifyInTextRaw(req *Request, r *candRow, vs *verifyStats) ([]hit, string) 
 			}
 			s := start + idx
 			e := s + len(q)
-			if norm.WordBoundary(string(orig), s, e) {
+			if norm.WordBoundaryRunes(orig, s, e) {
 				out = append(out, hit{Range: [2]int{s, e}})
 			}
 			start = s + 1
@@ -981,11 +1250,76 @@ func verifyInTextRaw(req *Request, r *candRow, vs *verifyStats) ([]hit, string) 
 		}
 		return out, "exact"
 	default:
+		// متن N1 و نگاشتش فقط در این شاخه لازم‌اند (strict فقط متن اصلی را می‌خواند)
+		n1 := []rune(r.TextN1)
+		var n1Map []int
+		_ = json.Unmarshal([]byte(r.N1Map), &n1Map)
 		qN, _ := norm.Normalize(req.Query)
+		qN = strings.TrimSpace(qN)
 		if req.Mode == Linguistic {
-			qN = norm.Fold(req.Query)
+			qTokens := norm.TokenizeAligned(req.Query)
+			if len(qTokens) > 0 {
+				docTokens := norm.TokenizeAligned(r.TextOriginal)
+				m := len(qTokens)
+				var out []hit
+				for i := 0; i+m <= len(docTokens); i++ {
+					match := true
+					for j := 0; j < m; j++ {
+						if docTokens[i+j].N2 != qTokens[j].N2 {
+							match = false
+							break
+						}
+					}
+					if match {
+						s := docTokens[i].Start
+						e := docTokens[i+m-1].End
+						out = append(out, hit{Range: [2]int{s, e}})
+						if len(out) >= 50 {
+							vs.truncatedPassages++
+							break
+						}
+					}
+				}
+				if len(out) > 0 {
+					return out, "linguistic"
+				}
+
+				// اگر تطبیق مستقیم نیافت، گونه‌های پیوسته و گسستهٔ فارسی بررسی شوند (§۱۶)
+				qN2Words := make([]string, len(qTokens))
+				for qi, tk := range qTokens {
+					qN2Words[qi] = tk.N2
+				}
+				variants := norm.GeneratePersianVariants(qN2Words)
+				if len(variants) > 1 {
+					for _, v := range variants[1:] {
+						vm := len(v)
+						for i := 0; i+vm <= len(docTokens); i++ {
+							match := true
+							for j := 0; j < vm; j++ {
+								if docTokens[i+j].N2 != v[j] {
+									match = false
+									break
+								}
+							}
+							if match {
+								s := docTokens[i].Start
+								e := docTokens[i+vm-1].End
+								out = append(out, hit{Range: [2]int{s, e}})
+								if len(out) >= 50 {
+									vs.truncatedPassages++
+									break
+								}
+							}
+						}
+						if len(out) > 0 {
+							return out, "L3 (تفاوت پیوستگی)"
+						}
+					}
+				}
+				return out, "linguistic"
+			}
 		}
-		if req.Mode == AllWords || req.Mode == Near {
+		if req.Mode == AllWords || req.Mode == Near || req.Mode == AnyWords {
 			toks := norm.Tokenize(qN)
 			positions := make([][]int, len(toks))
 			for i, t := range toks {
@@ -1008,6 +1342,26 @@ func verifyInTextRaw(req *Request, r *candRow, vs *verifyStats) ([]hit, string) 
 				}
 			}
 			var out []hit
+			// any_words: هر رخداد هر واژه یک موضع است (پیش‌تر به مسیر عبارتی می‌افتاد و
+			// پرسش چندواژه‌ای فقط وقتی تطبیق می‌خورد که کل عبارت پشت‌سرهم بیاید).
+			if req.Mode == AnyWords {
+				type occ struct{ s, e int }
+				var occs []occ
+				for i, ps := range positions {
+					for _, p := range ps {
+						occs = append(occs, occ{p, p + len([]rune(toks[i]))})
+					}
+				}
+				sort.Slice(occs, func(a, b int) bool { return occs[a].s < occs[b].s })
+				for _, o := range occs {
+					out = append(out, mapN1Hit([2]int{o.s, o.e}, n1Map))
+					if len(out) >= 50 {
+						vs.truncatedPassages++
+						break
+					}
+				}
+				return out, "normalized"
+			}
 			if req.Mode == Near && req.Near != nil && req.Near.Slop > 0 {
 				wins, more := nearWindows(positions, req.Near.Slop, req.Near.Ordered, len(n1))
 				for _, rng := range wins {
@@ -1044,7 +1398,7 @@ func verifyInTextRaw(req *Request, r *candRow, vs *verifyStats) ([]hit, string) 
 			}
 			s := start + idx
 			e := s + len(qRunes)
-			if norm.WordBoundary(string(n1), s, e) {
+			if norm.WordBoundaryRunes(n1, s, e) {
 				out = append(out, mapN1Hit([2]int{s, e}, n1Map))
 			}
 			start = s + 1
@@ -1053,6 +1407,45 @@ func verifyInTextRaw(req *Request, r *candRow, vs *verifyStats) ([]hit, string) 
 				break
 			}
 		}
+		if len(out) > 0 {
+			if req.Mode == Linguistic {
+				return out, "linguistic"
+			}
+			return out, "normalized"
+		}
+
+		// بررسی گونه‌های فارسی برای عبارت نرمال‌شده (§۱۶/§۲۰)
+		qWords := norm.Tokenize(qN)
+		if len(qWords) > 0 {
+			variants := norm.GeneratePersianVariants(qWords)
+			if len(variants) > 1 {
+				for _, v := range variants[1:] {
+					vStr := strings.Join(v, " ")
+					vRunes := []rune(vStr)
+					vStart := 0
+					for {
+						idx := indexRunes(n1[vStart:], vRunes)
+						if idx < 0 {
+							break
+						}
+						s := vStart + idx
+						e := s + len(vRunes)
+						if norm.WordBoundaryRunes(n1, s, e) {
+							out = append(out, mapN1Hit([2]int{s, e}, n1Map))
+						}
+						vStart = s + 1
+						if len(out) >= 50 {
+							vs.truncatedPassages++
+							break
+						}
+					}
+					if len(out) > 0 {
+						return out, "L3 (تفاوت پیوستگی)"
+					}
+				}
+			}
+		}
+
 		if req.Mode == Linguistic {
 			return out, "linguistic"
 		}
@@ -1106,7 +1499,7 @@ func findAllWord(s []rune, w string) []int {
 			break
 		}
 		p := start + idx
-		if norm.WordBoundary(string(s), p, p+len(rs)) {
+		if norm.WordBoundaryRunes(s, p, p+len(rs)) {
 			out = append(out, p)
 		}
 		start = p + 1
@@ -1218,12 +1611,19 @@ type roleRangeT struct {
 	End   int    `json:"end"`
 }
 
-// scopeAllows فیلتر دامنهٔ اثر/سند/زبان روی هر کاندید (دفاع در عمق — هر دو موتور).
-func scopeAllows(req *Request, r *candRow) bool {
+// scopeAllows فیلتر دامنهٔ اثر/سند/زبان/مؤلف روی هر کاندید (دفاع در عمق — هر دو موتور).
+func scopeAllows(req *Request, r *candRow, cat MetaSource) bool {
 	if req.Scope.Target == "work" && (req.Scope.WorkUID == nil || r.WorkUID != *req.Scope.WorkUID) {
 		return false
 	}
-	if req.Scope.Target == "document" || req.Scope.Target == "section" {
+	if req.Scope.Author != nil && *req.Scope.Author != "" && cat != nil {
+		authorFold := norm.Fold(*req.Scope.Author)
+		_, _, author, ok := cat.WorkTitle(r.WorkUID)
+		if !ok || !strings.Contains(norm.Fold(author), authorFold) {
+			return false
+		}
+	}
+	if len(req.Scope.DocumentUIDs) > 0 {
 		inScope := false
 		for _, d := range req.Scope.DocumentUIDs {
 			if d == r.DocumentUID {
@@ -1351,7 +1751,7 @@ func fetchCandRows(db *sql.DB, releaseUID string, hits []osHit, withOverlap bool
 	}
 	return out, nil
 }
-func matchInsideRoles(roleRangesJSON string, rng [2]int) bool {
+func matchInsideRoles(roleRangesJSON string, rng [2]int, reqRoles ...string) bool {
 	if roleRangesJSON == "" || roleRangesJSON == "[]" {
 		return false
 	}
@@ -1361,7 +1761,33 @@ func matchInsideRoles(roleRangesJSON string, rng [2]int) bool {
 	}
 	for _, r := range rr {
 		if r.Start < rng[1] && r.End > rng[0] {
-			return true
+			if len(reqRoles) == 0 {
+				return true
+			}
+			for _, reqRole := range reqRoles {
+				switch reqRole {
+				case "ayah", "ayah_text", "ayah_quote":
+					if r.Role == "ayah" || r.Role == "ayah_text" || r.Role == "ayah_quote" {
+						return true
+					}
+				case "sanad", "sanadHadith":
+					if r.Role == "sanad" || r.Role == "sanadHadith" {
+						return true
+					}
+				case "hadith", "hadith_body", "G":
+					if r.Role == "hadith" || r.Role == "hadith_body" || r.Role == "G" {
+						return true
+					}
+				case "b", "B", "sharh":
+					if r.Role == "b" || r.Role == "B" || r.Role == "sharh" {
+						return true
+					}
+				default:
+					if strings.EqualFold(r.Role, reqRole) {
+						return true
+					}
+				}
+			}
 		}
 	}
 	return false
@@ -1392,11 +1818,19 @@ func (e *LocalEngine) toResult(r *candRow, h hit, matchType string) Result {
 		}
 	}
 	roles = dedupStrings(roles)
-	snippet := []rune(r.TextOriginal)
-	lo := clampInt(h.Range[0]-60, 0, len(snippet))
-	hi := clampInt(h.Range[1]+60, 0, len(snippet))
-	sub := string(snippet[lo:hi])
+	sub, lo := runeSpan(r.TextOriginal, h.Range[0]-60, h.Range[1]+60)
 	hl := Range{Start: h.Range[0] - lo, End: h.Range[1] - lo, Unit: "codepoint"}
+	var fullText string
+	if (r.LocalHadith.Valid && r.LocalHadith.String != "") || r.LocalHadith.String != "" {
+		fullText = r.TextOriginal
+	} else {
+		for _, ro := range roles {
+			if ro == "hadith" || ro == "B" || ro == "b" {
+				fullText = r.TextOriginal
+				break
+			}
+		}
+	}
 	return Result{
 		PassageUID: r.PassageUID, MatchType: matchType,
 		Work: work, Document: doc,
@@ -1409,7 +1843,48 @@ func (e *LocalEngine) toResult(r *candRow, h hit, matchType string) Result {
 		SourceRange:  [2]int{r.SourceStart, r.SourceEnd},
 		MatchRange:   [2]int{r.SourceStart + h.Range[0], r.SourceStart + h.Range[1]},
 		Citations:    json.RawMessage(r.Citations.String),
+		FullText:     fullText,
 	}
+}
+
+// runeSpan برش code point [lo, hi) از s (هر دو به [0, طول] بریده می‌شوند) بدون تبدیل کل
+// passage به []rune — هم‌ارز string([]rune(s)[lo:hi]) و lo بریده‌شده. پیش‌تر هر نتیجه کل
+// متن passage را به rune تبدیل می‌کرد و برای واژهٔ پرتکرار گلوگاه اصلی پاسخ بود.
+func runeSpan(s string, lo, hi int) (string, int) {
+	if lo < 0 {
+		lo = 0
+	}
+	if hi < lo {
+		hi = lo
+	}
+	i, cp := 0, 0
+	bLo, bHi := -1, -1
+	for {
+		if cp == lo && bLo < 0 {
+			bLo = i
+		}
+		if cp == hi {
+			bHi = i
+			break
+		}
+		if i >= len(s) {
+			break
+		}
+		_, sz := utf8.DecodeRuneInString(s[i:])
+		i += sz
+		cp++
+	}
+	if bLo < 0 {
+		bLo, lo = i, cp
+	}
+	if bHi < 0 {
+		bHi = i
+	}
+	sub := s[bLo:bHi]
+	if !utf8.ValidString(sub) {
+		sub = string([]rune(sub)) // همان جایگزینی U+FFFD تبدیل []rune
+	}
+	return sub, lo
 }
 
 func dedupStrings(s []string) []string {

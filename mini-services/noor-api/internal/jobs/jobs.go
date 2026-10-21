@@ -28,15 +28,31 @@ type Job struct {
 
 // Enqueue افزودن کار؛ جلوگیری از تکرار با کلید kind فعال (import/reindex یک فعال).
 func (s *Service) Enqueue(kind string, payload json.RawMessage, createdBy string) (*Job, error) {
+	uid := "job-" + randHex(8)
 	if kind == "index_rebuild" {
+		// بررسی «یک کار فعال» داخل تراکنش تا دو enqueue هم‌زمان هر دو از شرط
+		// عبور نکنند (TOCTOU قبلی: دو rebuild موازی با فایل ساختن مشترک).
+		tx, err := s.db.Begin()
+		if err != nil {
+			return nil, err
+		}
+		defer tx.Rollback()
 		var n int
-		if err := s.db.QueryRow(`SELECT COUNT(*) FROM jobs WHERE kind='index_rebuild' AND status IN ('queued','running')`).Scan(&n); err == nil && n > 0 {
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM jobs WHERE kind='index_rebuild' AND status IN ('queued','running')`).Scan(&n); err != nil {
+			return nil, err
+		}
+		if n > 0 {
 			return nil, errors.New("یک کار ساخت نمایه فعال وجود دارد؛ تا پایان آن صبر کنید")
 		}
+		if _, err := tx.Exec(`INSERT INTO jobs(uid, kind, payload, created_by) VALUES(?,?,?,?)`, uid, kind, string(payload), createdBy); err != nil {
+			return nil, err
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, err
+		}
+		return s.Get(uid)
 	}
-	uid := "job-" + randHex(8)
-	_, err := s.db.Exec(`INSERT INTO jobs(uid, kind, payload, created_by) VALUES(?,?,?,?)`, uid, kind, string(payload), createdBy)
-	if err != nil {
+	if _, err := s.db.Exec(`INSERT INTO jobs(uid, kind, payload, created_by) VALUES(?,?,?,?)`, uid, kind, string(payload), createdBy); err != nil {
 		return nil, err
 	}
 	return s.Get(uid)
@@ -77,8 +93,11 @@ func (s *Service) List() ([]Job, error) {
 	return out, nil
 }
 
-// Claim claim اتمیک از صف.
+// Claim claim اتمیک از صف. پیش از آن کارهای running با lease منقضی (worker
+// کرش‌کرده) دوباره صف می‌شوند تا برای همیشه «running» نمانند.
 func (s *Service) Claim(worker string) (*Job, error) {
+	_, _ = s.db.Exec(`UPDATE jobs SET status='queued', lease_until=NULL, retries=retries+1
+		WHERE status='running' AND lease_until IS NOT NULL AND lease_until < datetime('now')`)
 	tx, err := s.db.Begin()
 	if err != nil {
 		return nil, err
@@ -91,8 +110,13 @@ func (s *Service) Claim(worker string) (*Job, error) {
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	lease := time.Now().Add(10 * time.Minute).UTC().Format(time.RFC3339)
-	if _, err := tx.Exec(`UPDATE jobs SET status='running', claimed_at=?, heartbeat_at=?, lease_until=? WHERE uid=?`, now, now, lease, uid); err != nil {
+	// گارد status='queued' در UPDATE: دو worker هم‌زمان نمی‌توانند همان کار را ببرند
+	res, err := tx.Exec(`UPDATE jobs SET status='running', claimed_at=?, heartbeat_at=?, lease_until=? WHERE uid=? AND status='queued'`, now, now, lease, uid)
+	if err != nil {
 		return nil, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, sql.ErrNoRows
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err

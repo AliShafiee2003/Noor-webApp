@@ -4,8 +4,8 @@
  * صفحهٔ اثر — مشخصات کتاب + اسناد (جلد/مدخل جدا) با پوشش صریح هر سند.
  * دادهٔ null همیشه «ثبت نشده» نمایش داده می‌شود (حدس ممنوع — LIB-09).
  */
-import { useQuery } from "@tanstack/react-query";
-import { ArrowRight, BookOpen } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ArrowRight, BookOpen, Eye, EyeOff, Loader2, ShieldAlert } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -20,6 +20,8 @@ import {
   documentKindLabel,
   languageLabel,
 } from "@/lib/labels";
+import { useAuthStore } from "@/store/auth";
+import { useToast } from "@/hooks/use-toast";
 import type { CoverageState, WorkDetail } from "@/lib/types";
 
 function coverageBadgeClass(state: CoverageState): string {
@@ -86,8 +88,11 @@ function DocumentCard({
           </Button>
         </div>
 
+        <p className="mt-4 text-xs font-medium text-muted-foreground">
+          پوشش ثبت‌شده برای این سند
+        </p>
         <div
-          className="mt-4 flex flex-wrap gap-1.5"
+          className="mt-1.5 flex flex-wrap gap-1.5"
           aria-label={`پوشش سند ${doc.label}`}
         >
           {coverageKeys.map(({ key, label }) => {
@@ -119,6 +124,32 @@ function DocumentCard({
 
 export function WorkView({ uid }: { uid: string }) {
   const { navigate } = useRoute();
+  const user = useAuthStore((s) => s.user);
+  const isAdmin = user?.role === "admin";
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  const togglePublishMutation = useMutation({
+    mutationFn: (publish: boolean) =>
+      api.post(`/admin/works/${encodeURIComponent(uid)}/${publish ? "publish" : "unpublish"}`),
+    onSuccess: (_, publish) => {
+      toast({
+        title: publish ? "اثر منتشر شد" : "اثر از دسترس خارج شد",
+        description: publish
+          ? "این کتاب اکنون در کتابخانه و نتایج جست‌وجو در دسترس عموم است."
+          : "این کتاب از دسترس عموم خارج شد و تنها برای مدیران قابل مشاهده است.",
+      });
+      void queryClient.invalidateQueries({ queryKey: ["work", uid] });
+      void queryClient.invalidateQueries({ queryKey: ["works"] });
+    },
+    onError: (err) => {
+      toast({
+        title: "خطا در تغییر وضعیت انتشار",
+        description: errorMessage(err),
+        variant: "destructive",
+      });
+    },
+  });
 
   const workQuery = useQuery<WorkDetail>({
     queryKey: ["work", uid],
@@ -176,6 +207,18 @@ export function WorkView({ uid }: { uid: string }) {
             ) : null}
           </header>
 
+          {work.published === false ? (
+            <div className="flex items-center gap-2.5 rounded-xl border border-destructive/40 bg-destructive/5 p-3.5 text-sm text-destructive">
+              <ShieldAlert className="size-5 shrink-0" aria-hidden="true" />
+              <div className="flex-1">
+                <p className="font-semibold">این اثر از دسترس عموم خارج شده است.</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  کاربران عادی این اثر را در کتابخانه و نتایج جست‌وجو مشاهده نمی‌کنند.
+                </p>
+              </div>
+            </div>
+          ) : null}
+
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-base">مشخصات اثر</CardTitle>
@@ -183,13 +226,13 @@ export function WorkView({ uid }: { uid: string }) {
             <CardContent className="divide-y divide-border/70 p-4 pt-2">
               <SpecRow label="مؤلف" value={work.author ?? <UnknownValue />} />
               <SpecRow label="ناشر" value={work.publisher ?? <UnknownValue />} />
-              <SpecRow label="سال" value={work.year ?? <UnknownValue />} />
+              <SpecRow label="سال چاپ" value={work.year ?? <UnknownValue />} />
               <SpecRow
                 label="زبان"
                 value={work.language ? languageLabel(work.language) : <UnknownValue />}
               />
               <SpecRow
-                label="مجلدات"
+                label="مجلدات اثر"
                 value={
                   work.volumes_count !== null && work.volumes_count !== undefined ? (
                     faNum(work.volumes_count)
@@ -199,11 +242,13 @@ export function WorkView({ uid }: { uid: string }) {
                 }
               />
               <SpecRow
-                label="اسناد"
+                label="اسناد موجود"
                 value={
                   work.documents_count !== null &&
                   work.documents_count !== undefined ? (
                     faNum(work.documents_count)
+                  ) : work.documents?.length !== undefined ? (
+                    faNum(work.documents.length)
                   ) : (
                     <UnknownValue />
                   )
@@ -211,7 +256,38 @@ export function WorkView({ uid }: { uid: string }) {
               />
               <SpecRow
                 label="وضعیت انتشار"
-                value={work.published ? "منتشر شده" : "منتشر نشده"}
+                value={
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge
+                      variant={work.published ?? true ? "secondary" : "destructive"}
+                      className="font-normal"
+                    >
+                      {work.published ?? true ? "منتشر شده" : "از دسترس خارج شده"}
+                    </Badge>
+                    {isAdmin ? (
+                      <Button
+                        variant={work.published ?? true ? "outline" : "default"}
+                        size="sm"
+                        className="min-h-8 text-xs gap-1.5"
+                        disabled={togglePublishMutation.isPending}
+                        onClick={() =>
+                          togglePublishMutation.mutate(!(work.published ?? true))
+                        }
+                      >
+                        {togglePublishMutation.isPending ? (
+                          <Loader2 className="size-3 animate-spin" aria-hidden="true" />
+                        ) : work.published ?? true ? (
+                          <EyeOff className="size-3 text-destructive" aria-hidden="true" />
+                        ) : (
+                          <Eye className="size-3" aria-hidden="true" />
+                        )}
+                        {work.published ?? true
+                          ? "خروج از دسترسی (غیرفعال‌سازی)"
+                          : "انتشار مجدد (فعال‌سازی)"}
+                      </Button>
+                    ) : null}
+                  </div>
+                }
               />
             </CardContent>
           </Card>

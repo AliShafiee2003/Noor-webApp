@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -17,6 +18,7 @@ import (
 type Block struct {
 	ID            string     `json:"id"`
 	Type          string     `json:"type"` // heading|p|sanad|hadith_body|ayah_quote|b_note|sharh|unknown
+	Level         int        `json:"level,omitempty"`
 	Text          string     `json:"text"`
 	HadithUID     string     `json:"hadith_uid,omitempty"`
 	RevayatIndex  string     `json:"revayat_index,omitempty"`
@@ -87,11 +89,13 @@ type PageRec struct {
 }
 
 type SectionRec struct {
-	UID      string        `json:"uid"`
-	Title    string        `json:"title"`
-	Level    int           `json:"level"`
-	BlockID  string        `json:"block_id"`
-	Children []*SectionRec `json:"children,omitempty"`
+	UID       string        `json:"uid"`
+	Title     string        `json:"title"`
+	Level     int           `json:"level"`
+	BlockID   string        `json:"block_id"`
+	PageLabel string        `json:"page_label,omitempty"`
+	PageUID   string        `json:"page_uid,omitempty"`
+	Children  []*SectionRec `json:"children,omitempty"`
 }
 
 // HadithPiece قطعهٔ روایت با شناسهٔ محلی؛ شناسهٔ تکراری = چند قطعه (HAD-01).
@@ -106,21 +110,23 @@ type HadithPiece struct {
 
 // DocModel مدل مشتق یک سند.
 type DocModel struct {
-	DocumentUID string
-	Text        string        // جریان متن نمایشی کل سند (با \n بین بلوک‌ها — هرگز از چسباندن span حذف‌شده ساخته نمی‌شود)
-	Blocks      []Block       `json:"blocks"`
-	Pages       []PageRec     `json:"pages"`
-	Sections    []*SectionRec `json:"sections"`
-	Footnotes   []Footnote    `json:"footnotes"`
-	Hadiths     []HadithPiece `json:"hadiths"`
-	Citations   []Citation    `json:"citations"`
-	UnknownTags int           `json:"unknown_tags"`
-	ParseErrors []string      `json:"parse_errors"`
+	DocumentUID      string
+	Text             string           // جریان متن نمایشی کل سند (با \n بین بلوک‌ها — هرگز از چسباندن span حذف‌شده ساخته نمی‌شود)
+	Blocks           []Block          `json:"blocks"`
+	Pages            []PageRec        `json:"pages"`
+	Sections         []*SectionRec    `json:"sections"`
+	Footnotes        []Footnote       `json:"footnotes"`
+	PagesApproximate bool             `json:"pages_approximate"` // نگاشت صفحه حدسی/تقسیم یکنواخت است
+	Hadiths          []HadithPiece    `json:"hadiths"`
+	Citations        []Citation       `json:"citations"`
+	UnknownTags      int              `json:"unknown_tags"`
+	ParseErrors      []string         `json:"parse_errors"`
+	DocItemBlocks    map[int64][2]int `json:"-"`
 }
 
 // ParseItems آیتم‌های decodeشدهٔ یک سند را به DocModel تبدیل می‌کند.
 func ParseItems(documentUID string, items []ItemInput) (*DocModel, error) {
-	m := &DocModel{DocumentUID: documentUID}
+	m := &DocModel{DocumentUID: documentUID, DocItemBlocks: make(map[int64][2]int, len(items))}
 	text := &textStream{}
 	blockIdx := 0
 	pageSerial := 0
@@ -136,10 +142,17 @@ func ParseItems(documentUID string, items []ItemInput) (*DocModel, error) {
 			m.ParseErrors = append(m.ParseErrors, fmt.Sprintf("DocItem %d: %v", it.ID, err))
 			continue
 		}
+		startBlockIdx := blockIdx
 		dec := xml.NewDecoder(strings.NewReader(it.XML))
 		dec.Strict = true
 		if err := parseItem(m, dec, text, &blockIdx, &pageSerial, &curPageIdx, closePage); err != nil {
 			m.ParseErrors = append(m.ParseErrors, fmt.Sprintf("DocItem %d: %v", it.ID, err))
+		}
+		endBlockIdx := blockIdx - 1
+		if endBlockIdx >= startBlockIdx {
+			m.DocItemBlocks[it.ID] = [2]int{startBlockIdx, endBlockIdx}
+		} else {
+			m.DocItemBlocks[it.ID] = [2]int{startBlockIdx, startBlockIdx}
 		}
 	}
 	closePage()
@@ -155,10 +168,32 @@ type ItemInput struct {
 	XML string
 }
 
+// rejectDTD کل متن را می‌سنجد نه فقط ۵۱۲ بایت اول: DOCTYPE/ENTITY می‌تواند بعد
+// از ریشهٔ سند درج شود و decoder آن را پردازش کند (بمب entity). اسکن تک‌گذر
+// بدون تخصیص است.
 func rejectDTD(s string) error {
-	up := strings.ToUpper(s[:min(len(s), 512)])
-	if strings.Contains(up, "<!DOCTYPE") || strings.Contains(up, "<!ENTITY") {
-		return fmt.Errorf("DTD/entity ممنوع است")
+	for i := 0; i+1 < len(s); i++ {
+		if s[i] != '<' || s[i+1] != '!' {
+			continue
+		}
+		j := i + 2
+		for j < len(s) && (s[j] == ' ' || s[j] == '\t') {
+			j++
+		}
+		word := ""
+		for k := j; k < len(s) && k-j < 8; k++ {
+			c := s[k]
+			if c >= 'A' && c <= 'Z' {
+				c += 'a' - 'A'
+			}
+			if c < 'a' || c > 'z' {
+				break
+			}
+			word += string(c)
+		}
+		if word == "doctype" || word == "entity" {
+			return fmt.Errorf("DTD/entity ممنوع است")
+		}
 	}
 	return nil
 }
@@ -171,10 +206,11 @@ func min(a, b int) int {
 }
 
 type ctx struct {
-	inHadith   bool
-	hadithUID  string
-	revayatIdx string
-	curBlock   *Block
+	inHadith    bool
+	hadithDepth int
+	hadithUID   string
+	revayatIdx  string
+	curBlock    *Block
 }
 
 // textStream جریان متن نمایشی سند همراه با شمارِ rune جاری.
@@ -216,6 +252,7 @@ func addBlock(m *DocModel, text *textStream, blockIdx *int, b *Block) {
 // parseItem یک رکورد را پارس می‌کند.
 func parseItem(m *DocModel, dec *xml.Decoder, text *textStream, blockIdx *int, pageSerial *int, curPageIdx *int, closePage func()) error {
 	c := &ctx{}
+	curDepth := 0
 
 	// fill متن بلوک را پر می‌کند؛ هر خطای decoder اینجا پایان سکوت نیست (DB-03):
 	// بلوک جزئی ثبت می‌شود (سندِ ناقص قابل مشاهده می‌ماند) و خطا به caller برمی‌گردد.
@@ -239,21 +276,48 @@ func parseItem(m *DocModel, dec *xml.Decoder, text *textStream, blockIdx *int, p
 		}
 		switch t := tok.(type) {
 		case xml.StartElement:
+			curDepth++
 			name := t.Name.Local
+			attrs := attrMap(t)
+
+			if name == "format" {
+				if cls := attrs["class"]; cls != "" {
+					name = cls
+				}
+			}
+			if name == "br" || name == "gap" {
+				continue
+			}
+
 			switch name {
 			case "page":
-				attrs := attrMap(t)
 				closePage()
 				*pageSerial++
-				p := PageRec{UID: fmt.Sprintf("p-%03d", *pageSerial), Label: attrs["label"], Num: attrs["num"], Serial: *pageSerial}
+				lbl := attrs["label"]
+				if lbl == "" {
+					lbl = attrs["number"]
+					if lbl == "" {
+						lbl = attrs["num"]
+					}
+				}
+				num := attrs["num"]
+				if num == "" {
+					num = attrs["number"]
+				}
+				p := PageRec{UID: fmt.Sprintf("p-%03d", *pageSerial), Label: lbl, Num: num, Serial: *pageSerial}
 				p.StartBlock = *blockIdx
 				m.Pages = append(m.Pages, p)
 				*curPageIdx = len(m.Pages) - 1
 			case "heading":
-				b := &Block{Type: "heading"}
+				lvl := 0
+				if lStr := attrs["level"]; lStr != "" {
+					lvl, _ = strconv.Atoi(lStr)
+				}
+				b := &Block{Type: "heading", Level: lvl}
 				if err := fill(b); err != nil {
 					return err
 				}
+				b.Text = CleanTitle(b.Text)
 				addBlock(m, text, blockIdx, b)
 			case "p":
 				b := &Block{Type: "p", HadithUID: c.hadithUID, RevayatIndex: c.revayatIdx, Untagged: !c.inHadith}
@@ -271,10 +335,21 @@ func parseItem(m *DocModel, dec *xml.Decoder, text *textStream, blockIdx *int, p
 				}
 				addBlock(m, text, blockIdx, b)
 			case "hadith":
-				attrs := attrMap(t)
 				c.inHadith = true
-				c.hadithUID = attrs["id"]
-				c.revayatIdx = attrs["revayatindex"]
+				c.hadithDepth = curDepth
+				hUID := attrs["id"]
+				if hUID == "" {
+					hUID = attrs["Id"]
+				}
+				c.hadithUID = hUID
+				rIdx := attrs["revayatindex"]
+				if rIdx == "" {
+					rIdx = attrs["RevayatIndex"]
+					if rIdx == "" {
+						rIdx = attrs["index"]
+					}
+				}
+				c.revayatIdx = rIdx
 			case "maasoom":
 				inner := &Block{Type: "maasoom"}
 				if err := fill(inner); err != nil {
@@ -283,7 +358,6 @@ func parseItem(m *DocModel, dec *xml.Decoder, text *textStream, blockIdx *int, p
 				// maasoom درون سند یا بدنه: به‌عنوان بلوک مستقل muted نمایش داده می‌شود
 				addBlock(m, text, blockIdx, inner)
 			case "G":
-				attrs := attrMap(t)
 				b := &Block{Type: "p", Untagged: !c.inHadith}
 				if err := fill(b); err != nil {
 					return err
@@ -291,7 +365,6 @@ func parseItem(m *DocModel, dec *xml.Decoder, text *textStream, blockIdx *int, p
 				b.Spans = append(b.Spans, Span{Role: "G", Start: 0, End: utf8.RuneCountInString(b.Text), G: attrs["n"], HadithUID: c.hadithUID})
 				addBlock(m, text, blockIdx, b)
 			case "K":
-				attrs := attrMap(t)
 				b := &Block{Type: "p", Untagged: true}
 				if err := fill(b); err != nil {
 					return err
@@ -299,8 +372,15 @@ func parseItem(m *DocModel, dec *xml.Decoder, text *textStream, blockIdx *int, p
 				b.Spans = append(b.Spans, Span{Role: "K", Start: 0, End: utf8.RuneCountInString(b.Text), Ref: attrs["book"] + "/" + attrs["vol"] + "/" + attrs["page"], HadithUID: c.hadithUID})
 				addBlock(m, text, blockIdx, b)
 			case "ayah":
-				attrs := attrMap(t)
-				cit := Citation{Sure: attrs["sure"], Aya: attrs["aya"], Address: attrs["ayahAddress"], BlockID: fmt.Sprintf("b-%04d", *blockIdx), InHadith: c.hadithUID, HasParent: true}
+				sure := attrs["sure"]
+				if sure == "" {
+					sure = attrs["surah"]
+				}
+				aya := attrs["aya"]
+				if aya == "" {
+					aya = attrs["ayah"]
+				}
+				cit := Citation{Sure: sure, Aya: aya, Address: attrs["ayahAddress"], BlockID: fmt.Sprintf("b-%04d", *blockIdx), InHadith: c.hadithUID, HasParent: true}
 				b := &Block{Type: "ayah_quote", HadithUID: c.hadithUID, RevayatIndex: c.revayatIdx, Untagged: !c.inHadith}
 				if err := fill(b); err != nil {
 					return err
@@ -309,18 +389,20 @@ func parseItem(m *DocModel, dec *xml.Decoder, text *textStream, blockIdx *int, p
 				addBlock(m, text, blockIdx, b)
 				m.Citations = append(m.Citations, cit)
 			case "ayahAddress":
-				attrs := attrMap(t)
+				sure := attrs["sure"]
+				if sure == "" {
+					sure = attrs["surah"]
+				}
 				inner := &Block{Type: "p", Untagged: true}
 				if err := fill(inner); err != nil {
 					return err
 				}
-				cit := Citation{Sure: attrs["sure"], AyaFrom: attrs["ayaFrom"], AyaTo: attrs["ayaTo"], Address: inner.Text, BlockID: "", HasParent: false}
+				cit := Citation{Sure: sure, AyaFrom: attrs["ayaFrom"], AyaTo: attrs["ayaTo"], Address: inner.Text, BlockID: "", HasParent: false}
 				m.Citations = append(m.Citations, cit)
 				inner.Citations = append(inner.Citations, cit)
 				addBlock(m, text, blockIdx, inner)
-			case "ayahWord":
-				attrs := attrMap(t) // قرارداد بازهٔ واژگان تا تأیید، صرفاً حفظ می‌شود (QUR-05)
-				_ = attrs
+			case "ayahWord", "AyahSeprator":
+				_ = attrs // قرارداد بازهٔ واژگان تا تأیید، صرفاً حفظ می‌شود (QUR-05)
 			case "B":
 				b := &Block{Type: "b_note", Untagged: true}
 				if err := fill(b); err != nil {
@@ -328,27 +410,32 @@ func parseItem(m *DocModel, dec *xml.Decoder, text *textStream, blockIdx *int, p
 				}
 				addBlock(m, text, blockIdx, b)
 			case "sharh":
-				attrs := attrMap(t)
 				b := &Block{Type: "sharh", Untagged: true}
 				if err := fill(b); err != nil {
 					return err
 				}
-				b.Spans = append(b.Spans, Span{Role: "sharh", Start: 0, End: utf8.RuneCountInString(b.Text), Ref: attrs["id"], HadithUID: c.hadithUID})
+				sID := attrs["id"]
+				if sID == "" {
+					sID = attrs["Id"]
+				}
+				b.Spans = append(b.Spans, Span{Role: "sharh", Start: 0, End: utf8.RuneCountInString(b.Text), Ref: sID, HadithUID: c.hadithUID})
 				addBlock(m, text, blockIdx, b)
 			case "lfootnote":
-				attrs := attrMap(t)
-				if id := attrs["id"]; id != "" {
+				ref := attrs["ref"]
+				if ref == "" {
+					ref = attrs["noteId"]
+				}
+				id := attrs["id"]
+				if id != "" {
 					fn := Footnote{UID: id, Label: attrs["num"]}
 					b := &Block{Type: "p", Untagged: true}
-					// پاورقی مستقل به جریان نمایش اضافه نمی‌شود (SEARCH-06)؛ خطا اما
-					// اینجا هم بی‌صدا بلعیده نمی‌شود (DB-03) — متن جزئی ثبت و خطا برمی‌گردد.
 					err := fillText(b, dec)
 					fn.Text = b.Text
 					m.Footnotes = append(m.Footnotes, fn)
 					if err != nil {
 						return err
 					}
-				} else if ref := attrs["ref"]; ref != "" {
+				} else if ref != "" {
 					// ارجاع پاورقی درون بلوک جاری: از متن سادهٔ خود تگ
 					b := &Block{Type: "p", Untagged: !c.inHadith}
 					if err := fill(b); err != nil {
@@ -358,7 +445,6 @@ func parseItem(m *DocModel, dec *xml.Decoder, text *textStream, blockIdx *int, p
 					addBlock(m, text, blockIdx, b)
 				}
 			case "link":
-				attrs := attrMap(t)
 				b := &Block{Type: "p", Untagged: !c.inHadith}
 				if err := fill(b); err != nil {
 					return err
@@ -381,38 +467,75 @@ func parseItem(m *DocModel, dec *xml.Decoder, text *textStream, blockIdx *int, p
 				addBlock(m, text, blockIdx, b)
 			}
 		case xml.EndElement:
-			switch t.Name.Local {
-			case "hadith":
+			if c.inHadith && curDepth == c.hadithDepth {
 				c.inHadith = false
+				c.hadithDepth = 0
 				c.hadithUID = ""
 				c.revayatIdx = ""
 			}
+			curDepth--
 		}
 	}
 }
 
-// fillText متن مرئی عنصر را با حفظ نقش‌های تو‌در‌تو می‌خواند (§۱۹):
-// عناصر معنایی درون پاراگراف به‌صورت inline-span با نگاشت code point ثبت می‌شوند —
-// هرگز حذف یا صاف نمی‌شوند؛ اتصال مصنوعی عبارت از دو طرف عنصر حذف‌شده رخ نمی‌دهد
-// چون متنِ عنصر باقی می‌ماند و فقط نقشش ثبت می‌شود.
-// خطای بازگشتی fillText (DB-03): رسیدن به io.EOF در حالی که عنصر هنوز باز است
-// یعنی XML ناقص/بریده — هرگز موفقیت تلقی نمی‌شود؛ سایر خطاهای decoder هم عیناً
-// برمی‌گردند. caller بلوک جزئی را ثبت می‌کند تا سند ناقص قابل مشاهده بماند.
+// cleanTextWithMap فشرده‌سازی فاصله‌ها را با حفظ نگاشت دقیق 1-به-1 اندیس‌های raw به clean انجام می‌دهد (§۱۹).
+func cleanTextWithMap(raw []rune) (string, []int) {
+	n := len(raw)
+	if n == 0 {
+		return "", []int{0}
+	}
+	mapRawToClean := make([]int, n+1)
+	var out []rune
+	inSpace := true // حذف فاصله‌های ابتدایی
+	for i, r := range raw {
+		if r == ' ' || r == '\n' || r == '\t' || r == '\r' {
+			if !inSpace {
+				out = append(out, ' ')
+				inSpace = true
+			}
+		} else {
+			out = append(out, r)
+			inSpace = false
+		}
+		if len(out) == 0 {
+			mapRawToClean[i] = 0
+		} else if inSpace {
+			mapRawToClean[i] = len(out)
+		} else {
+			mapRawToClean[i] = len(out) - 1
+		}
+	}
+	// حذف فاصلهٔ انتهایی در صورت وجود
+	for len(out) > 0 && out[len(out)-1] == ' ' {
+		out = out[:len(out)-1]
+	}
+	for i := range mapRawToClean {
+		if mapRawToClean[i] > len(out) {
+			mapRawToClean[i] = len(out)
+		}
+	}
+	mapRawToClean[n] = len(out)
+	return string(out), mapRawToClean
+}
+
+// fillText متن مرئی عنصر را با حفظ نقش‌های تو‌در‌تو و نگاشت دقیق مختصات می‌خواند (§۱۹):
 func fillText(b *Block, dec *xml.Decoder) error {
 	var raw []rune
 	depth := 1
 	type marker struct {
 		role string
 		attr map[string]string
-		at   int // جایگاه در raw
+		from int
+		to   int
 	}
-	var open []marker
+	var open []*marker
+	var closed []*marker
+
 	for depth > 0 {
 		tok, err := dec.Token()
 		if err != nil {
-			// متن جزئی خوانده‌شده پیش از بازگرداندن خطا حفظ می‌شود تا سندِ ناقص
-			// قابل مشاهده بماند (DB-03) — بلوک ناقص با متن جزئی ثبت می‌شود.
-			b.Text = strings.Join(strings.Fields(collapseSpaces(string(raw))), " ")
+			clean, _ := cleanTextWithMap(raw)
+			b.Text = clean
 			if errors.Is(err, io.EOF) {
 				return fmt.Errorf("پایان نابه‌هنگام XML درون عنصر (تگ بسته‌نشده)")
 			}
@@ -421,10 +544,40 @@ func fillText(b *Block, dec *xml.Decoder) error {
 		switch t := tok.(type) {
 		case xml.StartElement:
 			name := t.Name.Local
+			attrs := attrMap(t)
+			if name == "format" {
+				if cls := attrs["class"]; cls != "" {
+					name = cls
+				}
+			}
+			if name == "br" || name == "gap" {
+				raw = append(raw, ' ')
+				continue
+			}
 			switch name {
+			case "hadith":
+				b.HadithUID = attrs["id"]
+				if b.HadithUID == "" {
+					b.HadithUID = attrs["Id"]
+				}
+				b.RevayatIndex = attrs["revayatindex"]
+				if b.RevayatIndex == "" {
+					b.RevayatIndex = attrs["RevayatIndex"]
+				}
+				if b.RevayatIndex == "" {
+					b.RevayatIndex = attrs["index"]
+				}
+				open = append(open, &marker{role: "hadith", attr: attrs, from: len(raw)})
+			case "sanadHadith":
+				open = append(open, &marker{role: "sanad", attr: attrs, from: len(raw)})
 			case "G", "K", "maasoom", "sharh", "ayah", "link", "ayahAddress", "B":
-				attrs := attrMap(t)
-				open = append(open, marker{role: roleOf(name, attrs), attr: attrs, at: len(raw)})
+				open = append(open, &marker{role: roleOf(name, attrs), attr: attrs, from: len(raw)})
+			case "lfootnote":
+				open = append(open, &marker{role: "lfootnote_ref", attr: attrs, from: len(raw)})
+			case "heading":
+				if b.Type == "p" {
+					b.Type = "heading"
+				}
 			}
 			depth++
 		case xml.EndElement:
@@ -432,11 +585,11 @@ func fillText(b *Block, dec *xml.Decoder) error {
 			if depth == 0 {
 				break
 			}
-			// بستن نزدیک‌ترین نشانهٔ بازِ همین عمق
 			for i := len(open) - 1; i >= 0; i-- {
-				if _, done := open[i].attr["__done"]; !done {
-					addInlineSpan(b, &raw, open[i].role, open[i].attr, open[i].at, len(raw))
-					open[i].attr["__done"] = "1"
+				if open[i].to == 0 {
+					open[i].to = len(raw)
+					closed = append(closed, open[i])
+					open = append(open[:i], open[i+1:]...)
 					break
 				}
 			}
@@ -444,12 +597,35 @@ func fillText(b *Block, dec *xml.Decoder) error {
 			raw = append(raw, []rune(string(t))...)
 		}
 	}
-	b.Text = strings.Join(strings.Fields(collapseSpaces(string(raw))), " ")
+
+	clean, mapRawToClean := cleanTextWithMap(raw)
+	b.Text = clean
+	if b.Type == "heading" {
+		b.Text = CleanTitle(b.Text)
+	}
+
+	runesLen := utf8.RuneCountInString(b.Text)
+	for _, m := range closed {
+		s := mapRawToClean[m.from]
+		e := mapRawToClean[m.to]
+		if e <= s && m.to > m.from && s < runesLen {
+			e = s + 1
+		}
+		var orig string
+		if m.from < len(raw) && m.to <= len(raw) && m.to >= m.from {
+			orig = string(raw[m.from:m.to])
+		}
+		addInlineSpanExact(b, m.role, m.attr, s, e, orig)
+	}
 	return nil
 }
 
 func roleOf(name string, attrs map[string]string) string {
 	switch name {
+	case "hadith":
+		return "hadith"
+	case "sanadHadith":
+		return "sanad"
 	case "G":
 		return "G"
 	case "K":
@@ -468,26 +644,22 @@ func roleOf(name string, attrs map[string]string) string {
 	return "unknown"
 }
 
-// addInlineSpan نقش تو در تو را روی بلوک ثبت می‌کند (بازهٔ تقریبی روی متن صاف‌شده).
-func addInlineSpan(b *Block, raw *[]rune, role string, attrs map[string]string, from, to int) {
-	// نگاشت raw → متن صاف‌شده: جایگاه تقریبی با تناسب طول
-	total := len(*raw)
-	if total == 0 {
-		return
+// addInlineSpanExact نقش تو در تو را با مختصات دقیق روی بلوک ثبت می‌کند.
+func addInlineSpanExact(b *Block, role string, attrs map[string]string, s, e int, orig string) {
+	runesLen := utf8.RuneCountInString(b.Text)
+	if s > runesLen {
+		s = runesLen
 	}
-	clean := strings.Join(strings.Fields(collapseSpaces(string(*raw))), " ")
-	if len([]rune(clean)) == 0 {
-		return
+	if e > runesLen {
+		e = runesLen
 	}
-	ratio := float64(len([]rune(clean))) / float64(total)
-	s := int(float64(from) * ratio)
-	e := int(float64(to) * ratio)
-	if e <= s {
-		e = s + 1
+	if e < s {
+		e = s
 	}
+
 	switch role {
 	case "link":
-		b.Links = append(b.Links, LinkSpan{Start: s, End: e, OriginalAddress: string((*raw)[from:to]), Target: attrs, Resolved: false})
+		b.Links = append(b.Links, LinkSpan{Start: s, End: e, OriginalAddress: orig, Target: attrs, Resolved: false})
 	case "ayah_text":
 		b.Citations = append(b.Citations, Citation{
 			Sure: attrs["sure"], Aya: attrs["aya"], AyaFrom: attrs["ayaFrom"], AyaTo: attrs["ayaTo"],
@@ -495,11 +667,73 @@ func addInlineSpan(b *Block, raw *[]rune, role string, attrs map[string]string, 
 			InHadith: b.HadithUID,
 		})
 	case "lfootnote_ref":
-		// در fillText رخ نمی‌دهد؛ ارجاع پاورقی در case خودش است
+		ref := attrs["noteId"]
+		if ref == "" {
+			ref = attrs["ref"]
+		}
+		if ref == "" {
+			ref = attrs["id"]
+		}
+		if ref != "" {
+			b.FootnoteRefs = append(b.FootnoteRefs, FootRef{Ref: ref, Start: s, End: e})
+		}
 	default:
 		b.Spans = append(b.Spans, Span{Role: role, Start: s, End: e, G: attrs["n"], MasumNo: attrs["mno"], Ref: attrs["id"]})
 	}
-	_ = attrs["ref"]
+}
+
+// CleanTitle پیراستن نمادهای اضافی < > یا &lt; &gt; و نرمال‌سازی نویسه‌های عربی/فارسی (ک/ی/هٔ)
+func CleanTitle(s string) string {
+	s = strings.TrimSpace(s)
+	for {
+		changed := false
+		if strings.HasPrefix(s, "&lt;") && strings.HasSuffix(s, "&gt;") {
+			s = strings.TrimPrefix(s, "&lt;")
+			s = strings.TrimSuffix(s, "&gt;")
+			s = strings.TrimSpace(s)
+			changed = true
+		}
+		if strings.HasPrefix(s, "<") && strings.HasSuffix(s, ">") {
+			s = strings.TrimPrefix(s, "<")
+			s = strings.TrimSuffix(s, ">")
+			s = strings.TrimSpace(s)
+			changed = true
+		}
+		if !changed {
+			break
+		}
+	}
+	s = strings.Trim(s, "<> \t\r\n\u200C\u200D\u0640\uFEFF\u200B")
+
+	var b strings.Builder
+	runes := []rune(s)
+	n := len(runes)
+	for i := 0; i < n; i++ {
+		r := runes[i]
+		switch r {
+		case '\u200D', '\u200B', '\uFEFF', '\u0640':
+			// حذف ZWJ، کشیده (Tatweel)، و نویسه‌های نامرئی هرز در عناوین
+			continue
+		case '\u0643': // ك
+			b.WriteRune('\u06A9') // ک
+		case '\u0649', '\u064A': // ى, ي
+			b.WriteRune('\u06CC') // ی
+		case '\u06C0': // ۀ
+			b.WriteString("\u0647\u0654") // هٔ
+		default:
+			// ه + ZWNJ + ا + [ى/ي/ی] -> ه‌ای
+			if r == '\u0647' && i+3 < n && runes[i+1] == '\u200C' && runes[i+2] == '\u0627' &&
+				(runes[i+3] == '\u0649' || runes[i+3] == '\u064A' || runes[i+3] == '\u06CC') {
+				b.WriteString("ه‌ای")
+				i += 3
+				continue
+			}
+			b.WriteRune(r)
+		}
+	}
+	res := strings.TrimSpace(b.String())
+	res = strings.Trim(res, "<> \t\r\n\u200C\u200D\u0640\uFEFF\u200B")
+	return res
 }
 
 func name2parent(role string) bool { return role == "ayah_text" }
@@ -543,7 +777,7 @@ func buildSections(m *DocModel) {
 		if len(stack) > 0 && utf8.RuneCountInString(b.Text) < 20 {
 			level = 2
 		}
-		sec := &SectionRec{UID: fmt.Sprintf("sec-%03d", secNo), Title: b.Text, Level: level, BlockID: b.ID}
+		sec := &SectionRec{UID: fmt.Sprintf("sec-%03d", secNo), Title: CleanTitle(b.Text), Level: level, BlockID: b.ID}
 		for len(stack) >= level {
 			stack = stack[:len(stack)-1]
 		}

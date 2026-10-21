@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +22,9 @@ import (
 	"noor/internal/config"
 	"noor/internal/store"
 )
+
+// ugcServerRef آخرین سرور تست — برای محاسبهٔ CSRF مشتق‌شده از نشست در ugcDo.
+var ugcServerRef *Server
 
 func ugcTestServer(t *testing.T) (*Server, *httptest.Server) {
 	t.Helper()
@@ -38,8 +42,12 @@ func ugcTestServer(t *testing.T) (*Server, *httptest.Server) {
 		DB:   db,
 		Auth: am,
 	}
+	ugcServerRef = s
 	ts := httptest.NewServer(s.Router())
-	t.Cleanup(ts.Close)
+	t.Cleanup(func() {
+		ts.Close()
+		_ = db.Close()
+	})
 	return s, ts
 }
 
@@ -76,7 +84,11 @@ func ugcDo(t *testing.T, ts *httptest.Server, method, path, token string, body a
 		t.Fatalf("new request: %v", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Noor-CSRF", "test") // سپر mutation سرور — کوکی نشست کافی نیست
+	csrf := ""
+	if token != "" && ugcServerRef != nil {
+		csrf = ugcServerRef.csrfToken(token) // نشانهٔ واقعی مشتق‌شده از نشست
+	}
+	req.Header.Set("X-Noor-CSRF", csrf)
 	if token != "" {
 		req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: token})
 	}
@@ -373,10 +385,13 @@ func TestUGCSharesTwoUsers(t *testing.T) {
 // ---- کارهای PDF ----
 
 func TestUGCPdfJobsTwoUsers(t *testing.T) {
+	if _, err := os.Stat("../../data/sources/catalog.mock.json"); err != nil {
+		t.Skip("fixture catalog.mock.json در این مخزن موجود نیست")
+	}
 	s, ts := ugcTestServer(t)
-	cat, err := catalog.Load("../../data/sources")
+	cat, err := catalog.LoadFile("../../data/sources", "catalog.mock.json")
 	if err != nil {
-		t.Fatalf("catalog.Load: %v", err)
+		t.Fatalf("catalog.LoadFile: %v", err)
 	}
 	s.Catalog = cat
 

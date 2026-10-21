@@ -18,6 +18,10 @@ export type ApiErrorCode =
   | "invalid_query"
   | "quota"
   | "rate_limited"
+  | "csrf"
+  | "timeout"
+  | "mfa_invalid"
+  | "mfa_enabled"
   | "unavailable"
   | "internal";
 
@@ -101,7 +105,8 @@ export interface WorkListResponse {
   page_size: number;
 }
 
-export type CoverageState = "supported" | "partial" | "absent" | "failed";
+// "unknown": هنوز نمایه نشده/تشخیص داده نشده — هرگز «supported» جعلی گزارش نمی‌شود.
+export type CoverageState = "supported" | "partial" | "absent" | "failed" | "unknown";
 
 export interface DocumentCoverage {
   toc: CoverageState;
@@ -146,6 +151,7 @@ export interface TocSection {
   title: string;
   kind?: string;
   page_label?: string | null;
+  page_uid?: string | null;
   level?: number;
   block_id?: string | null;
   children: TocSection[];
@@ -260,6 +266,7 @@ export function blockOffsets(
 export interface PageBlock {
   id: string;
   type: BlockType;
+  level?: number;
   text: string;
   /**
    * بازهٔ بلوک در جریان متن نمایشی سند.
@@ -295,18 +302,32 @@ export interface PagePayload {
   offset_unit: string;
   blocks: PageBlock[];
   footnotes: Footnote[];
+  /** "approximate" یعنی مرز صفحهٔ چاپی از منبع نیامده و تخمینی است؛ ارجاع صفحه را با احتیاط نقل کنید. */
+  page_mapping?: "exact" | "approximate";
 }
 
 /* ---------- جست‌وجو ---------- */
 
 export type SearchMode =
+  | "text"
+  | "words"
   | "strict_phrase"
   | "normalized_phrase"
   | "all_words"
   | "any_words"
   | "near"
   | "linguistic"
-  | "long_quote";
+  | "long_quote"
+  | "similar_quote"
+  | "tiered";
+
+export type TextFlex = "exact" | "written" | "spelling" | "similar";
+
+export interface WordsOpts {
+  match?: "all" | "any";
+  distance?: number;
+  ordered?: boolean;
+}
 
 export type SearchScopeTarget =
   | "library"
@@ -316,6 +337,8 @@ export type SearchScopeTarget =
   | "section"
   /** «نام کتاب» در سطح رابط؛ در hash استفاده می‌شود */
   | "titles"
+  /** جست‌وجوی پدیدآور / مؤلف */
+  | "authors"
   /** جست‌وجوی استناد قرآنی (QUR-03) */
   | "citations";
 
@@ -323,6 +346,7 @@ export interface SearchScope {
   target: SearchScopeTarget;
   collection_uids?: string[];
   work_uid?: string | null;
+  author?: string | null;
   document_uids?: string[];
   roles?: string[];
   language?: string | null;
@@ -339,12 +363,54 @@ export interface SearchRequest {
   query: string;
   mode: SearchMode;
   scope: SearchScope;
+  /** قرارداد دوحالته جدید: میزان انعطاف در حالت text */
+  flex?: TextFlex;
+  /** قرارداد دوحالته جدید: تنظیمات حالت words */
+  words?: WordsOpts;
+  /** فیلتر نمایش لایه‌ها (FTS5) */
+  result_layers?: string[];
   near?: SearchNear;
-  sort?: "relevance" | "source";
+  sort?: "relevance" | "similarity" | "source";
   page_size?: number;
+  /** موتور FTS5: «respect» = هر اعرابی که کاربر نوشته باید روی همان حرف در متن باشد */
+  diacritics?: "ignore" | "respect" | "respect_strict";
+  /** موتور FTS5: محدودسازی لایه‌ها در tiered/similar/long (خالی = L1 تا L4) */
+  layers?: SearchLayer[];
+  /** موتور FTS5: آستانهٔ شباهت L4 در بازهٔ ۰٫۵ تا ۱ (پیش‌فرض ۰٫۷۰) */
+  min_score?: number;
+  /** موتور FTS5: L5 — واژهٔ نزدیک با یک ویرایش حرفی (فقط با انتخاب صریح) */
+  near_spelling?: boolean;
+  /** موتور FTS5: گسترش صرفی L3 (مفرد ↔ جمع با «ها») — فقط با انتخاب صریح */
+  expand_morphology?: boolean;
 }
 
-export type MatchType = "exact" | "normalized" | "linguistic" | "fuzzy";
+/** لایه‌های تطبیق: L1 عین متن، L2 نرمال‌شده، L3 هم‌ارزی املایی، L4 مشابه، L5 واژهٔ نزدیک */
+export type SearchLayer = "L1" | "L2" | "L3" | "L4" | "L5";
+
+export interface SimilarityCounts {
+  exact: number;
+  orthographic: number;
+  near_spelling: number;
+  substitutions: number;
+  deletions: number;
+  insertions: number;
+  transpositions: number;
+  block_moves: number;
+  /** افزوده/حذفِ واژه‌های عبارت دعایی شناخته‌شده (جدا از افزوده/حذف عادی) */
+  honorific?: number;
+}
+
+/** جزئیات امتیاز شباهت لفظی (هرگز «درصد اطمینان علمی» نیست) */
+export interface SearchSimilarity {
+  score: number;
+  coverage: number;
+  counts: SimilarityCounts;
+  diffs?: string[];
+  algorithm: string;
+  version: string;
+}
+
+export type MatchType = "exact" | "normalized" | "linguistic" | "fuzzy" | (string & {});
 
 export type CompletionState = "complete" | "in_progress" | "cancelled" | "failed";
 
@@ -357,10 +423,10 @@ export interface SearchHighlight {
 export interface SearchResultItem {
   passage_uid: string;
   match_type: MatchType;
-  work: { uid: string; title: string };
+  work: { uid: string; title: string; label?: string };
   document: { uid: string; label: string };
   page: { uid: string; label: string };
-  section: { uid: string; title: string } | null;
+  section: { uid: string; title: string; label?: string } | null;
   snippet: string;
   highlight: SearchHighlight[];
   roles: string[];
@@ -371,6 +437,14 @@ export interface SearchResultItem {
   source_offsets: SourceOffsets | null;
   /** بازهٔ دقیق تطبیق در مختصات سند — برای هایلایت کتاب‌خوان */
   match_offsets?: [number, number] | null;
+  /** لایهٔ تطبیق (فقط موتور FTS5) */
+  layer?: SearchLayer;
+  /** تفاوت‌های L3/L5 با پرسش (مثلاً «پیشوند و»، «همزه/الف») */
+  diffs?: string[];
+  /** هم‌ترازی L4 (و امتیاز لایه‌های دیگر در similar_quote) */
+  similarity?: SearchSimilarity | null;
+  /** متن کامل قطعه در صورت روایت یا استخراج */
+  full_text?: string;
 }
 
 export interface SearchResponse {
@@ -386,7 +460,22 @@ export interface SearchResponse {
   continuation_available: boolean;
   next_cursor: string | null;
   count_job_uid: string | null;
+  notice?: string | null;
   results: SearchResultItem[];
+  /** شمار اختصاصی هر لایه (FTS5، حالت‌های لایه‌ای) */
+  layer_counts?: Partial<Record<SearchLayer, number>> | null;
+  /** شمار نتایج L4/L5 — جدا از verified_occurrences (شمار قطعی) */
+  similar_occurrences?: number | null;
+  /** کل نتایج قابل‌پیمایش (قطعی + مشابه) */
+  total_results?: number | null;
+  /** پوشش L4: complete | partial | not_run (سقف‌های تعاملی) */
+  similar_coverage?: "complete" | "partial" | "not_run" | null;
+  /** حالت و انعطاف مؤثر اعمال‌شده توسط سرور */
+  effective_mode?: string | null;
+  effective_flex?: string | null;
+  result_layers?: string[] | null;
+  /** نام موتور و نسخهٔ قواعد پاسخ‌دهنده */
+  engine?: string | null;
 }
 
 export interface SearchBooksEvidence {

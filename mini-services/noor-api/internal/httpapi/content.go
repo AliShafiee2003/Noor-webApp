@@ -3,9 +3,15 @@ package httpapi
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log"
 	"net"
 	"os"
 	"sort"
+	"strconv"
+	"sync"
+	"time"
+	"unicode/utf8"
 
 	"encoding/json"
 	"net/http"
@@ -14,6 +20,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"noor/internal/catalog"
+	"noor/internal/norm"
+	"noor/internal/overlay"
 	"noor/internal/search"
 	"noor/internal/xmlparse"
 )
@@ -43,62 +52,117 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleWorks(w http.ResponseWriter, r *http.Request) {
-	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
-	lang := r.URL.Query().Get("language")
-	author := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("author")))
+	u := userOf(r)
+	isAdmin := u != nil && u.Role == "admin"
+	unpubMap, _ := s.DB.UnpublishedWorkUIDs()
+
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	lang := strings.TrimSpace(r.URL.Query().Get("language"))
+	author := strings.TrimSpace(r.URL.Query().Get("author"))
+	sortParam := strings.TrimSpace(r.URL.Query().Get("sort"))
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page < 1 {
+		page = 1
+	}
+	pageSize, _ := strconv.Atoi(r.URL.Query().Get("page_size"))
+
+	qFold := norm.Fold(q)
+	authorFold := norm.Fold(author)
+
+	var filtered []catalog.Work
+	for _, wk := range s.Catalog.Works() {
+		isPublished := !unpubMap[wk.UID]
+		if !isPublished && !isAdmin {
+			continue // کاربران عادی آثار از دسترس خارج شده را نمی‌بینند
+		}
+		if q != "" {
+			tFold := norm.Fold(wk.Title + " " + wk.ShortTitle + " " + wk.UID)
+			if !strings.Contains(tFold, qFold) {
+				continue
+			}
+		}
+		if lang != "" && wk.Language != lang {
+			continue
+		}
+		if author != "" {
+			aFold := norm.Fold(wk.Author)
+			if !strings.Contains(aFold, authorFold) {
+				continue
+			}
+		}
+		filtered = append(filtered, wk)
+	}
+
+	switch sortParam {
+	case "volumes":
+		sort.SliceStable(filtered, func(i, j int) bool {
+			return len(filtered[i].Documents) > len(filtered[j].Documents)
+		})
+	case "author":
+		sort.SliceStable(filtered, func(i, j int) bool {
+			return filtered[i].Author < filtered[j].Author
+		})
+	case "title":
+		fallthrough
+	default:
+		sort.SliceStable(filtered, func(i, j int) bool {
+			return filtered[i].Title < filtered[j].Title
+		})
+	}
+
+	total := len(filtered)
+	var paged []catalog.Work
+	if pageSize > 0 {
+		start := (page - 1) * pageSize
+		end := start + pageSize
+		if start < total {
+			if end > total {
+				end = total
+			}
+			paged = filtered[start:end]
+		} else {
+			paged = []catalog.Work{}
+		}
+	} else {
+		paged = filtered
+	}
+
 	var out []map[string]any
-	for _, w := range s.Catalog.Works() {
-		if q != "" && !strings.Contains(strings.ToLower(w.Title), q) && !strings.Contains(strings.ToLower(w.ShortTitle), q) && w.UID != q {
-			continue
-		}
-		if lang != "" && w.Language != lang {
-			continue
-		}
-		if author != "" && !strings.Contains(strings.ToLower(w.Author), author) {
-			continue
-		}
-		feats := s.Catalog.WorkFeatures(&w)
+	for _, wk := range paged {
+		feats := s.Catalog.WorkFeatures(&wk)
+		isPublished := !unpubMap[wk.UID]
 		out = append(out, map[string]any{
-			"uid": w.UID, "title": w.Title, "short_title": w.ShortTitle, "author": w.Author,
-			"publisher": w.Publisher, "year": w.Year, "language": w.Language,
-			"documents_count": len(w.Documents), "topics": w.Topics, "features": feats,
-			"published": true,
+			"uid": wk.UID, "title": wk.Title, "short_title": wk.ShortTitle, "author": wk.Author,
+			"publisher": wk.Publisher, "year": wk.Year, "language": wk.Language,
+			"documents_count": len(wk.Documents), "topics": wk.Topics, "features": feats,
+			"published": isPublished,
 		})
 	}
 	if out == nil {
 		out = []map[string]any{}
 	}
-	s.ok(w, map[string]any{"items": out, "total": len(out)})
+	s.ok(w, map[string]any{
+		"items":     out,
+		"total":     total,
+		"page":      page,
+		"page_size": pageSize,
+	})
 }
 
-func (s *Server) handleWork(w http.ResponseWriter, r *http.Request) {
-	uid := chi.URLParam(r, "uid")
-	wk, ok := s.Catalog.Work(uid)
-	if !ok {
-		s.fail(w, r, 404, "not_found", "این اثر در کتابخانهٔ موجود نیست.", false)
-		return
-	}
+func (s *Server) serveWork(w http.ResponseWriter, wk *catalog.Work, isPublished bool) {
 	feats := s.Catalog.WorkFeatures(wk)
 	var docs []map[string]any
 	for _, d := range wk.Documents {
-		var cov map[string]string
-		if m, err := s.Catalog.Model(d.UID); err == nil {
-			cov = map[string]string{
-				"pages": statusOf(len(m.Pages) > 0), "toc": statusOf(len(m.Sections) > 0),
-				"hadith": statusOf(len(m.Hadiths) > 0), "quran": statusOf(len(m.Citations) > 0),
-				"footnotes": statusOf(len(m.Footnotes) > 0), "searchable_text": statusOf(len(m.Blocks) > 0),
-				"topics": "absent",
-			}
-			for i := range m.Blocks {
-				if len(m.Blocks[i].Links) > 0 {
-					cov["links"] = "supported"
-				}
-			}
-			if cov["links"] == "" {
-				cov["links"] = "absent"
-			}
-		} else {
-			cov = map[string]string{"searchable_text": "failed"}
+		// پوشش از دادهٔ واقعیِ نمایه‌سازی می‌آید (unknown = هنوز نمایه نشده)
+		cov := map[string]string{
+			"pages":           feats.Pages,
+			"toc":             feats.TOC,
+			"hadith":          feats.Hadith,
+			"quran":           feats.Quran,
+			"footnotes":       feats.Footnotes,
+			"searchable_text": feats.SearchableText,
+			"topics":          feats.Topics,
+			"links":           feats.Links,
 		}
 		docs = append(docs, map[string]any{
 			"uid": d.UID, "label": d.Label, "kind": d.Kind, "language": d.Language, "coverage": cov,
@@ -108,8 +172,56 @@ func (s *Server) handleWork(w http.ResponseWriter, r *http.Request) {
 		"uid": wk.UID, "title": wk.Title, "short_title": wk.ShortTitle, "author": wk.Author,
 		"publisher": wk.Publisher, "year": wk.Year, "language": wk.Language, "topics": wk.Topics,
 		"documents": docs, "features": feats,
-		"volumes_count": countVolumes(docs),
+		"volumes_count":   countVolumes(docs),
+		"documents_count": len(docs),
+		"published":       isPublished,
 	})
+}
+
+func (s *Server) handleWork(w http.ResponseWriter, r *http.Request) {
+	uid := chi.URLParam(r, "uid")
+	wk, ok := s.Catalog.Work(uid)
+	if !ok {
+		s.fail(w, r, 404, "not_found", "این اثر در کتابخانهٔ موجود نیست.", false)
+		return
+	}
+	u := userOf(r)
+	isAdmin := u != nil && u.Role == "admin"
+	isPublished := s.DB.IsWorkPublished(wk.UID)
+	if !isPublished && !isAdmin {
+		s.fail(w, r, 404, "not_found", "این اثر از دسترس خارج شده است.", false)
+		return
+	}
+	s.serveWork(w, wk, isPublished)
+}
+
+func (s *Server) handleDocumentWork(w http.ResponseWriter, r *http.Request) {
+	docUID := chi.URLParam(r, "uid")
+	wk, ok := s.Catalog.WorkOfDocument(docUID)
+	if !ok {
+		s.fail(w, r, 404, "not_found", "این سند در کتابخانهٔ موجود نیست.", false)
+		return
+	}
+	u := userOf(r)
+	isAdmin := u != nil && u.Role == "admin"
+	isPublished := s.DB.IsWorkPublished(wk.UID)
+	if !isPublished && !isAdmin {
+		s.fail(w, r, 404, "not_found", "این اثر از دسترس خارج شده است.", false)
+		return
+	}
+	s.serveWork(w, wk, isPublished)
+}
+
+func (s *Server) checkDocAccess(docUID string, r *http.Request) bool {
+	wk, ok := s.Catalog.WorkOfDocument(docUID)
+	if !ok {
+		return true
+	}
+	u := userOf(r)
+	if u != nil && u.Role == "admin" {
+		return true
+	}
+	return s.DB.IsWorkPublished(wk.UID)
 }
 
 func countVolumes(docs []map[string]any) int {
@@ -158,6 +270,10 @@ func (s *Server) handleWorkRelated(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleTOC(w http.ResponseWriter, r *http.Request) {
 	uid := chi.URLParam(r, "uid")
+	if !s.checkDocAccess(uid, r) {
+		s.fail(w, r, 404, "not_found", "این سند در دسترس نیست.", false)
+		return
+	}
 	m, err := s.Catalog.Model(uid)
 	if err != nil {
 		s.fail(w, r, 404, "not_found", "این سند در دسترس نیست.", false)
@@ -180,6 +296,10 @@ func (s *Server) activeReleaseSafe() string {
 
 func (s *Server) handlePagesByLabel(w http.ResponseWriter, r *http.Request) {
 	uid := chi.URLParam(r, "uid")
+	if !s.checkDocAccess(uid, r) {
+		s.fail(w, r, 404, "not_found", "این سند در دسترس نیست.", false)
+		return
+	}
 	label := r.URL.Query().Get("label")
 	m, err := s.Catalog.Model(uid)
 	if err != nil {
@@ -205,7 +325,16 @@ func (s *Server) handlePagesByLabel(w http.ResponseWriter, r *http.Request) {
 	if out == nil {
 		out = []map[string]any{}
 	}
-	s.ok(w, map[string]any{"items": out})
+	s.ok(w, map[string]any{"items": out, "page_mapping": pageMappingOf(m)})
+}
+
+// pageMappingOf صادق بودن نگاشت صفحه را اعلام می‌کند: exact = از PageBreak
+// پایگاه نور؛ approximate = تقسیم ریاضی/یکنواخت (ارجاع صفحه ممکن است خطا داشته باشد).
+func pageMappingOf(m *xmlparse.DocModel) string {
+	if m.PagesApproximate {
+		return "approximate"
+	}
+	return "exact"
 }
 
 func countLabel(m *xmlparse.DocModel, label string) int {
@@ -221,6 +350,10 @@ func countLabel(m *xmlparse.DocModel, label string) int {
 // handlePage صفحهٔ ساخت‌یافته را برمی‌گرداند (قواعد §۱۱/§۱۹).
 func (s *Server) handlePage(w http.ResponseWriter, r *http.Request) {
 	docUID := chi.URLParam(r, "uid")
+	if !s.checkDocAccess(docUID, r) {
+		s.fail(w, r, 404, "not_found", "این سند در دسترس نیست.", false)
+		return
+	}
 	pageUID := chi.URLParam(r, "pageUID")
 	m, err := s.Catalog.Model(docUID)
 	if err != nil {
@@ -268,13 +401,26 @@ func (s *Server) handlePage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	fns := []xmlparse.Footnote{}
+	seenFn := map[string]bool{}
 	for _, f := range m.Footnotes {
-		if needFootnotes[f.UID] || pageContainsFootnote(m, page, f) {
-			fns = append(fns, f)
+		if !needFootnotes[f.UID] && !pageContainsFootnote(m, page, f) {
+			continue
 		}
+		// dedupe: پاورقی از دو منبع (XML و جدول StoryId=2) ممکن است دوبار بیاید
+		key := f.Label + "\x00" + f.Text
+		if seenFn[key] {
+			continue
+		}
+		seenFn[key] = true
+		fns = append(fns, f)
 	}
 	if fns == nil {
 		fns = []xmlparse.Footnote{}
+	}
+	// متنِ منتشرشدهٔ همین نسل: اصلاحات publishedِ پیوند‌شده با نسل فعال روی بلوک‌های
+	// همین صفحه اعمال می‌شود تا خواننده همان متنی را ببیند که نمایه شده است.
+	if ovs, oerr := s.Overlay.ListForDocument(docUID, "published", s.activeReleaseSafe()); oerr == nil && len(ovs) > 0 {
+		overlay.ApplyToBlocks(blocks, overlay.ReplacementsOf(ovs))
 	}
 	overlayUID := s.overlayForDocument(docUID)
 	s.ok(w, map[string]any{
@@ -284,10 +430,29 @@ func (s *Server) handlePage(w http.ResponseWriter, r *http.Request) {
 		"overlay_revision_uid": overlayUID,
 		"overlay_applied":      overlayUID != "",
 		"offset_unit":          "codepoint",
+		"page_mapping":         pageMappingOf(m),
 	})
 }
 
+// pageContainsFootnote جایابی پاورقیِ بی‌ارجاع (پاورقی‌های جدول DB): ابتدا ارجاع صریح با
+// برچسب در بلوک‌های صفحه؛ سپس — فقط برای متن به‌قدر کافی بلند — حضور متن پاورقی در صفحه.
+// متن خالی/کوتاه پیش‌تر با هر صفحه‌ای جور می‌شد.
 func pageContainsFootnote(m *xmlparse.DocModel, page *xmlparse.PageRec, f xmlparse.Footnote) bool {
+	if page.StartBlock < 0 {
+		return false
+	}
+	if f.Label != "" {
+		for i := page.StartBlock; i <= page.EndBlock && i < len(m.Blocks); i++ {
+			for _, fr := range m.Blocks[i].FootnoteRefs {
+				if fr.Ref == f.Label {
+					return true
+				}
+			}
+		}
+	}
+	if utf8.RuneCountInString(strings.TrimSpace(f.Text)) < 12 {
+		return false
+	}
 	for i := page.StartBlock; i <= page.EndBlock && i < len(m.Blocks); i++ {
 		if strings.Contains(m.Blocks[i].Text, f.Text) {
 			return true
@@ -331,23 +496,245 @@ func (s *Server) handleAnchor(w http.ResponseWriter, r *http.Request) {
 	s.fail(w, r, 404, "not_found", "مقصد این ارجاع در مجموعهٔ موجود قابل حل نیست؛ نشانی اصلی حفظ شده است.", false)
 }
 
-// ---- جست‌وجو (§۱۲/§۴۴–۴۷) ----
+// ---- جست‌وجو (§۱۲/§۱۸/§۲۴/§۴۴–۴۷) ----
+
+type asyncSearchJob struct {
+	mu         sync.RWMutex
+	userUID    string // برای سقف هر کاربر
+	sessionUID string
+	// engineSID شناسهٔ نشست واقعی موتور (cursor و «کتاب‌ها» به آن بسته‌اند)؛ شناسهٔ async
+	// فقط برای پیگیری وضعیت است و ادامه/کتاب‌ها از طریق این نگاشت به نشست موتور می‌رسند.
+	engineSID  string
+	releaseUID string
+	req        search.Request
+	status     string // "in_progress", "complete", "failed"
+	resp       *search.Response
+	err        error
+	createdAt  time.Time
+}
+
+const (
+	maxAsyncJobsTotal = 40               // سقف کل جاب‌های ناهمگام در نصب (§۲۶)
+	asyncJobTTL       = 30 * time.Minute // طول عمر مجاز هر جاب (§۲۶)
+)
+
+// asyncSem سقف گوروتین‌های جست‌وجوی پس‌زمینه — بدون آن هر کاربر با چند پرس
+// بلند می‌توانست بی‌کران گوروتین L4 بسازد (اشباع CPU).
+var asyncSem = make(chan struct{}, 4)
+
+const maxAsyncJobsPerUser = 2
+
+var (
+	asyncJobsMu sync.RWMutex
+	asyncJobs   = make(map[string]*asyncSearchJob)
+)
+
+func cleanupAsyncJobsLocked() {
+	now := time.Now()
+	for sid, job := range asyncJobs {
+		if now.Sub(job.createdAt) > asyncJobTTL {
+			delete(asyncJobs, sid)
+		}
+	}
+	for len(asyncJobs) >= maxAsyncJobsTotal {
+		var oldestSID string
+		var oldestTime time.Time
+		for sid, job := range asyncJobs {
+			if oldestSID == "" || job.createdAt.Before(oldestTime) {
+				oldestSID = sid
+				oldestTime = job.createdAt
+			}
+		}
+		if oldestSID != "" {
+			delete(asyncJobs, oldestSID)
+		} else {
+			break
+		}
+	}
+}
+
+func (s *Server) filterUnpublishedSearchResults(resp *search.Response) {
+	if resp == nil || len(resp.Results) == 0 {
+		return
+	}
+	unpub, err := s.DB.UnpublishedWorkUIDs()
+	if err != nil || len(unpub) == 0 {
+		return
+	}
+	var clean []search.Result
+	for _, it := range resp.Results {
+		if !unpub[it.Work.UID] {
+			clean = append(clean, it)
+		}
+	}
+	resp.Results = clean
+}
 
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
+	u := userOf(r)
+	isAdmin := u != nil && u.Role == "admin"
 	var req search.Request
 	if !decodeBody(w, r, &req) {
 		return
 	}
+	if !isAdmin && req.Scope.WorkUID != nil && *req.Scope.WorkUID != "" {
+		if !s.DB.IsWorkPublished(*req.Scope.WorkUID) {
+			s.fail(w, r, 404, "not_found", "این اثر در دسترس نیست.", false)
+			return
+		}
+	}
 	release, _ := s.DB.ActiveRelease()
+
+	// بررسی طول کوئری: بالای ۱۲۸ واژه به صف پردازشی ناهمگام پس‌زمینه هدایت می‌شود (§۱۸/§۲۴)
+	tokens := norm.TokenizeAligned(req.Query)
+	if len(tokens) > 128 {
+		sid := ugcNewID("s-async")
+		job := &asyncSearchJob{
+			userUID:    u.UID,
+			sessionUID: sid,
+			releaseUID: release,
+			req:        req,
+			status:     "in_progress",
+			createdAt:  time.Now(),
+		}
+		asyncJobsMu.Lock()
+		cleanupAsyncJobsLocked()
+		userJobs := 0
+		for _, j := range asyncJobs {
+			if j.userUID == u.UID {
+				userJobs++
+			}
+		}
+		if userJobs >= maxAsyncJobsPerUser {
+			asyncJobsMu.Unlock()
+			s.fail(w, r, 429, "rate_limited", "شما چند پرس‌وجوی بلند در حال اجرا دارید؛ پس از پایان دوباره تلاش کنید.", true)
+			return
+		}
+		asyncJobs[sid] = job
+		asyncJobsMu.Unlock()
+
+		// اجرای ناهمگام با سقف هم‌زمانی؛ panic هرگز کل سرویس را نمی‌اندازد.
+		go func(targetSID string, targetJob *asyncSearchJob) {
+			asyncSem <- struct{}{}
+			defer func() { <-asyncSem }()
+			defer func() {
+				if p := recover(); p != nil {
+					log.Printf("async search panic: sid=%s panic=%v", targetSID, p)
+					targetJob.mu.Lock()
+					targetJob.status = "failed"
+					targetJob.err = errors.New("خطای داخلی در پردازش پرس‌وجوی بلند")
+					targetJob.mu.Unlock()
+				}
+			}()
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+			defer cancel()
+
+			resp, err := s.Engine.Search(ctx, &req, release)
+			targetJob.mu.Lock()
+			defer targetJob.mu.Unlock()
+			if err != nil {
+				targetJob.status = "failed"
+				targetJob.err = err
+			} else {
+				targetJob.status = "complete"
+				// session_uid پاسخ همان نشست موتور می‌ماند (cursor امضاشده با نشست می‌خواند).
+				targetJob.engineSID = resp.SessionUID
+				targetJob.resp = resp
+			}
+		}(sid, job)
+
+		// پاسخ فوری Accepted با وضعیت in_progress جهت آزادسازی سریع ترد HTTP
+		s.okStatus(w, http.StatusAccepted, &search.Response{
+			SessionUID:      sid,
+			ReleaseUID:      release,
+			CompletionState: "in_progress",
+			CountJobUID:     sid,
+			CountRelation:   "lower_bound",
+			Notice:          "پرس‌وجوی بلند (بیش از ۱۲۸ واژه) به صف پردازش ناهمگام پس‌زمینه ارسال شد.",
+		})
+		return
+	}
+
 	resp, err := s.Engine.Search(r.Context(), &req, release)
 	if err != nil {
 		s.failSearchErr(w, r, err)
 		return
 	}
+	if !isAdmin {
+		s.filterUnpublishedSearchResults(resp)
+	}
 	s.ok(w, resp)
 }
 
+func (s *Server) handleSearchSessionStatus(w http.ResponseWriter, r *http.Request) {
+	sid := chi.URLParam(r, "sessionUID")
+	asyncJobsMu.Lock()
+	cleanupAsyncJobsLocked()
+	job, ok := asyncJobs[sid]
+	asyncJobsMu.Unlock()
+
+	if !ok {
+		s.fail(w, r, 404, "session_not_found", "نشست جست‌وجوی درخواستی یافت نشد یا منقضی شده است.", false)
+		return
+	}
+
+	job.mu.RLock()
+	defer job.mu.RUnlock()
+
+	if job.status == "in_progress" {
+		s.ok(w, &search.Response{
+			SessionUID:      sid,
+			ReleaseUID:      job.releaseUID,
+			CompletionState: "in_progress",
+			CountJobUID:     sid,
+			CountRelation:   "lower_bound",
+			Notice:          "پردازش در صف پس‌زمینه در حال اجراست...",
+		})
+		return
+	}
+
+	if job.status == "failed" {
+		s.failSearchErr(w, r, job.err)
+		return
+	}
+
+	u := userOf(r)
+	isAdmin := u != nil && u.Role == "admin"
+	if !isAdmin {
+		s.filterUnpublishedSearchResults(job.resp)
+	}
+	s.ok(w, job.resp)
+}
+
 func (s *Server) handleSearchContinue(w http.ResponseWriter, r *http.Request) {
+	sid := chi.URLParam(r, "sessionUID")
+	asyncJobsMu.RLock()
+	job, isAsync := asyncJobs[sid]
+	asyncJobsMu.RUnlock()
+
+	if isAsync {
+		job.mu.RLock()
+		defer job.mu.RUnlock()
+		if job.status == "in_progress" {
+			s.ok(w, &search.Response{
+				SessionUID:      sid,
+				ReleaseUID:      job.releaseUID,
+				CompletionState: "in_progress",
+				CountJobUID:     sid,
+				CountRelation:   "lower_bound",
+				Notice:          "پردازش در صف پس‌زمینه در حال اجراست...",
+			})
+			return
+		}
+		if job.status == "failed" {
+			s.failSearchErr(w, r, job.err)
+			return
+		}
+		if job.engineSID != "" {
+			sid = job.engineSID
+		}
+	}
+
 	var body struct {
 		Cursor string `json:"cursor"`
 	}
@@ -355,19 +742,57 @@ func (s *Server) handleSearchContinue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	release, _ := s.DB.ActiveRelease()
-	resp, err := s.Engine.Continue(r.Context(), chi.URLParam(r, "sessionUID"), body.Cursor, release)
+	resp, err := s.Engine.Continue(r.Context(), sid, body.Cursor, release)
 	if err != nil {
 		s.failSearchErr(w, r, err)
 		return
+	}
+	u := userOf(r)
+	isAdmin := u != nil && u.Role == "admin"
+	if !isAdmin {
+		s.filterUnpublishedSearchResults(resp)
 	}
 	s.ok(w, resp)
 }
 
 func (s *Server) handleSearchBooks(w http.ResponseWriter, r *http.Request) {
-	resp, err := s.Engine.BooksGrouped(r.Context(), chi.URLParam(r, "sessionUID"))
+	sid := chi.URLParam(r, "sessionUID")
+	asyncJobsMu.RLock()
+	job, isAsync := asyncJobs[sid]
+	asyncJobsMu.RUnlock()
+	if isAsync {
+		job.mu.RLock()
+		status, engineSID, jerr := job.status, job.engineSID, job.err
+		job.mu.RUnlock()
+		switch {
+		case status == "in_progress":
+			s.fail(w, r, 409, "search_in_progress", "جست‌وجوی بلند هنوز در حال اجراست؛ پس از پایان دوباره تلاش کنید.", true)
+			return
+		case status == "failed":
+			s.failSearchErr(w, r, jerr)
+			return
+		case engineSID != "":
+			sid = engineSID
+		}
+	}
+	resp, err := s.Engine.BooksGrouped(r.Context(), sid)
 	if err != nil {
 		s.failSearchErr(w, r, err)
 		return
+	}
+	u := userOf(r)
+	isAdmin := u != nil && u.Role == "admin"
+	if !isAdmin && len(resp) > 0 {
+		unpub, _ := s.DB.UnpublishedWorkUIDs()
+		if len(unpub) > 0 {
+			var clean []search.BookGroup
+			for _, b := range resp {
+				if !unpub[b.Work.UID] {
+					clean = append(clean, b)
+				}
+			}
+			resp = clean
+		}
 	}
 	s.ok(w, map[string]any{"groups": resp})
 }
@@ -431,6 +856,7 @@ func isEngineFailure(err error) bool {
 		"OpenSearch",     // پیام‌های آداپتور OS (سرویس پاسخ نمی‌دهد / پاسخ قابل تحلیل نیست)
 		"SQLITE_",        // خطاهای زیرساختی SQLite (نشست/شمارش)
 		"database is locked",
+		"fts5 engine:", // خطاهای زیرساختی موتور FTS5 (شارد/نسل/MATCH) — search.wrapFTSErr
 	} {
 		if strings.Contains(msg, marker) {
 			return true
@@ -446,6 +872,10 @@ func isEngineFailure(err error) bool {
 // ادعای یکسانیِ کامل روایت بدون بررسی کارشناسی نمی‌شود (disclaimer در پاسخ).
 func (s *Server) handleHadithLocations(w http.ResponseWriter, r *http.Request) {
 	docUID := chi.URLParam(r, "uid")
+	if !s.checkDocAccess(docUID, r) {
+		s.fail(w, r, 404, "not_found", "این سند در دسترس نیست.", false)
+		return
+	}
 	localUID := chi.URLParam(r, "localUID")
 	// نتایج جست‌وجو شناسهٔ روایت را در شکل anchor (docUID:local) می‌دهند؛
 	// شکل محلی (h-101) و کدگذاری %3A نیز پذیرفته می‌شود — هر دو همان روایت‌اند.
@@ -634,7 +1064,8 @@ func (s *Server) handleHadithLocations(w http.ResponseWriter, r *http.Request) {
 // ---- موضوعات (§۱۵) — از کاتالوگ (TOP با پوشش صریح) ----
 
 func (s *Server) handleTopics(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query().Get("q")
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	qFold := norm.Fold(q)
 	type topicRow struct {
 		UID    string `json:"uid"`
 		Title  string `json:"title"`
@@ -650,40 +1081,126 @@ func (s *Server) handleTopics(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	for t, c := range counts {
-		if q != "" && !strings.Contains(t, q) {
-			continue
+		if q != "" {
+			tFold := norm.Fold(t)
+			if !strings.Contains(tFold, qFold) {
+				continue
+			}
 		}
 		all = append(all, topicRow{UID: "topic-" + t, Title: t, Count: c, Parent: ""})
 	}
+	sort.Slice(all, func(i, j int) bool {
+		if all[i].Count != all[j].Count {
+			return all[i].Count > all[j].Count
+		}
+		return all[i].Title < all[j].Title
+	})
 	if all == nil {
 		all = []topicRow{}
 	}
-	s.ok(w, map[string]any{"items": all, "coverage_note": "فهرست موضوعی فقط منابع دارای نمایهٔ موضوعی را پوشش می‌دهد؛ نبود موضوع به معنی نبود محتوا نیست."})
+	s.ok(w, map[string]any{
+		"items":         all,
+		"coverage_note": "موضوع‌ها از کاتالوگ آثار می‌آید؛ نبود موضوع به معنی نبود محتوا نیست.",
+	})
 }
 
 func (s *Server) handleTopicOccurrences(w http.ResponseWriter, r *http.Request) {
-	// پیاده‌سازی ساده و صادقانه: مواضع از موضوع در کاتالوگ → آثار دارای موضوع
+	// مواضع از موضوع در کاتالوگ → آثار دارای موضوع
 	uid := chi.URLParam(r, "uid")
+	if unescaped, err := url.PathUnescape(uid); err == nil {
+		uid = unescaped
+	}
 	title := strings.TrimPrefix(uid, "topic-")
+	titleFold := norm.Fold(title)
 	var out []map[string]any
 	for _, wk := range s.Catalog.Works() {
+		hasTopic := false
 		for _, t := range wk.Topics {
-			if t == title {
-				out = append(out, map[string]any{
-					"kind": "work", "work_uid": wk.UID, "work_title": wk.Title,
-					"note": "این اثر در فهرست موضوعی ثبت شده است؛ برای مواضع دقیق، جست‌وجوی متنی در آن انجام دهید.",
-				})
+			if t == title || norm.Fold(t) == titleFold {
+				hasTopic = true
+				break
 			}
 		}
+		if hasTopic {
+			out = append(out, map[string]any{
+				"kind":       "work",
+				"work_uid":   wk.UID,
+				"work_title": wk.Title,
+				"note":       "مؤلف: " + wk.Author,
+			})
+		}
 	}
+	sort.Slice(out, func(i, j int) bool {
+		return fmt.Sprint(out[i]["work_title"]) < fmt.Sprint(out[j]["work_title"])
+	})
 	if out == nil {
 		out = []map[string]any{}
 	}
 	s.ok(w, map[string]any{"items": out, "coverage_note": "پوشش موضوعی در این نسخه در سطح اثر است."})
 }
 
-func (s *Server) handleKeyword(w http.ResponseWriter, r *http.Request) {
-	s.ok(w, map[string]any{"items": []any{}, "note": "کلیدواژه‌های تفصیلی پس از نمایه‌سازی منابع دارای این نشانه‌گذاری فعال می‌شوند."})
+func (s *Server) handleAuthors(w http.ResponseWriter, r *http.Request) {
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	qFold := norm.Fold(q)
+	qComp := strings.ReplaceAll(strings.ReplaceAll(qFold, " ", ""), "\u200c", "")
+	toks := norm.Tokenize(qFold)
+
+	counts := map[string]int{}
+	for _, wk := range s.Catalog.Works() {
+		if wk.Author != "" {
+			counts[wk.Author]++
+		}
+	}
+
+	type authorRow struct {
+		Name       string `json:"name"`
+		WorksCount int    `json:"works_count"`
+	}
+	var all []authorRow
+	for author, c := range counts {
+		if q != "" {
+			aFold := norm.Fold(author)
+			aComp := strings.ReplaceAll(strings.ReplaceAll(aFold, " ", ""), "\u200c", "")
+			matched := strings.Contains(aFold, qFold) || (len([]rune(qComp)) >= 3 && strings.Contains(aComp, qComp))
+			if !matched && len(toks) > 1 {
+				allToks := true
+				authorToks := norm.Tokenize(aFold)
+				for _, tk := range toks {
+					found := false
+					for _, atk := range authorToks {
+						if strings.Contains(atk, tk) {
+							found = true
+							break
+						}
+					}
+					if !found {
+						allToks = false
+						break
+					}
+				}
+				matched = allToks
+			}
+			if !matched {
+				continue
+			}
+		}
+		all = append(all, authorRow{Name: author, WorksCount: c})
+	}
+	sort.Slice(all, func(i, j int) bool {
+		if all[i].WorksCount != all[j].WorksCount {
+			return all[i].WorksCount > all[j].WorksCount
+		}
+		return all[i].Name < all[j].Name
+	})
+	if len(all) > 50 {
+		all = all[:50]
+	}
+	if all == nil {
+		all = []authorRow{}
+	}
+	s.ok(w, map[string]any{
+		"items": all,
+	})
 }
 
 var _ = json.Marshal

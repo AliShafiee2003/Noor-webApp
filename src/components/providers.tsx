@@ -6,12 +6,13 @@ import { ThemeProvider, useTheme } from "next-themes";
 import { DirectionProvider } from "@radix-ui/react-direction";
 import { Toaster } from "@/components/ui/toaster";
 import { initPalette, applyStoredPaletteForMode } from "@/lib/palette";
-import { applyFontPrefs } from "@/lib/fonts";
+import { applyFontPrefs, initFontPrefs } from "@/lib/fonts";
 import { useAuthStore } from "@/store/auth";
 import { useWorkspaceStore } from "@/store/workspace";
 
-/* اعمال قالب ذخیره‌شده پیش از نخستین رندر — بدون جرقهٔ تم */
+/* اعمال قالب و قلم ذخیره‌شده پیش از نخستین رندر — بدون جرقهٔ تم و قلم */
 initPalette();
+initFontPrefs();
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(
@@ -49,7 +50,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
       <QueryClientProvider client={queryClient}>
         <ThemeProvider
           attribute="class"
-          defaultTheme="system"
+          defaultTheme="dark"
           enableSystem
           disableTransitionOnChange
         >

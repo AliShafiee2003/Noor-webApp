@@ -8,8 +8,7 @@ import { useState } from "react";
 import { BookOpenText, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { P2EPasswordField, P2ETextField } from "@/components/design-system/p2e-field";
 import { useRoute } from "@/lib/hash-router";
 import { useAuthStore } from "@/store/auth";
 
@@ -67,6 +66,7 @@ export function InviteView() {
           <CardTitle>قبول دعوت</CardTitle>
           <CardDescription>
             با کد دعوت، حساب خود را بسازید. نقش شما از روی دعوت‌نامه تعیین می‌شود.
+            کد دعوت یک‌بارمصرف است؛ پیش از ثبت، اعتبار آن بررسی می‌شود.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -99,52 +99,42 @@ export function InviteView() {
                 </p>
               ) : null}
               <form onSubmit={handleSubmit} className="space-y-4" noValidate>
-                <div className="space-y-2">
-                  <Label htmlFor="invite-code">کد دعوت</Label>
-                  <Input
-                    id="invite-code"
-                    value={code}
-                    readOnly
-                    dir="ltr"
-                    className="bidi-ltr min-h-11 bg-muted"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="display-name">نام نمایشی</Label>
-                  <Input
-                    id="display-name"
-                    value={displayName}
-                    onChange={(e) => setDisplayName(e.target.value)}
-                    className="min-h-11"
-                    required
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="invite-password">گذرواژه</Label>
-                  <Input
-                    id="invite-password"
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="bidi-ltr min-h-11"
-                    dir="ltr"
-                    autoComplete="new-password"
-                    required
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="invite-password2">تکرار گذرواژه</Label>
-                  <Input
-                    id="invite-password2"
-                    type="password"
-                    value={password2}
-                    onChange={(e) => setPassword2(e.target.value)}
-                    className="bidi-ltr min-h-11"
-                    dir="ltr"
-                    autoComplete="new-password"
-                    required
-                  />
-                </div>
+                <P2ETextField
+                  label="کد دعوت"
+                  id="invite-code"
+                  value={code}
+                  readOnly
+                  dir="ltr"
+                  className="bidi-ltr"
+                  required
+                />
+                <P2ETextField
+                  label="نام نمایشی"
+                  id="display-name"
+                  value={displayName}
+                  onChange={(e) => setDisplayName(e.target.value)}
+                  required
+                />
+                <P2EPasswordField
+                  label="گذرواژه"
+                  id="invite-password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  dir="ltr"
+                  className="bidi-ltr"
+                  autoComplete="new-password"
+                  required
+                />
+                <P2EPasswordField
+                  label="تکرار گذرواژه"
+                  id="invite-password2"
+                  value={password2}
+                  onChange={(e) => setPassword2(e.target.value)}
+                  dir="ltr"
+                  className="bidi-ltr"
+                  autoComplete="new-password"
+                  required
+                />
                 <Button
                   type="submit"
                   className="w-full min-h-11 gap-2"

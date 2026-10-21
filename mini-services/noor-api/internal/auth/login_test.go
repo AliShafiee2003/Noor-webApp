@@ -19,6 +19,7 @@ func TestLoginFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
+	t.Cleanup(func() { db.Close() })
 	hash, err := HashPassword("correct-horse-1234")
 	if err != nil {
 		t.Fatalf("HashPassword: %v", err)
@@ -55,5 +56,49 @@ func TestLoginFlow(t *testing.T) {
 	_, _, err = m.Login("no-such-user", "whatever-123", "1.2.3.4", "go-test")
 	if err == nil || err.Error() != "نام کاربری یا رمز عبور درست نیست" {
 		t.Fatalf("پیام نبودن حساب باید غیرافشاگر باشد: %v", err)
+	}
+}
+
+func TestChangePassword(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "app.sqlite"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	hash, err := HashPassword("old-password-1234")
+	if err != nil {
+		t.Fatalf("HashPassword: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO users(uid, username, username_norm, display_name, password_hash, role)
+		VALUES('usr-cp', 'cpuser', 'cpuser', 'کاربر', ?, 'reader')`, hash); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	m := NewManager(db, 7*24*time.Hour, 24*time.Hour)
+
+	// رمز فعلی نادرست
+	if err := m.ChangePassword("usr-cp", "wrong-old", "new-password-1234"); err == nil {
+		t.Fatal("رمز فعلی اشتباه باید خطا بدهد")
+	}
+
+	// رمز جدید خیلی کوتاه
+	if err := m.ChangePassword("usr-cp", "old-password-1234", "short"); err == nil {
+		t.Fatal("رمز جدید کوتاه باید خطا بدهد")
+	}
+
+	// تغییر موفق
+	if err := m.ChangePassword("usr-cp", "old-password-1234", "new-password-1234"); err != nil {
+		t.Fatalf("ChangePassword باید موفق باشد: %v", err)
+	}
+
+	// ورود با رمز جدید
+	_, _, err = m.Login("cpuser", "new-password-1234", "1.2.3.4", "go-test")
+	if err != nil {
+		t.Fatalf("ورود با رمز جدید باید موفق باشد: %v", err)
+	}
+
+	// ورود با رمز قدیم دیگر نباید کار کند
+	_, _, err = m.Login("cpuser", "old-password-1234", "1.2.3.4", "go-test")
+	if err == nil {
+		t.Fatal("ورود با رمز قدیمی نباید کار کند")
 	}
 }

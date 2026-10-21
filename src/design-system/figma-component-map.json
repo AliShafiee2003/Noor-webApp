@@ -1,0 +1,301 @@
+{
+  "fileKey": "ScYzQ9qGgou6YcnQrQtfgB",
+  "referenceNode": "2281:3899",
+  "mappingType": "local-inventory-not-Code-Connect",
+  "components": [
+    {
+      "figmaName": "Noor/Icon/Search",
+      "nodeId": "2237:122",
+      "code": "lucide-react",
+      "status": "existing-icon-library",
+      "visualParity": "pending-full-screen-review"
+    },
+    {
+      "figmaName": "Noor/Icon/Book",
+      "nodeId": "2237:125",
+      "code": "src/components/design-system/noor-icon.tsx",
+      "status": "local-figma-asset",
+      "visualParity": "pending-full-screen-review"
+    },
+    {
+      "figmaName": "Noor/Icon/Chevron",
+      "nodeId": "2237:128",
+      "code": "lucide-react",
+      "status": "existing-icon-library",
+      "visualParity": "pending-full-screen-review"
+    },
+    {
+      "figmaName": "Noor/Icon/Previous",
+      "nodeId": "2237:131",
+      "code": "src/components/design-system/noor-icon.tsx",
+      "status": "local-figma-asset",
+      "visualParity": "pending-full-screen-review"
+    },
+    {
+      "figmaName": "Noor/Icon/Next",
+      "nodeId": "2237:134",
+      "code": "lucide-react",
+      "status": "existing-icon-library",
+      "visualParity": "pending-full-screen-review"
+    },
+    {
+      "figmaName": "Noor/Icon/Close",
+      "nodeId": "2237:137",
+      "code": "lucide-react",
+      "status": "existing-icon-library",
+      "visualParity": "pending-full-screen-review"
+    },
+    {
+      "figmaName": "Noor/Icon/Check",
+      "nodeId": "2237:140",
+      "code": "lucide-react",
+      "status": "existing-icon-library",
+      "visualParity": "pending-full-screen-review"
+    },
+    {
+      "figmaName": "Noor/Icon/Menu",
+      "nodeId": "2237:143",
+      "code": "lucide-react",
+      "status": "existing-icon-library",
+      "visualParity": "pending-full-screen-review"
+    },
+    {
+      "figmaName": "Noor/Control/IconButton",
+      "nodeId": "2237:148",
+      "code": "src/components/ui/button.tsx",
+      "status": "mapped",
+      "visualParity": "pending-full-screen-review"
+    },
+    {
+      "figmaName": "Noor/Control/Badge",
+      "nodeId": "2237:165",
+      "code": "src/components/ui/badge.tsx",
+      "status": "mapped",
+      "visualParity": "pending-full-screen-review"
+    },
+    {
+      "figmaName": "Noor/Control/Checkbox",
+      "nodeId": "2237:173",
+      "code": "src/components/ui/checkbox.tsx",
+      "status": "mapped",
+      "visualParity": "pending-full-screen-review"
+    },
+    {
+      "figmaName": "Noor/Control/Radio",
+      "nodeId": "2237:185",
+      "code": "src/components/ui/radio-group.tsx",
+      "status": "mapped",
+      "visualParity": "pending-full-screen-review"
+    },
+    {
+      "figmaName": "Noor/Control/Toggle",
+      "nodeId": "2237:195",
+      "code": "src/components/ui/switch.tsx",
+      "status": "mapped",
+      "visualParity": "pending-full-screen-review"
+    },
+    {
+      "figmaName": "Noor/Control/Tab",
+      "nodeId": "2237:205",
+      "code": "src/components/ui/tabs.tsx",
+      "status": "mapped",
+      "visualParity": "pending-full-screen-review"
+    },
+    {
+      "figmaName": "Noor/Control/MenuItem",
+      "nodeId": "2237:212",
+      "code": "src/components/ui/dropdown-menu.tsx",
+      "status": "mapped",
+      "visualParity": "pending-full-screen-review"
+    },
+    {
+      "figmaName": "Noor/Control/TopicOption",
+      "nodeId": "2237:219",
+      "code": "src/components/design-system/topic-option.tsx",
+      "status": "mapped",
+      "visualParity": "pending-full-screen-review"
+    },
+    {
+      "figmaName": "Noor/Control/ReaderSearch",
+      "nodeId": "2237:238",
+      "code": "src/components/reader/reader-toolbar.tsx",
+      "status": "mapped",
+      "visualParity": "pending-full-screen-review"
+    },
+    {
+      "figmaName": "Noor/Control/ReaderPageControl",
+      "nodeId": "2237:254",
+      "code": "src/components/reader/reader-toolbar.tsx",
+      "status": "mapped",
+      "visualParity": "pending-full-screen-review"
+    },
+    {
+      "figmaName": "Noor/Control/Slider",
+      "nodeId": "2237:266",
+      "code": "src/components/ui/slider.tsx",
+      "status": "mapped",
+      "visualParity": "pending-full-screen-review"
+    },
+    {
+      "figmaName": "Noor/Control/Action",
+      "nodeId": "2144:90",
+      "code": "src/components/ui/button.tsx",
+      "status": "mapped",
+      "visualParity": "pending-full-screen-review"
+    },
+    {
+      "figmaName": "Noor/Control/Feedback",
+      "nodeId": "2144:111",
+      "code": "src/components/design-system/feedback-message.tsx",
+      "status": "mapped",
+      "visualParity": "pending-full-screen-review"
+    },
+    {
+      "figmaName": "Noor/Control/Field",
+      "nodeId": "2160:74",
+      "code": "src/components/design-system/field.tsx",
+      "status": "mapped",
+      "visualParity": "pending-full-screen-review"
+    },
+    {
+      "figmaName": "Noor/Control/FontSelect",
+      "nodeId": "2122:1688",
+      "code": "src/components/reader/settings-popover.tsx",
+      "status": "mapped",
+      "visualParity": "pending-full-screen-review"
+    },
+    {
+      "figmaName": "Noor/Pattern/Search/Desktop-wide",
+      "nodeId": "2147:2244",
+      "code": "src/components/search/search-form.tsx",
+      "status": "responsive-composition",
+      "visualParity": "pending-full-screen-review"
+    },
+    {
+      "figmaName": "Noor/Pattern/Search/Desktop-home",
+      "nodeId": "2148:2109",
+      "code": "src/components/search/search-form.tsx",
+      "status": "responsive-composition",
+      "visualParity": "pending-full-screen-review"
+    },
+    {
+      "figmaName": "Noor/Pattern/Search/Desktop-words",
+      "nodeId": "2148:4177",
+      "code": "src/components/search/search-form.tsx",
+      "status": "responsive-composition",
+      "visualParity": "pending-full-screen-review"
+    },
+    {
+      "figmaName": "Noor/Pattern/Search/Mobile",
+      "nodeId": "2148:4784",
+      "code": "src/components/search/search-form.tsx",
+      "status": "responsive-composition",
+      "visualParity": "pending-full-screen-review"
+    },
+    {
+      "figmaName": "Noor/Pattern/Search/Mobile-home",
+      "nodeId": "2148:5470",
+      "code": "src/components/search/search-form.tsx",
+      "status": "responsive-composition",
+      "visualParity": "pending-full-screen-review"
+    },
+    {
+      "figmaName": "Noor/Pattern/Search/Mobile-words",
+      "nodeId": "2148:5893",
+      "code": "src/components/search/search-form.tsx",
+      "status": "responsive-composition",
+      "visualParity": "pending-full-screen-review"
+    },
+    {
+      "figmaName": "Noor/Pattern/AdminSection",
+      "nodeId": "2159:2188",
+      "code": "src/components/../views/admin-view.tsx",
+      "status": "mapped",
+      "visualParity": "pending-full-screen-review"
+    },
+    {
+      "figmaName": "Noor/Pattern/UserSummary",
+      "nodeId": "2161:4332",
+      "code": "src/components/site-header.tsx",
+      "status": "mapped",
+      "visualParity": "pending-full-screen-review"
+    },
+    {
+      "figmaName": "Noor/Pattern/Card",
+      "nodeId": "2239:503",
+      "code": "src/components/ui/card.tsx",
+      "status": "mapped",
+      "visualParity": "pending-full-screen-review"
+    },
+    {
+      "figmaName": "Noor/Pattern/DialogHeader",
+      "nodeId": "2239:511",
+      "code": "src/components/ui/dialog.tsx",
+      "status": "mapped",
+      "visualParity": "pending-full-screen-review"
+    },
+    {
+      "figmaName": "Noor/Pattern/TableCell",
+      "nodeId": "2239:523",
+      "code": "src/components/ui/table.tsx",
+      "status": "mapped",
+      "visualParity": "pending-full-screen-review"
+    },
+    {
+      "figmaName": "Noor/Pattern/NavigationItem",
+      "nodeId": "2239:529",
+      "code": "src/components/site-header.tsx",
+      "status": "mapped",
+      "visualParity": "pending-full-screen-review"
+    },
+    {
+      "figmaName": "Noor/Pattern/Toolbar",
+      "nodeId": "2239:538",
+      "code": "src/components/reader/reader-toolbar.tsx",
+      "status": "mapped",
+      "visualParity": "pending-full-screen-review"
+    },
+    {
+      "figmaName": "Noor/Pattern/ResultActions/Desktop",
+      "nodeId": "2158:2229",
+      "code": "src/components/search/result-card.tsx",
+      "status": "responsive-composition",
+      "visualParity": "pending-full-screen-review"
+    },
+    {
+      "figmaName": "Noor/Pattern/ResultActions/Mobile",
+      "nodeId": "2158:4477",
+      "code": "src/components/search/result-card.tsx",
+      "status": "responsive-composition",
+      "visualParity": "pending-full-screen-review"
+    },
+    {
+      "figmaName": "Noor/Pattern/ReaderPageNavigation/Desktop",
+      "nodeId": "2254:5092",
+      "code": "src/components/reader/reader-toolbar.tsx",
+      "status": "responsive-composition",
+      "visualParity": "pending-full-screen-review"
+    },
+    {
+      "figmaName": "Noor/Pattern/ReaderTools/Desktop",
+      "nodeId": "2254:5255",
+      "code": "src/components/reader/reader-toolbar.tsx",
+      "status": "responsive-composition",
+      "visualParity": "pending-full-screen-review"
+    },
+    {
+      "figmaName": "Noor/Pattern/ReaderHeader/Mobile",
+      "nodeId": "2254:12980",
+      "code": "src/components/reader/reader-toolbar.tsx",
+      "status": "responsive-composition",
+      "visualParity": "pending-full-screen-review"
+    },
+    {
+      "figmaName": "Noor/Pattern/ReaderTools/Mobile",
+      "nodeId": "2254:13049",
+      "code": "src/components/reader/reader-toolbar.tsx",
+      "status": "responsive-composition",
+      "visualParity": "pending-full-screen-review"
+    }
+  ]
+}

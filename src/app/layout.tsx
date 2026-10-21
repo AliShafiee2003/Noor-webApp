@@ -31,6 +31,13 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="fa" dir="rtl" suppressHydrationWarning>
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var p=JSON.parse(localStorage.getItem('noor:reader-prefs')||'{}');var f=p.font_family;var l=p.font_latin==='inter'?'"Inter"':'"Source Serif 4"';var a=f==='b-zar'?l+', "B Zar", "Amiri", "Vazirmatn", serif':f==='bahij-greta'?l+', "گرتا", "Amiri", "Vazirmatn", serif':f==='vazirmatn'?l+', "Vazirmatn", "Amiri", Tahoma, sans-serif':f==='scheherazade'?l+', "Scheherazade New", "Amiri", "Vazirmatn", serif':f==='portada'?l+', "Portada ARA", "Amiri", "Vazirmatn", serif':l+', "Amiri", "Scheherazade New", "Vazirmatn", serif';document.documentElement.style.setProperty('--font-arabic',a);if(p.font_quran){document.documentElement.style.setProperty('--font-quran',p.font_quran==='scheherazade-new'?'"Scheherazade New", "Amiri Quran", "Amiri", "Vazirmatn", serif':'"Amiri Quran", "Scheherazade New", "Amiri", "Vazirmatn", serif');}if(p.font_latin){document.documentElement.style.setProperty('--font-latin',p.font_latin==='inter'?'"Inter", "Segoe UI", Arial, sans-serif':'"Source Serif 4", Georgia, "Times New Roman", serif');}}catch(e){}})()`,
+          }}
+        />
+      </head>
       <body className="min-h-screen bg-background font-sans text-foreground antialiased">
         <Providers>{children}</Providers>
       </body>

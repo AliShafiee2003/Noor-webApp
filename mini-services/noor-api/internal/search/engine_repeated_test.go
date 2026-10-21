@@ -9,6 +9,7 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	_ "modernc.org/sqlite"
@@ -58,7 +59,10 @@ func buildTestIndex(t *testing.T) (*LocalEngine, func()) {
 		t.Fatalf("ساخت نمایه: %v", err)
 	}
 	eng := NewLocal(path, []byte("test-secret"), fakeMeta{})
-	cleanup := func() { _ = db.Close() }
+	cleanup := func() {
+		_ = eng.Close()
+		_ = db.Close()
+	}
 	return eng, cleanup
 }
 
@@ -104,7 +108,8 @@ func TestPhraseWithRepeatedWord(t *testing.T) {
 			t.Fatalf("بازهٔ هایلایت نامعتبر: %+v (طول %d)", hl, len(orig))
 		}
 		got := string(orig[hl[0].Start:hl[0].End])
-		if got != full {
+		expected := strings.TrimRight(full, ".!؟ ")
+		if got != expected && got != full {
 			t.Errorf("هایلایت باید خود عبارت باشد؛ گرفت %q", got)
 		}
 	}

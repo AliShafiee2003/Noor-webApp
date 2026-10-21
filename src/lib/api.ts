@@ -190,7 +190,9 @@ async function execute<T>(options: RequestOptions, csrf: string | null): Promise
     throw fallbackError(response);
   }
 
-  if (response.status === 204) return undefined as T;
+  if (response.status === 204 || response.status === 205) return undefined as T;
+  const contentLength = response.headers.get("content-length");
+  if (contentLength === "0") return undefined as T;
 
   let data: unknown;
   try {

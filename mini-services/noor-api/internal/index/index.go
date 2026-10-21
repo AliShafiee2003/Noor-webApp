@@ -132,6 +132,7 @@ func (b *Builder) BuildDoc(releaseUID, collectionUID, workUID, documentUID, lang
 	prevTailRunes := 0
 	prevEndBlock := -2 // هنوز هیچ قطعه‌ای ساخته نشده
 	prevEnd := 0       // انتهای مطلق متن قطعهٔ پیشین (لنگر tail)
+	psgIdx := 0
 	for _, pr := range pageRanges {
 		if pr.blocks.from > pr.blocks.to || pr.blocks.from >= len(m.Blocks) {
 			continue
@@ -160,7 +161,8 @@ func (b *Builder) BuildDoc(releaseUID, collectionUID, workUID, documentUID, lang
 				tail, tailRunes = prevTail, prevTailRunes
 				tailAbs = prevEnd - tailRunes
 			}
-			p := buildPassage(releaseUID, collectionUID, workUID, documentUID, language, m, secOf, pr.page, start, end, tail, tailRunes, tailAbs)
+			p := buildPassage(releaseUID, collectionUID, workUID, documentUID, language, m, secOf, pr.page, start, end, tail, tailRunes, tailAbs, psgIdx)
+			psgIdx++
 			if p != nil {
 				out = append(out, *p)
 				if overlapLen > 0 {
@@ -178,7 +180,56 @@ func (b *Builder) BuildDoc(releaseUID, collectionUID, workUID, documentUID, lang
 			start = end + 1
 		}
 	}
+
+	// پاورقی‌ها: هر پاورقی یک passage مستقل می‌شود تا متن حاشیه‌ها قابل جست‌وجو
+	// باشد (ممیزی: متن پاورقی هیچ‌گاه نمایه نمی‌شد). آفست مطلق پاورقی در فضای
+	// جداگانهٔ «پس از جریان سند» قرار می‌گیرد تا dedupe موتور هرگز وقوعِ حاشیه را
+	// با وقوعِ بدنه اشتباه نگیرد.
+	fnBase := len([]rune(m.Text)) + 1
+	for fi := range m.Footnotes {
+		fn := m.Footnotes[fi]
+		if strings.TrimSpace(fn.Text) == "" {
+			continue
+		}
+		p := buildFootnotePassage(releaseUID, collectionUID, workUID, documentUID, language, fn, psgIdx, fnBase)
+		out = append(out, *p)
+		psgIdx++
+		fnBase += len([]rune(fn.Text)) + 2
+	}
 	return out
+}
+
+// buildFootnotePassage passageی برای متن یک پاورقی می‌سازد — بدون صفحهٔ چاپی،
+// با برچسب «حاشیه»؛ بدون نقش و استناد (RoleRanges خالی).
+func buildFootnotePassage(releaseUID, collectionUID, workUID, documentUID, language string, fn xmlparse.Footnote, idx, absBase int) *Passage {
+	textN1, n1Map := norm.Normalize(fn.Text)
+	label := fn.Label
+	if label == "" {
+		label = "حاشیه"
+	}
+	cj, _ := json.Marshal([]xmlparse.Citation{})
+	rj, _ := json.Marshal([]roleRange{})
+	return &Passage{
+		PassageUID:    passageUID(releaseUID, documentUID, "fn", 0, 0, idx),
+		ReleaseUID:    releaseUID,
+		CollectionUID: collectionUID,
+		WorkUID:       workUID,
+		DocumentUID:   documentUID,
+		SectionUID:    "",
+		PageUID:       "",
+		PageLabel:     "حاشیه " + label,
+		Language:      language,
+		TextOriginal:  fn.Text,
+		TextN1:        textN1,
+		N1Map:         n1Map,
+		SourceStart:   absBase,
+		SourceEnd:     absBase + len([]rune(fn.Text)),
+		RoleRanges:    rj,
+		Citations:     cj,
+		Fingerprint:   docFingerprint(textN1),
+		BlockStart:    -1,
+		BlockEnd:      -1,
+	}
 }
 
 // tail/tailRunes: هم‌پوشانی مرزی (SEARCH-02) — دنبالهٔ متنِ قطعهٔ مجاورِ قبلی که
@@ -188,7 +239,7 @@ func (b *Builder) BuildDoc(releaseUID, collectionUID, workUID, documentUID, lang
 // tailRunes+1 (جداکنندهٔ \n) عقب می‌رود تا «محلی + SourceStart» همیشه جایگاه
 // واقعی در جریان متن سند باشد؛ dedupe موتور بر document+offset مطلق است و
 // تطبیقِ ناحیهٔ هم‌پوشانی در دو قطعهٔ مجاور به یک نتیجه می‌رسد.
-func buildPassage(releaseUID, collectionUID, workUID, documentUID, language string, m *xmlparse.DocModel, secOf map[string]string, page xmlparse.PageRec, from, to int, tail string, tailRunes int, tailAbs int) *Passage {
+func buildPassage(releaseUID, collectionUID, workUID, documentUID, language string, m *xmlparse.DocModel, secOf map[string]string, page xmlparse.PageRec, from, to int, tail string, tailRunes int, tailAbs int, psgIdx int) *Passage {
 	var parts []string
 	var roles []roleRange
 	offInPassage := 0
@@ -244,7 +295,7 @@ func buildPassage(releaseUID, collectionUID, workUID, documentUID, language stri
 	cj, _ := json.Marshal(citations)
 	rj, _ := json.Marshal(roles)
 	return &Passage{
-		PassageUID:    passageUID(releaseUID, documentUID, from, to),
+		PassageUID:    passageUID(releaseUID, documentUID, page.UID, from, to, psgIdx),
 		ReleaseUID:    releaseUID,
 		CollectionUID: collectionUID,
 		WorkUID:       workUID,
@@ -288,6 +339,10 @@ func rolesForBlock(b *xmlparse.Block) []roleRange {
 		add("b", 0, len([]rune(b.Text)))
 	case "sharh":
 		add("sharh", 0, len([]rune(b.Text)))
+	case "ayah_quote":
+		add("ayah", 0, len([]rune(b.Text)))
+	case "hadith_body":
+		add("hadith", 0, len([]rune(b.Text)))
 	}
 	for _, sp := range b.Spans {
 		add(sp.Role, sp.Start, sp.End)
@@ -529,9 +584,9 @@ func (w *IndexWriter) writeTitles(titles []TitleRow) error {
 // passageUID مستقل از release است (فقط سند + بازهٔ بلوک) تا شناسهٔ موضع در نسل‌های
 // مختلف نمایه و میان دو موتور (محلی/OpenSearch) پایدار بماند؛ نسخه در release_uid
 // جداگانه ثبت می‌شود و uid هرگز به‌عنوان حامل نسخه استفاده نمی‌شود.
-func passageUID(release, doc string, from, to int) string {
-	h := sha256.Sum256([]byte(fmt.Sprintf("%s|%d|%d", doc, from, to)))
-	return "psg-" + hex.EncodeToString(h[:8])
+func passageUID(release, doc, pageUID string, from, to, idx int) string {
+	h := sha256.Sum256([]byte(fmt.Sprintf("%s|%s|%s|%d|%d|%d", release, doc, pageUID, from, to, idx)))
+	return "psg-" + hex.EncodeToString(h[:12])
 }
 
 func docFingerprint(textN1 string) string {

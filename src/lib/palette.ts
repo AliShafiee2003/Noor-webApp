@@ -6,6 +6,7 @@
  * با جابه‌جایی حالت، قالبِ همان حالت دوباره اعمال می‌شود.
  */
 import { useSyncExternalStore } from "react";
+import emeraldNight from "@/design-system/skins/emerald-night.json";
 
 export interface PaletteDef {
   id: string;
@@ -47,9 +48,9 @@ export const LIGHT_PALETTES: readonly PaletteDef[] = [
 export const DARK_PALETTES: readonly PaletteDef[] = [
   {
     id: "default",
-    name: "زمرد شب",
+    name: emeraldNight.name,
     note: "قالب پیش‌فرض تیره میزکار",
-    swatch: ["#111a1d", "#8ed3bd", "#18252a"],
+    swatch: [emeraldNight.colors.canvas, emeraldNight.colors.primary, emeraldNight.colors.surface],
   },
   {
     id: "d-ocean",
@@ -131,21 +132,18 @@ function setListeners(): void {
 
 /** حدس حالت آغازین از تنظیمات next-themes — پیش از رندر، برای پرهیز از جرقهٔ قالب */
 function initialMode(): PaletteMode {
-  if (typeof window === "undefined") return "light";
+  if (typeof window === "undefined") return "dark";
   try {
     const theme = window.localStorage.getItem("theme");
     if (theme === "dark") return "dark";
     if (theme === "light") return "light";
-    if (
-      (!theme || theme === "system") &&
-      window.matchMedia?.("(prefers-color-scheme: dark)").matches
-    ) {
-      return "dark";
+    if (theme === "system") {
+      return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
     }
   } catch {
-    /* پیش‌فرض روشن */
+    /* پیش‌فرض زمرد شب */
   }
-  return "light";
+  return "dark";
 }
 
 /** یک‌بار در آغاز کلاینت — پیش از نخستین رندر، تا جرقهٔ قالب دیده نشود */

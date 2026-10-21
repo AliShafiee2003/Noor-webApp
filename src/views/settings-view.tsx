@@ -5,7 +5,7 @@
  * ظاهر (روشن/تیره با next-themes)، اشتراک‌های فعال و خروجی‌های PDF (§۷-الف)،
  * نشست‌های فعال، خروج.
  */
-import { useSyncExternalStore } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTheme } from "next-themes";
 import {
@@ -14,6 +14,7 @@ import {
   FileDown,
   FileText,
   Highlighter,
+  KeyRound,
   Loader2,
   LogOut,
   MonitorSmartphone,
@@ -31,6 +32,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
@@ -114,7 +116,8 @@ function ReadingTab() {
         <CardHeader className="pb-3">
           <CardTitle className="text-base">ترجیحات مطالعه</CardTitle>
           <CardDescription>
-            این تنظیمات روی متن مطالعه در همهٔ منابع اعمال می‌شود.
+            این تنظیمات روی متن مطالعه در همهٔ منابع اعمال می‌شود؛ تغییرات خودکار
+            ذخیره می‌شوند و موضع مطالعه را جابه‌جا نمی‌کنند.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
@@ -439,10 +442,16 @@ function PalettePicker() {
           <Label
             key={palette.id}
             htmlFor={`palette-${palette.id}`}
-            className="flex min-h-11 cursor-pointer items-center gap-3 rounded-lg border border-border p-4 font-normal transition-colors hover:bg-accent has-[[data-state=checked]]:border-primary has-[[data-state=checked]]:bg-primary/5"
+            className="flex min-w-0 cursor-pointer flex-col items-stretch gap-4 rounded-xl border border-border p-4 font-normal transition-colors hover:bg-accent has-[[data-state=checked]]:border-primary has-[[data-state=checked]]:bg-accent"
           >
-            <RadioGroupItem value={palette.id} id={`palette-${palette.id}`} />
-            <span className="flex shrink-0 items-center gap-1" aria-hidden="true">
+            <span className="flex min-w-0 items-start gap-3">
+            <RadioGroupItem value={palette.id} id={`palette-${palette.id}`} className="mt-1" />
+            <span className="min-w-0 flex-1 text-start">
+              <span className="block text-sm font-medium leading-5">{palette.name}</span>
+              <span className="mt-1 block text-xs leading-5 text-muted-foreground">{palette.note}</span>
+            </span>
+            </span>
+            <span className="flex items-center gap-2" aria-hidden="true">
               {palette.swatch.map((color) => (
                 <span
                   key={color}
@@ -451,12 +460,6 @@ function PalettePicker() {
                 />
               ))}
             </span>
-            <span className="min-w-0">
-              <span className="block text-sm font-medium">{palette.name}</span>
-              <span className="block truncate text-xs text-muted-foreground">
-                {palette.note}
-              </span>
-            </span>
           </Label>
         ))}
       </RadioGroup>
@@ -464,7 +467,145 @@ function PalettePicker() {
   );
 }
 
-/* ---------- بخش نشست‌ها ---------- */
+/* ---------- بخش نشست‌ها و امنیت ---------- */
+
+function ChangePasswordCard() {
+  const { toast } = useToast();
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+
+  const changeMutation = useMutation({
+    mutationFn: (data: { current_password: string; new_password: string }) =>
+      api.post<{ ok: boolean; message: string }>("/auth/change-password", data),
+    onSuccess: (res) => {
+      toast({
+        title: "تغییر رمز عبور",
+        description: res?.message ?? "رمز عبور با موفقیت تغییر یافت.",
+      });
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+    },
+    onError: (err) => {
+      toast({
+        title: "تغییر رمز عبور ناموفق بود",
+        description: errorMessage(
+          err,
+          "لطفاً صحت رمز عبور فعلی و حداقل ۸ نویسه بودن رمز عبور جدید را بررسی کنید.",
+        ),
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentPassword) {
+      toast({
+        title: "خطای اعتبارسنجی",
+        description: "لطفاً رمز عبور فعلی را وارد کنید.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (newPassword.length < 8) {
+      toast({
+        title: "خطای اعتبارسنجی",
+        description: "رمز عبور جدید باید حداقل ۸ نویسه باشد.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      toast({
+        title: "خطای اعتبارسنجی",
+        description: "رمز عبور جدید با تکرار آن یکسان نیست.",
+        variant: "destructive",
+      });
+      return;
+    }
+    changeMutation.mutate({
+      current_password: currentPassword,
+      new_password: newPassword,
+    });
+  };
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <KeyRound className="size-4 text-primary" aria-hidden="true" />
+          تغییر رمز عبور
+        </CardTitle>
+        <CardDescription>
+          برای افزایش امنیت حساب، رمز عبور جدید باید دست‌کم ۸ نویسه باشد.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <form onSubmit={handleSubmit} className="max-w-md space-y-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="current-password">رمز عبور فعلی</Label>
+            <Input
+              id="current-password"
+              type="password"
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+              placeholder="••••••••"
+              autoComplete="current-password"
+              className="text-left font-mono"
+              dir="ltr"
+              required
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="new-password">رمز عبور جدید</Label>
+            <Input
+              id="new-password"
+              type="password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              placeholder="دست‌کم ۸ نویسه"
+              autoComplete="new-password"
+              className="text-left font-mono"
+              dir="ltr"
+              required
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="confirm-password">تکرار رمز عبور جدید</Label>
+            <Input
+              id="confirm-password"
+              type="password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              placeholder="تکرار رمز عبور جدید"
+              autoComplete="new-password"
+              className="text-left font-mono"
+              dir="ltr"
+              required
+            />
+          </div>
+
+          <Button
+            type="submit"
+            disabled={changeMutation.isPending}
+            className="min-h-11 md:min-h-9 gap-2"
+          >
+            {changeMutation.isPending ? (
+              <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+            ) : (
+              <KeyRound className="size-4" aria-hidden="true" />
+            )}
+            ذخیرهٔ رمز عبور جدید
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
+  );
+}
 
 function SessionsTab() {
   const queryClient = useQueryClient();
@@ -510,6 +651,7 @@ function SessionsTab() {
 
   return (
     <div className="space-y-4">
+      <ChangePasswordCard />
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-base">نشست‌های فعال</CardTitle>
@@ -862,7 +1004,7 @@ export function SettingsView() {
       <header className="mb-6">
         <h1 className="text-xl font-bold">تنظیمات</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          ترجیحات مطالعه، ظاهر میزکار، اشتراک‌ها و خروجی‌های شما.
+          ترجیحات مطالعه، ظاهر میزکار، اشتراک‌ها، نشست‌ها و امنیت حساب شما.
         </p>
       </header>
 
@@ -878,7 +1020,7 @@ export function SettingsView() {
             اشتراک و خروجی
           </TabsTrigger>
           <TabsTrigger value="sessions" className="min-h-11 flex-1 md:min-h-9">
-            نشست‌ها
+            نشست‌ها و امنیت
           </TabsTrigger>
         </TabsList>
         <TabsContent value="reading">

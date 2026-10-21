@@ -52,3 +52,35 @@ prompt
 server.log
 # Skills directory
 /skills/
+
+# --- پایدارسازی: دورریز اجرا/ابزار و کپی‌های مضاعف تصادفی ---
+.codebase-memory/
+tool-results/
+__pycache__/
+*.log
+*.exe
+*.exe~
+*.patch
+pwreset.out
+/fonts/
+/data/
+
+# کپی‌های مضاعف حسیدشده از جابه‌جایی قبلی (پاورقی فاز ۰)
+/app_development/
+/docs/docs/
+/mini-services/mini-services/
+/public/public/
+
+# داده‌های اجرایی/باینری noor-api (سورس‌ها قابل بازسازی‌اند)
+mini-services/noor-api/data/app.sqlite.bak
+mini-services/noor-api/data/fts/
+mini-services/noor-api/data/fts_pilot/
+mini-services/noor-api/data/index.building-*
+mini-services/noor-api/data/noor.db
+mini-services/noor-api/data/pilot_*
+mini-services/noor-api/data/workspace_states.db
+mini-services/noor-api/data/sources/*.bak*
+mini-services/noor-api/data/sources/catalog.json.pre_merge_backup
+mini-services/noor-api/data/sources/catalog.mock.json
+mini-services/noor-api/data/sources/01314_001.db
+mini-services/noor-api/internal/noor-search-2modes.zip

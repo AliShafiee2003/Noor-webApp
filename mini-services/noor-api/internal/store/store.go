@@ -6,8 +6,10 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -43,7 +45,8 @@ func (s *DB) migrate() error {
 		`CREATE TABLE IF NOT EXISTS users(
                         uid TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, username_norm TEXT NOT NULL UNIQUE,
                         display_name TEXT NOT NULL, password_hash TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN ('admin','reader')),
-                        totp_secret TEXT, totp_enabled INTEGER NOT NULL DEFAULT 0, disabled INTEGER NOT NULL DEFAULT 0,
+                        totp_secret TEXT, totp_enabled INTEGER NOT NULL DEFAULT 0, last_totp_step INTEGER NOT NULL DEFAULT 0,
+                        disabled INTEGER NOT NULL DEFAULT 0,
                         created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
 		`CREATE TABLE IF NOT EXISTS sessions(
                         uid TEXT PRIMARY KEY, user_uid TEXT NOT NULL REFERENCES users(uid), token_digest TEXT NOT NULL UNIQUE,
@@ -168,6 +171,12 @@ func (s *DB) migrate() error {
 		// کاربر سیستمی برای bootstrap و jobهای سیستمی — غیرفعال، بدون ورود
 		`INSERT OR IGNORE INTO users(uid, username, username_norm, display_name, password_hash, role, disabled)
                         VALUES('usr-system', 'system', 'system', 'سیستم', '$argon2id$v=19$m=65536,t=3,p=1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', 'admin', 1)`,
+		// وضعیت انتشار و دسترس‌پذیری کتب (§۱۰) — کنترل توسط مدیر سامانه
+		`CREATE TABLE IF NOT EXISTS work_publications(
+                        work_uid TEXT PRIMARY KEY,
+                        published INTEGER NOT NULL DEFAULT 1,
+                        updated_by TEXT,
+                        updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
 	}
 	/* DB-04: مهاجرت باید اتمیک و serialized باشد — api و worker هم‌زمان boot
 	   می‌شوند و هر دو روی همان app.sqlite مهاجرت می‌کنند. BEGIN IMMEDIATE روی
@@ -191,6 +200,11 @@ func (s *DB) migrate() error {
 			return fmt.Errorf("migrate: %w", err)
 		}
 	}
+	// مهاجرت افزایشی ستون‌ها (idempotent): برای پایگاه‌های موجود که CREATE TABLE
+	// دیگر رویشان اجرا نمی‌شود.
+	if err := ensureColumn(conn, "users", "last_totp_step", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return fmt.Errorf("migrate: ensureColumn: %w", err)
+	}
 	var v int
 	_ = conn.QueryRowContext(ctx, `SELECT MAX(version) FROM schema_migrations`).Scan(&v)
 	if v < 1 {
@@ -202,6 +216,36 @@ func (s *DB) migrate() error {
 		return fmt.Errorf("migrate: commit: %w", err)
 	}
 	return nil
+}
+
+// ensureColumn اگر ستون در جدول نبود آن را اضافه می‌کند (SQLite، idempotent).
+func ensureColumn(conn *sql.Conn, table, column, def string) error {
+	rows, err := conn.QueryContext(context.Background(), fmt.Sprintf(`PRAGMA table_info(%s)`, table))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	found := false
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &dflt, &pk); err != nil {
+			return err
+		}
+		if strings.EqualFold(name, column) {
+			found = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if found {
+		return nil
+	}
+	_, err = conn.ExecContext(context.Background(), fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, table, column, def))
+	return err
 }
 
 // KV خواندن کلید.
@@ -228,8 +272,11 @@ func (s *DB) ActiveRelease() (string, error) {
 
 // Audit ثبت رویداد حساس (SEC-15).
 func (s *DB) Audit(actor, action, objectType, objectUID, detail, ip string) {
-	_, _ = s.Exec(`INSERT INTO audit_events(actor,action,object_type,object_uid,detail,ip) VALUES(?,?,?,?,?,?)`,
-		actor, action, objectType, objectUID, detail, ip)
+	if _, err := s.Exec(`INSERT INTO audit_events(actor,action,object_type,object_uid,detail,ip) VALUES(?,?,?,?,?,?)`,
+		actor, action, objectType, objectUID, detail, ip); err != nil {
+		// حسابرسی نباید بی‌صدا گم شود؛ ثبت در لاگ سرویس انجام می‌شود.
+		log.Printf("noor-audit: write failed: action=%s actor=%s err=%v", action, actor, err)
+	}
 }
 
 // ---- نشست جست‌وجو (پیاده‌سازی search.SessionStore روی app.sqlite) ----
@@ -261,6 +308,46 @@ func (s *DB) TouchSearchSession(uid string, ttl time.Duration) error {
 	_, err := s.Exec(`UPDATE search_sessions SET expire_at=datetime('now', ?) WHERE uid=?`,
 		fmt.Sprintf("+%d seconds", int(ttl.Seconds())), uid)
 	return err
+}
+
+// IsWorkPublished وضعیت انتشار یک اثر (پیش‌فرض: true).
+func (s *DB) IsWorkPublished(workUID string) bool {
+	var pub int
+	err := s.QueryRow(`SELECT published FROM work_publications WHERE work_uid=?`, workUID).Scan(&pub)
+	if err != nil {
+		return true
+	}
+	return pub == 1
+}
+
+// SetWorkPublished تغییر وضعیت انتشار اثر توسط مدیر سامانه.
+func (s *DB) SetWorkPublished(workUID string, published bool, updatedBy string) error {
+	pubInt := 0
+	if published {
+		pubInt = 1
+	}
+	_, err := s.Exec(`INSERT INTO work_publications(work_uid, published, updated_by, updated_at)
+                VALUES(?,?,?, datetime('now'))
+                ON CONFLICT(work_uid) DO UPDATE SET published=excluded.published, updated_by=excluded.updated_by, updated_at=excluded.updated_at`,
+		workUID, pubInt, updatedBy)
+	return err
+}
+
+// UnpublishedWorkUIDs مجموعهٔ شناسه‌های آثار از دسترس خارج شده.
+func (s *DB) UnpublishedWorkUIDs() (map[string]bool, error) {
+	rows, err := s.Query(`SELECT work_uid FROM work_publications WHERE published=0`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]bool)
+	for rows.Next() {
+		var uid string
+		if err := rows.Scan(&uid); err == nil {
+			out[uid] = true
+		}
+	}
+	return out, nil
 }
 
 // Backup پشتیبان سازگار با VACUUM INTO (§۵۴).

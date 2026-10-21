@@ -67,6 +67,9 @@ func (m catMeta) SectionTitle(docUID, secUID string) (string, bool) {
 // مستقل از index.sqlite زنده تا آزمون تکرارپذیر باشد.
 func loadFixtureEngine(t *testing.T) (*LocalEngine, *catalog.Service) {
 	t.Helper()
+	if _, err := os.Stat(filepath.Join(fixtureSources, "catalog.json")); err != nil {
+		t.Skip("کاتالوگ fixture در این مخزن موجود نیست (data/sources)")
+	}
 	cat, err := catalog.Load(fixtureSources)
 	if err != nil {
 		t.Fatalf("کاتالوگ fixture: %v", err)

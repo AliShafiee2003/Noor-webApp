@@ -3,7 +3,9 @@ package httpapi
 import (
 	"database/sql"
 	"encoding/json"
+	"io/fs"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -11,6 +13,7 @@ import (
 
 	"noor/internal/catalog"
 	"noor/internal/jobs"
+	"noor/internal/norm"
 	"noor/internal/overlay"
 )
 
@@ -33,7 +36,7 @@ func (s *Server) handleAdminOverview(w http.ResponseWriter, r *http.Request) {
 		"data_dir_bytes": disk,
 		"engine":         s.Cfg.Engine,
 		"index_version":  s.Cfg.IndexVersion,
-		"n1_version":     "n1-1.0.0",
+		"n1_version":     norm.Version,
 		"note":           "دادهٔ پژوهشی خصوصی کاربران در این داشبورد نمایش داده نمی‌شود.",
 	})
 }
@@ -46,17 +49,22 @@ func countDocs(works []catalog.Work) int {
 	return n
 }
 
+// diskUsage مجموع حجم بازگشتیِ شاخهٔ داده (شامل fts/ زیرشاخه‌ها) — نسخهٔ قبلی
+// فقط فایل‌های سطح اول را می‌شمارد و حجم نمایهٔ FTS را گزارش نمی‌کرد.
 func diskUsage(dir string) int64 {
 	var total int64
-	entries, err := osReadDir(dir)
-	if err != nil {
-		return 0
-	}
-	for _, e := range entries {
-		if st, err := e.Info(); err == nil && !e.IsDir() {
+	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil // دست‌نیافتنی‌ها بی‌صدا از شمارش خارج می‌شوند
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if st, err := d.Info(); err == nil {
 			total += st.Size()
 		}
-	}
+		return nil
+	})
 	return total
 }
 
@@ -151,19 +159,11 @@ func (s *Server) handleAdminValidateOverlay(w http.ResponseWriter, r *http.Reque
 		s.fail(w, r, 404, "not_found", "اصلاح یافت نشد.", false)
 		return
 	}
-	// hash متن مبنا از محتوای فعلی محاسبه می‌شود
+	// hash متن مبنا از محتوای فعلی کل سند محاسبه می‌شود (قرارداد فعلی؛ مستقل از target)
 	m, err := s.Catalog.Model(rev.DocumentUID)
 	hash := ""
 	if err == nil {
-		for _, b := range m.Blocks {
-			if string(rev.Target) != "" && len(b.ID) > 0 {
-				hash = overlay.TextHash(m.Text)
-				break
-			}
-		}
-		if hash == "" {
-			hash = overlay.TextHash(m.Text)
-		}
+		hash = overlay.TextHash(m.Text)
 	}
 	rev, err = s.Overlay.Validate(uid, hash)
 	if err != nil {
@@ -184,10 +184,14 @@ func (s *Server) handleAdminPreviewOverlay(w http.ResponseWriter, r *http.Reques
 		s.fail(w, r, 404, "not_found", "سند مبنای اصلاح در دسترس نیست.", false)
 		return
 	}
+	// بلوک‌های متأثر: برای text_replace بلوک‌هایی که old_value در آن‌هاست؛ برای
+	// metadata همه بلوک‌ها نیست — لیست خالی با توضیح برگردانده می‌شود.
 	affected := []map[string]any{}
-	for _, b := range m.Blocks {
-		if strings.ContainsAny(b.Text, "x") {
-			affected = append(affected, map[string]any{"block_id": b.ID})
+	if rev.ChangeType == "text_replace" && rev.OldValue != "" {
+		for _, b := range m.Blocks {
+			if strings.Contains(b.Text, rev.OldValue) {
+				affected = append(affected, map[string]any{"block_id": b.ID})
+			}
 		}
 	}
 	s.ok(w, map[string]any{
@@ -212,7 +216,8 @@ func (s *Server) handleAdminPublishOverlay(w http.ResponseWriter, r *http.Reques
 	}
 	// ساخت نسل جدید: نمایهٔ نسل آینده با overlay — در این نسخه، محتوای overlay شده
 	// در manifest نسل ثبت و نمایه بازسازی می‌شود (شکست = failed، هرگز نیم‌بنا)
-	job, err := s.Jobs.Enqueue("index_rebuild", json.RawMessage(`{"reason":"overlay_publish","overlay_uid":"`+uid+`"}`), userOf(r).UID)
+	payload, _ := json.Marshal(map[string]string{"reason": "overlay_publish", "overlay_uid": uid})
+	job, err := s.Jobs.Enqueue("index_rebuild", payload, userOf(r).UID)
 	if err != nil {
 		s.fail(w, r, 429, "quota", err.Error(), true)
 		return
@@ -233,6 +238,18 @@ func (s *Server) handleAdminReindex(w http.ResponseWriter, r *http.Request) {
 	s.okStatus(w, 202, map[string]any{"job_uid": job.UID})
 }
 
+// handleAdminCatalogReload بازخوانی کاتالوگ بدون ری‌استارت — پس از افزودن منبع
+// تازه روی دیسک، API بدون down شدن آثار جدید را سرو می‌کند.
+func (s *Server) handleAdminCatalogReload(w http.ResponseWriter, r *http.Request) {
+	if err := s.Catalog.Reload(); err != nil {
+		s.fail(w, r, 500, "internal", "بازخوانی کاتالوگ ناموفق بود؛ کاتالوگ پیشین حفظ شد.", true)
+		return
+	}
+	s.DB.Audit(userOf(r).UID, "catalog_reload", "catalog", "", "", "")
+	s.ok(w, map[string]any{"ok": true, "works_count": len(s.Catalog.Works())})
+}
+
+// handleAdminReleases فهرست نسل‌ها.
 func (s *Server) handleAdminReleases(w http.ResponseWriter, r *http.Request) {
 	items, err := s.Overlay.Releases()
 	if err != nil {
@@ -442,6 +459,53 @@ func (s *Server) handleInternalFail(w http.ResponseWriter, r *http.Request) {
 	s.ok(w, map[string]any{"ok": true})
 }
 
+// handleInternalFeatures ثبت ویژگی‌های واقعی محاسبه‌شدهٔ worker (per work) در kv؛
+// منبع حقیقتِ «supported/absent» برای پوشش اثرها همین‌جاست.
+func (s *Server) handleInternalFeatures(w http.ResponseWriter, r *http.Request) {
+	var body map[string]map[string]bool
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	existing := map[string]map[string]bool{}
+	if raw, ok := s.DB.KV("work_features"); ok {
+		_ = json.Unmarshal([]byte(raw), &existing)
+	}
+	for k, v := range body {
+		existing[k] = v
+	}
+	b, _ := json.Marshal(existing)
+	if err := s.DB.SetKV("work_features", string(b)); err != nil {
+		s.fail(w, r, 500, "internal", "ثبت ویژگی‌ها ناموفق بود.", true)
+		return
+	}
+	s.ok(w, map[string]any{"ok": true})
+}
+
+// handleInternalActiveOverlays فهرست اصلاح‌هایی که باید در ساخت نسل اعمال شوند:
+// اصلاحِ ارجاع‌شدهٔ همین کار (published در انتظار نسل) + همهٔ «ready»ها.
+func (s *Server) handleInternalActiveOverlays(w http.ResponseWriter, r *http.Request) {
+	items := []map[string]any{}
+	ready, err := s.Overlay.ListReady()
+	if err == nil {
+		for _, rev := range ready {
+			items = append(items, map[string]any{
+				"uid": rev.UID, "document_uid": rev.DocumentUID, "change_type": rev.ChangeType,
+				"old_value": rev.OldValue, "new_value": rev.NewValue,
+			})
+		}
+	}
+	// اصلاحِ ارجاع‌شدهٔ همین کار (وضعیت building) هم باید اعمال شود.
+	if include := r.URL.Query().Get("include"); include != "" {
+		if rev, gerr := s.Overlay.Get(include); gerr == nil {
+			items = append(items, map[string]any{
+				"uid": rev.UID, "document_uid": rev.DocumentUID, "change_type": rev.ChangeType,
+				"old_value": rev.OldValue, "new_value": rev.NewValue,
+			})
+		}
+	}
+	s.ok(w, map[string]any{"items": items})
+}
+
 // handleInternalPublishRelease انتشار نسل پس از ساخت موفق نمایه (pointer اتمیک + audit).
 func (s *Server) handleInternalPublishRelease(w http.ResponseWriter, r *http.Request) {
 	var body struct {
@@ -481,3 +545,36 @@ func (s *Server) handleInternalPublishRelease(w http.ResponseWriter, r *http.Req
 	s.DB.Audit("worker", "release_publish", "release", body.ReleaseUID, "internal", "")
 	s.ok(w, map[string]any{"ok": true, "release_uid": body.ReleaseUID})
 }
+
+// handleAdminPublishWork انتشار مجدد یک اثر (در دسترس عموم قرار دادن).
+func (s *Server) handleAdminPublishWork(w http.ResponseWriter, r *http.Request) {
+	uid := chi.URLParam(r, "uid")
+	if _, ok := s.Catalog.Work(uid); !ok {
+		s.fail(w, r, 404, "not_found", "اثر یافت نشد.", false)
+		return
+	}
+	u := userOf(r)
+	if err := s.DB.SetWorkPublished(uid, true, u.UID); err != nil {
+		s.fail(w, r, 500, "internal", "تغییر وضعیت انتشار ممکن نشد.", true)
+		return
+	}
+	s.DB.Audit(u.UID, "work_publish", "work", uid, "published=true", s.clientIP(r))
+	s.ok(w, map[string]any{"ok": true, "uid": uid, "published": true})
+}
+
+// handleAdminUnpublishWork از دسترس خارج کردن یک اثر از دید عموم.
+func (s *Server) handleAdminUnpublishWork(w http.ResponseWriter, r *http.Request) {
+	uid := chi.URLParam(r, "uid")
+	if _, ok := s.Catalog.Work(uid); !ok {
+		s.fail(w, r, 404, "not_found", "اثر یافت نشد.", false)
+		return
+	}
+	u := userOf(r)
+	if err := s.DB.SetWorkPublished(uid, false, u.UID); err != nil {
+		s.fail(w, r, 500, "internal", "تغییر وضعیت انتشار ممکن نشد.", true)
+		return
+	}
+	s.DB.Audit(u.UID, "work_unpublish", "work", uid, "published=false", s.clientIP(r))
+	s.ok(w, map[string]any{"ok": true, "uid": uid, "published": false})
+}
+

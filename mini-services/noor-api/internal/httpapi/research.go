@@ -1,12 +1,16 @@
 package httpapi
 
 import (
+	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -447,6 +451,21 @@ func (s *Server) handleCreateExport(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, 422, "invalid_query", "قالب خروجی پشتیبانی نمی‌شود.", false)
 		return
 	}
+	// پروژه باید مالِ درخواست‌دهنده باشد — خروجیِ پروژهٔ دیگری ساخته نمی‌شود.
+	var pown string
+	if err := s.DB.QueryRow(`SELECT owner_user_id FROM projects WHERE uid=?`, body.ProjectUID).Scan(&pown); err != nil || pown != userOf(r).UID {
+		s.fail(w, r, 404, "not_found", "پروندهٔ پژوهشی یافت نشد.", false)
+		return
+	}
+	// سهمیه: حداکثر maxExportsInFlight کار باز برای هر کاربر — پیش‌تر هر POST یک گوروتین
+	// بی‌کران و یک فایل بی‌پاک‌سازی می‌ساخت.
+	var inflight int
+	_ = s.DB.QueryRow(`SELECT COUNT(*) FROM export_jobs WHERE owner_user_id=? AND status IN ('queued','running')`, userOf(r).UID).Scan(&inflight)
+	if inflight >= maxExportsInFlight {
+		s.fail(w, r, 429, "rate_limited", "خروجی‌های قبلی هنوز در حال ساخت‌اند؛ پس از پایان آن‌ها دوباره تلاش کنید.", true)
+		return
+	}
+	s.pruneOldExports()
 	uid := "exp-" + randHexLocal(8)
 	_, err := s.DB.Exec(`INSERT INTO export_jobs(uid, owner_user_id, project_uid, format, status) VALUES(?,?,?,?, 'queued')`,
 		uid, userOf(r).UID, body.ProjectUID, body.Format)
@@ -455,9 +474,69 @@ func (s *Server) handleCreateExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// تولید همگن برای حجم‌های متعارف (job کم‌اولویت در production)
-	go s.runExport(uid)
+	go s.runExportSafe(uid)
 	/* GO-08: 202 یک‌بار با بدنهٔ واقعی — WriteHeader دوم (200 در s.ok) superfluous بود */
 	s.okStatus(w, 202, map[string]any{"export_uid": uid})
+}
+
+// runExportSafe panic تولید خروجی را به شکست کار تبدیل می‌کند — گوروتین بی‌recover
+// کل فرایند را می‌اندازد.
+func (s *Server) runExportSafe(uid string) {
+	exportSem <- struct{}{}
+	defer func() { <-exportSem }()
+	defer func() {
+		if p := recover(); p != nil {
+			log.Printf("export panic: uid=%s panic=%v", uid, p)
+			_, _ = s.DB.Exec(`UPDATE export_jobs SET status='failed', error=? WHERE uid=?`, "خطای داخلی در تولید خروجی", uid)
+		}
+	}()
+	s.runExport(uid)
+}
+
+const (
+	maxExportsInFlight = 2
+	exportRetention    = 24 * time.Hour
+)
+
+// exportSem سقف سراسری تولید هم‌زمان خروجی (CPU/IO) — بقیه در صف گوروتین منتظر می‌مانند.
+var exportSem = make(chan struct{}, 2)
+
+var exportPruneMu sync.Mutex
+var exportPruneLast time.Time
+
+// pruneOldExports فایل‌های خروجیِ قدیمی‌تر از exportRetention را برمی‌دارد (حداکثر هر ۱۰ دقیقه
+// یک‌بار، تنبل). ردیف کار باقی می‌ماند ولی وضعیتش expired می‌شود تا دانلود صادقانه 404 دهد.
+func (s *Server) pruneOldExports() {
+	exportPruneMu.Lock()
+	if time.Since(exportPruneLast) < 10*time.Minute {
+		exportPruneMu.Unlock()
+		return
+	}
+	exportPruneLast = time.Now()
+	exportPruneMu.Unlock()
+	cutoff := fmt.Sprintf("-%d seconds", int(exportRetention.Seconds()))
+	rows, err := s.DB.Query(`SELECT uid, file_path FROM export_jobs WHERE status='done' AND finished_at < datetime('now', ?)`, cutoff)
+	if err != nil {
+		return
+	}
+	type old struct{ uid, path string }
+	var olds []old
+	for rows.Next() {
+		var o old
+		var p sql.NullString
+		if rows.Scan(&o.uid, &p) == nil {
+			o.path = p.String
+			olds = append(olds, o)
+		}
+	}
+	rows.Close()
+	base := filepath.Join(s.Cfg.DataDir, "exports")
+	for _, o := range olds {
+		if o.path != "" && strings.HasPrefix(filepath.Clean(o.path), base+string(filepath.Separator)) {
+			_ = os.Remove(o.path)
+		}
+		_, _ = s.DB.Exec(`UPDATE export_jobs SET status='expired', file_path=NULL WHERE uid=?`, o.uid)
+	}
 }
 
 func (s *Server) runExport(uid string) {
@@ -545,9 +624,14 @@ func (s *Server) handleExportDownload(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, 404, "not_found", "فایل خروجی در دسترس نیست.", false)
 		return
 	}
+	ext := filepath.Ext(path)
+	if ext == "" {
+		s.fail(w, r, 404, "not_found", "فایل خروجی آماده نیست.", false)
+		return
+	}
 	ct := map[string]string{"md": "text/markdown; charset=utf-8", "json": "application/json; charset=utf-8", "csv": "text/csv; charset=utf-8", "html": "text/html; charset=utf-8"}
-	w.Header().Set("Content-Type", ct[filepath.Ext(path)[1:]])
-	w.Header().Set("Content-Disposition", "attachment; filename=\""+uid+"."+filepath.Ext(path)[1:]+"\"")
+	w.Header().Set("Content-Type", ct[ext[1:]])
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+uid+"."+ext[1:]+"\"")
 	w.Write(data)
 }
 

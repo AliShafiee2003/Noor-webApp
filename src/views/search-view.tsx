@@ -51,11 +51,13 @@ import {
   searchStateKey,
   SearchForm,
   ROLE_FILTERS,
+  LAYERED_MODES,
   type SearchHashState,
 } from "@/components/search/search-form";
 import { FilterChips } from "@/components/search/filter-chips";
 import { ExportMenu } from "@/components/search/export-menu";
 import {
+  LayerCountsLine,
   ResultCardSkeleton,
   VerifiedCountLine,
 } from "@/components/search/result-card";
@@ -76,10 +78,24 @@ function hashFromPayload(payload: unknown): Record<string, string> | null {
   const p = payload as Record<string, unknown>;
   if (typeof p.query !== "string" || typeof p.mode !== "string") return null;
   const out: Record<string, string> = { q: p.query, mode: p.mode };
+  if (typeof p.flex === "string" && p.flex) out.flex = p.flex;
+  if (p.words && typeof p.words === "object") {
+    const w = p.words as Record<string, unknown>;
+    if (typeof w.match === "string") out.match = w.match;
+    if (typeof w.distance === "number") out.dist = String(w.distance);
+    if (w.ordered) out.ord = "1";
+  }
+  if (typeof p.sort === "string" && p.sort) out.sort = p.sort;
   const scope = (p.scope && typeof p.scope === "object" ? p.scope : {}) as Record<string, unknown>;
   const target = typeof scope.target === "string" ? scope.target : "library";
   if (target === "titles") {
-    out.scope = "titles";
+    out.target = "titles";
+  } else if (target === "authors") {
+    out.target = "authors";
+  }
+  if (typeof scope.author === "string" && scope.author) {
+    out.author = scope.author;
+    out.scope = "author";
   } else if (target === "work" && typeof scope.work_uid === "string" && scope.work_uid) {
     out.scope = "work";
     out.work = scope.work_uid;
@@ -104,9 +120,17 @@ function hashFromPayload(payload: unknown): Record<string, string> | null {
   if (typeof scope.language === "string" && scope.language) out.lang = scope.language;
   const near = (p.near && typeof p.near === "object" ? p.near : null) as Record<string, unknown> | null;
   if (near) {
-    out.slop = String(typeof near.slop === "number" ? near.slop : 3);
-    if (near.ordered === false) out.ordered = "0";
+    out.dist = String(typeof near.slop === "number" ? near.slop : 3);
+    if (near.ordered) out.ord = "1";
   }
+  if (p.diacritics === "respect" || p.diacritics === "respect_strict") out.dia = p.diacritics;
+  if (Array.isArray(p.layers)) {
+    const ls = p.layers.filter((l): l is string => typeof l === "string");
+    if (ls.length > 0) out.layers = ls.join(",");
+  }
+  if (typeof p.min_score === "number" && p.min_score > 0) out.ms = String(p.min_score);
+  if (p.near_spelling === true) out.ns = "1";
+  if (p.expand_morphology === true) out.mx = "1";
   return out;
 }
 
@@ -234,7 +258,7 @@ function SavedSearchesPanel({
         </Card>
       ) : items.length === 0 ? (
         <Card className="border-dashed">
-          <CardContent className="p-4 text-sm text-muted-foreground">
+          <CardContent className="flex min-h-[167px] items-center px-6 py-6 text-justify text-sm leading-6 text-muted-foreground">
             جست‌وجوی ذخیره‌شده‌ای ندارید. پس از اجرای جست‌وجو می‌توانید آن را با نام ذخیره کنید تا
             دوباره با همان تنظیمات اجرا شود.
           </CardContent>
@@ -335,17 +359,43 @@ export function SearchView() {
 
   /** ساخت پارامترهای hash از وضعیت فرم — مشترک میان setQuery و submit */
   const searchQueryParams = useCallback(
-    (state: SearchHashState): Record<string, string | undefined> => ({
-      q: state.q.trim() || undefined,
-      mode: state.mode,
-      scope: state.scope,
-      work: state.work || undefined,
-      doc: state.doc || undefined,
-      roles: state.roles.length > 0 ? state.roles.join(",") : undefined,
-      lang: state.lang || undefined,
-      slop: state.mode === "near" ? String(state.slop) : undefined,
-      ordered: state.mode === "near" && !state.ordered ? "0" : undefined,
-    }),
+    (state: SearchHashState): Record<string, string | undefined> => {
+      const qp: Record<string, string | undefined> = {
+        q: state.q.trim() || undefined,
+        target: state.target !== "text" ? state.target : undefined,
+        mode: state.mode,
+        scope: state.scope !== "library" ? state.scope : undefined,
+        author: state.author.trim() || undefined,
+        work: state.work || undefined,
+        doc: state.doc || undefined,
+        roles: state.roles.length > 0 ? state.roles.join(",") : undefined,
+        lang: state.lang || undefined,
+        dia: state.diacritics !== "" ? state.diacritics : undefined,
+      };
+
+      if (state.mode === "words") {
+        if (state.wordsMatch === "any") qp.match = "any";
+        if (state.wordsDistance > 0) {
+          qp.dist = String(state.wordsDistance);
+          if (state.wordsOrdered) qp.ord = "1";
+        }
+      } else {
+        // حالت text
+        if (state.flex !== "similar") qp.flex = state.flex;
+        if (state.sort === "similarity") qp.sort = "similarity";
+        if (state.nearSpelling) qp.ns = "1";
+        if (state.expandMorphology) qp.mx = "1";
+        if (state.minScore > 0) qp.ms = String(state.minScore);
+        if (state.layers.length > 0) qp.layers = state.layers.join(",");
+      }
+
+      if (state.sure.trim()) {
+        qp.sure = state.sure.trim();
+        if (state.aya.trim()) qp.aya = state.aya.trim();
+      }
+
+      return qp;
+    },
     [],
   );
 
@@ -393,9 +443,21 @@ export function SearchView() {
   const sessionQuery = useQuery({
     queryKey: ["search-session", searchKey],
     queryFn: async ({ signal }) => {
+      const existing = queryClient.getQueryData<SearchResponse>(["search-session", searchKey]);
+      if (existing?.completion_state === "in_progress" && existing.session_uid) {
+        const polled = await api.get<SearchResponse>(`/search/${existing.session_uid}`);
+        if (signal.aborted) throw new DOMException("aborted", "AbortError");
+        return polled;
+      }
       const resp = await api.post<SearchResponse>("/search", request);
       if (signal.aborted) throw new DOMException("aborted", "AbortError");
       return resp;
+    },
+    refetchInterval: (query) => {
+      if (query.state.data?.completion_state === "in_progress") {
+        return 1500;
+      }
+      return false;
     },
     enabled: hasQuery,
     staleTime: 4 * 60_000,
@@ -621,17 +683,14 @@ export function SearchView() {
         }`}
       >
         <div className="min-w-0 space-y-5">
-          {/* فرم جست‌وجو */}
-          <Card>
-            <CardContent className="p-4 sm:p-6">
-              <SearchForm
-                value={draft}
-                onChange={(patch) => setDraft((d) => ({ ...d, ...patch }))}
-                onSubmit={submit}
-                busy={hasQuery && sessionQuery.isPending}
-              />
-            </CardContent>
-          </Card>
+          {/* فرم جست‌وجو بازطراحی‌شده */}
+          <SearchForm
+            value={draft}
+            onChange={(patch) => setDraft((d) => ({ ...d, ...patch }))}
+            onSubmit={submit}
+            busy={hasQuery && sessionQuery.isPending}
+            showTitle={false}
+          />
 
           {/* چیپ فیلترها (SEARCH-20) */}
           {hasQuery ? <FilterChips state={params} onChange={patchCommitted} /> : null}
@@ -651,13 +710,47 @@ export function SearchView() {
             </div>
           ) : sessionQuery.isError ? (
             /* وضعیت خالی ۳ — خطای موتور جست‌وجو */
-            <ErrorState
-              message={errorMessage(
+            (() => {
+              const errStr = errorMessage(
                 sessionQuery.error,
                 "جست‌وجو با خطا روبه‌رو شد؛ دوباره تلاش کنید.",
-              )}
-              onRetry={() => void sessionQuery.refetch()}
-            />
+              );
+              const isLongTextError =
+                errStr.includes("بیش از حد مجاز") ||
+                errStr.includes("نقل‌قول بلند") ||
+                errStr.includes("ظرفیت");
+              if (isLongTextError) {
+                return (
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 rounded-xl border border-amber-500/40 bg-amber-500/10 p-5 text-sm text-amber-950 dark:text-amber-200">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 font-semibold">
+                        <TriangleAlert className="size-5 text-amber-600 dark:text-amber-400 shrink-0" />
+                        <span>این متن از ظرفیت جست‌وجوی چندلایه بلندتر است. برای ادامه، «جست‌وجوی متن بلند» را انتخاب کنید.</span>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        برای جست‌وجوی احادیث طولانی، بندهای کپی‌شده یا متن‌های بلند از حالت «جست‌وجوی متن بلند» استفاده نمایید.
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      className="gap-1.5 shrink-0"
+                      onClick={() => {
+                        setDraft((d) => ({ ...d, mode: "text", flex: "similar" }));
+                        setQuery({ ...params, mode: "text", flex: "similar" });
+                      }}
+                    >
+                      تنظیم بر روی حالت عبارت (مشابه)
+                    </Button>
+                  </div>
+                );
+              }
+              return (
+                <ErrorState
+                  message={errStr}
+                  onRetry={() => void sessionQuery.refetch()}
+                />
+              );
+            })()
           ) : (
             <div className="space-y-4">
               {/* هشدار پایان مهلت نشست (۴۱۰ در ادامهٔ بررسی) */}
@@ -698,6 +791,7 @@ export function SearchView() {
                     passages={meta?.verified_passages ?? null}
                     hadiths={meta?.verified_hadiths ?? null}
                   />
+                  <LayerCountsLine meta={meta} />
                   {meta && meta.completion_state !== "complete" ? (
                     <p className="text-xs text-muted-foreground">
                       {meta.completion_state === "failed"
@@ -727,7 +821,15 @@ export function SearchView() {
               </div>
 
               {items.length === 0 ? (
-                statusQuery.data?.index_ready === false ? (
+                session?.completion_state === "in_progress" ? (
+                  <div className="flex flex-col items-center justify-center p-12 text-center rounded-xl border border-dashed border-primary/40 bg-primary/5">
+                    <Loader2 className="size-8 animate-spin text-primary mb-3" />
+                    <h3 className="text-base font-semibold">پردازش پرس‌وجوی بلند در صف پس‌زمینه…</h3>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {session.notice || "این پرس‌وجو به دلیل طول زیاد به صورت ناهمگام در حال استخراج و تطبیق است."}
+                    </p>
+                  </div>
+                ) : statusQuery.data?.index_ready === false ? (
                   /* وضعیت خالی ۲ — نمایه آماده نیست */
                   <EmptyState
                     title="نمایهٔ کتابخانه در حال آماده‌سازی است؛ به‌زودی در دسترس خواهد بود"

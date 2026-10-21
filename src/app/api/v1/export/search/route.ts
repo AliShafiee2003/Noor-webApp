@@ -1,5 +1,5 @@
 import * as XLSX from "xlsx";
-import { goFetch, resolveGoUser, unauthorized } from "@/lib/bff-auth";
+import { goFetch, resolveGoSession, unauthorized } from "@/lib/bff-auth";
 import type { SearchResponse, SearchResultItem } from "@/lib/types";
 
 /**
@@ -47,17 +47,13 @@ function matchTypeLabel(value: string): string {
   return MATCH_TYPE_LABELS[value] ?? value;
 }
 
-/** سطر استاندارد خروجی — یکی به‌ازای هر موضع تأییدشده */
+/** سطر استاندارد خروجی — ستون اول: نام کتاب و نشانی، ستون دوم: متن/روایت */
 const EXPORT_HEADER = [
-  "عنوان اثر",
-  "جلد/سند",
-  "شناسهٔ سند",
-  "صفحهٔ چاپی",
-  "سرفصل",
-  "نشانی عمیق",
-  "عبارت جست‌وجو",
+  "نام کتاب و نشانی",
+  "متن",
+  "پیوند مطالعه",
   "نوع تطبیق",
-  "شاهد متن",
+  "عبارت جست‌وجو",
 ] as const;
 
 /* ---------- خطای بالا-دست و اعتبارسنجی ---------- */
@@ -95,17 +91,50 @@ function deepLink(origin: string, r: SearchResultItem): string {
   return url;
 }
 
+/** ترکیب نام کتاب و نشانی دقیق (جلد، صفحه، سرفصل، شماره روایت) */
+function formatBookAndAddress(r: SearchResultItem): string {
+  const title = r.work?.title?.trim() || "نامشخص";
+  const addressParts: string[] = [];
+  if (r.document?.label && r.document.label.trim()) {
+    addressParts.push(r.document.label.trim());
+  }
+  if (r.page?.label && r.page.label.trim() && r.page.label !== "—") {
+    const pg = r.page.label.trim();
+    addressParts.push(pg.startsWith("ص") || pg.startsWith("صفحه") ? pg : `ص ${pg}`);
+  }
+  if (r.revayat_index && r.revayat_index.trim()) {
+    addressParts.push(`روایت ${r.revayat_index.trim()}`);
+  }
+  if (r.section?.title && r.section.title.trim() && r.section.title.trim() !== title) {
+    addressParts.push(`سرفصل: ${r.section.title.trim()}`);
+  }
+
+  if (addressParts.length > 0) {
+    return `${title} - ${addressParts.join("، ")}`;
+  }
+  return title;
+}
+
+/** استخراج متن: در صورت حدیث و روایت، کل روایت؛ در غیر این صورت بخشی از متن */
+function formatText(r: SearchResultItem): string {
+  const isHadith = Boolean(
+    r.local_hadith_uid ||
+    (r.roles && r.roles.includes("hadith")) ||
+    (r.revayat_index && r.revayat_index.trim())
+  );
+  if (isHadith && r.full_text && r.full_text.trim()) {
+    return r.full_text.trim();
+  }
+  return r.snippet?.trim() || r.full_text?.trim() || "";
+}
+
 function exportRow(r: SearchResultItem, query: string, origin: string): string[] {
   return [
-    r.work?.title ?? "",
-    r.document?.label ?? "",
-    r.document?.uid ?? "",
-    r.page?.label ?? "",
-    r.section?.title ?? "",
+    formatBookAndAddress(r),
+    formatText(r),
     deepLink(origin, r),
-    query,
     matchTypeLabel(String(r.match_type ?? "")),
-    r.snippet ?? "",
+    query,
   ];
 }
 
@@ -163,15 +192,11 @@ function guideRows(
   rows.push(
     [],
     ["توصیف ستون‌های برگهٔ «نتایج»"],
-    ["عنوان اثر", "عنوان اثری که موضع تطبیق در آن یافت شده است"],
-    ["جلد/سند", "برچسب جلد یا سند حاوی موضع"],
-    ["شناسهٔ سند", "شناسهٔ یکتای سند برای ارجاع دقیق"],
-    ["صفحهٔ چاپی", "برچسب صفحهٔ چاپی متناظر با موضع"],
-    ["سرفصل", "عنوان سرفصل در صورت وجود"],
-    ["نشانی عمیق", "پیوند گشودنی موضع در کتاب‌خوان میزکار نور"],
-    ["عبارت جست‌وجو", "عبارتی که جست‌وجو با آن انجام شده است"],
+    ["نام کتاب و نشانی", "عنوان کتاب همراه با جلد، صفحه چاپی، سرفصل یا شماره روایت"],
+    ["متن", "بخشی از متن موضع تطبیق (در صورت حدیث و روایت: متن کامل روایت)"],
+    ["پیوند مطالعه", "پیوند مستقیم و گشودنی موضع در کتاب‌خوان میزکار نور"],
     ["نوع تطبیق", "دقیق / نرمال‌شده / زبان‌شناختی / نزدیک"],
-    ["شاهد متن", "گزارهٔ متن پیرامون موضع تطبیق"],
+    ["عبارت جست‌وجو", "عبارتی که جست‌وجو با آن انجام شده است"],
   );
   return rows;
 }
@@ -201,8 +226,11 @@ function buildXlsx(
   const results = XLSX.utils.aoa_to_sheet([[...EXPORT_HEADER], ...rows]);
   results["!views"] = [{ RTL: true }];
   results["!cols"] = [
-    { wch: 26 }, { wch: 18 }, { wch: 16 }, { wch: 12 }, { wch: 22 },
-    { wch: 46 }, { wch: 22 }, { wch: 12 }, { wch: 60 },
+    { wch: 38 }, // نام کتاب و نشانی
+    { wch: 80 }, // متن
+    { wch: 45 }, // پیوند مطالعه
+    { wch: 14 }, // نوع تطبیق
+    { wch: 20 }, // عبارت جست‌وجو
   ];
   XLSX.utils.book_append_sheet(wb, results, "نتایج");
 
@@ -297,8 +325,14 @@ function fileHeaders(
 export async function POST(req: Request): Promise<Response> {
   /* هویت از نشست کاربر — بدون نشست معتبر، همه‌جا 401 */
   const cookie = req.headers.get("cookie");
-  const user = await resolveGoUser(cookie);
-  if (!user) return unauthorized();
+  const session = await resolveGoSession(cookie);
+  if (!session) return unauthorized();
+
+  const csrf = req.headers.get("x-noor-csrf") || session.csrf;
+  const extraHeaders: Record<string, string> = {};
+  if (csrf) {
+    extraHeaders["x-noor-csrf"] = csrf;
+  }
 
   let body: ExportRequestBody;
   try {
@@ -335,6 +369,7 @@ export async function POST(req: Request): Promise<Response> {
     method: "POST",
     cookie,
     body: { ...request, page_size: PAGE_SIZE },
+    extraHeaders,
   });
   if (!firstResp.ok) return upstreamError(firstResp);
   const first = (await firstResp.json()) as SearchResponse;
@@ -362,6 +397,7 @@ export async function POST(req: Request): Promise<Response> {
       method: "POST",
       cookie,
       body: { cursor: nextCursor },
+      extraHeaders,
     });
     if (!contResp.ok) return upstreamError(contResp);
     const cont = (await contResp.json()) as SearchResponse;

@@ -77,7 +77,7 @@ function SnippetText({ result }: { result: SearchResultItem }) {
   return (
     <>
       {cps.slice(0, h.start).join("")}
-      <mark className="rounded-sm bg-match px-0.5 text-foreground">
+      <mark className="rounded-sm bg-match px-0.5 text-match-foreground">
         {cps.slice(h.start, h.end).join("")}
       </mark>
       {cps.slice(h.end).join("")}
@@ -205,7 +205,7 @@ function ComparePane({ sideLabel }: { sideLabel: string }) {
 
   return (
     <section
-      aria-label={`${sideLabel} مقایسه`}
+      aria-label={`مقایسهٔ ${sideLabel}`}
       className="flex min-w-0 flex-col rounded-xl border border-border bg-surface"
     >
       {/* نوار بالای ستون */}
@@ -337,10 +337,9 @@ function ComparePane({ sideLabel }: { sideLabel: string }) {
           ) : (
             <div className="space-y-2">
               <p className="text-xs text-muted-foreground" aria-live="polite">
-                تطبیق‌های تأییدشده تا این لحظه:{" "}
                 {searchMutation.data.verified_occurrences !== null
-                  ? faNum(searchMutation.data.verified_occurrences)
-                  : "در حال شمارش"}
+                  ? `${faNum(searchMutation.data.verified_occurrences)} نتیجه یافت شد`
+                  : "در حال شمارش…"}
               </p>
               <ul className="max-h-56 space-y-2 overflow-y-auto pe-1">
                 {searchMutation.data.results.map((r, ri) => (
@@ -370,11 +369,11 @@ function ComparePane({ sideLabel }: { sideLabel: string }) {
         {!workUid ? (
           <EmptyState
             title="برای آغاز مقایسه، یک اثر انتخاب کنید."
-            hint="هر ستون به‌طور مستقل کار می‌کند؛ می‌توانید دو نقطهٔ از یک اثر یا دو اثر مختلف را ببینید."
+            hint="انتخاب هر موضع مستقل است. نشانی و ارجاع پس از انتخاب متن در دسترس قرار می‌گیرند."
           />
         ) : !docUid ? (
           <EmptyState
-            title="جلد یا سندی انتخاب نشده است."
+            title="هنوز موضعی انتخاب نشده است."
             hint="از فهرست «انتخاب جلد / سند» یکی را برگزینید."
           />
         ) : pagesQuery.isPending ? (
@@ -487,7 +486,7 @@ export function CompareView() {
       <header className="mb-6">
         <h1 className="text-xl font-bold">مقایسهٔ متن‌ها</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          دو نقطه از منابع را کنار هم ببینید؛ هر ستون پرش و جست‌وجوی مستقل خود را دارد.
+          دو موضع از یک اثر یا دو اثر متفاوت را کنار هم بررسی کنید.
         </p>
       </header>
 
@@ -499,25 +498,28 @@ export function CompareView() {
       >
         <TabsList className="h-11 w-full">
           <TabsTrigger value="a" className="min-h-9 flex-1">
-            ستون اول
+            موضع اول
           </TabsTrigger>
           <TabsTrigger value="b" className="min-h-9 flex-1">
-            ستون دوم
+            موضع دوم
           </TabsTrigger>
         </TabsList>
       </Tabs>
 
       <div className="grid gap-4 xl:grid-cols-2">
         <div className={activePane === "a" ? "min-w-0" : "hidden xl:block"}>
-          <ComparePane sideLabel="ستون اول" />
+          <ComparePane sideLabel="موضع اول" />
         </div>
         <div className={activePane === "b" ? "min-w-0" : "hidden xl:block"}>
-          <ComparePane sideLabel="ستون دوم" />
+          <ComparePane sideLabel="موضع دوم" />
         </div>
       </div>
 
+      <p className="mt-2 text-center text-xs text-muted-foreground xl:hidden">
+        هر دو موضع را در یک صفحه ببینید؛ متن‌ها به ترتیب زیر هم نمایش داده می‌شوند.
+      </p>
       <p className="mt-6 text-center text-xs text-muted-foreground">
-        برای پیوند دادن دو موضع در یادداشت‌های خود، از دکمهٔ «کپی نشانی» هر ستون استفاده کنید.
+        برای پیوند دادن دو موضع در یادداشت‌های خود، از دکمهٔ «کپی نشانی» هر موضع استفاده کنید.
       </p>
     </div>
   );

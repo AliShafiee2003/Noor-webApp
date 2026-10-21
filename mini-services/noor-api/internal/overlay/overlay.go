@@ -124,34 +124,8 @@ func (s *Service) SetStatus(uid, status, releaseUID string) error {
 	return err
 }
 
-// PublishRelease چرخهٔ انتشار نسل (§۴۹): نسل جدید immutable → pointer اتمیک + outbox + audit.
-func (s *Service) PublishRelease(actor, notes string, manifest json.RawMessage) (releaseUID string, err error) {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return "", err
-	}
-	defer tx.Rollback()
-	releaseUID = uidOf("rel")
-	if _, err := tx.Exec(`INSERT INTO content_releases(uid, created_by, status, manifest, notes) VALUES(?,?,?,?,?)`,
-		releaseUID, actor, "published", string(manifest), notes); err != nil {
-		return "", err
-	}
-	if _, err := tx.Exec(`INSERT INTO kv(k,v) VALUES('active_release',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v`, releaseUID); err != nil {
-		return "", err
-	}
-	if _, err := tx.Exec(`INSERT INTO outbox(topic, payload) VALUES('release_published', ?)`, releaseUID); err != nil {
-		return "", err
-	}
-	// overlayهای در وضعیت ready → published و اتصال به نسل
-	if _, err := tx.Exec(`UPDATE overlay_revisions SET status='published', release_uid=? WHERE status IN ('ready','validated')`, releaseUID); err != nil {
-		return "", err
-	}
-	if err := tx.Commit(); err != nil {
-		return "", err
-	}
-	s.db.Audit(actor, "release_publish", "release", releaseUID, notes, "")
-	return releaseUID, nil
-}
+// (PublishRelease حذف شد: overlayها را بدون اعمال روی متن «published» علامت می‌زد؛
+// انتشار نسل فقط از مسیر worker → /internal/releases/publish انجام می‌شود.)
 
 // Rollback بازگشت pointer به نسل سالم حفظ‌شده (فیش‌های کاربران تغییر نمی‌کنند).
 func (s *Service) Rollback(actor, toReleaseUID string) error {
@@ -177,6 +151,49 @@ func (s *Service) Rollback(actor, toReleaseUID string) error {
 	return nil
 }
 
+// scanRevisions ردیف‌های overlay_revisions را به Revision نگاشت می‌کند (مشترک).
+func scanRevisions(rows *sql.Rows) ([]Revision, error) {
+	defer rows.Close()
+	var out []Revision
+	for rows.Next() {
+		var r Revision
+		var target, release sql.NullString
+		if err := rows.Scan(&r.UID, &r.DocumentUID, &r.Owner, &r.ChangeType, &target, &r.BaseHash, &r.Reason, &r.OldValue, &r.NewValue, &r.Status, &release, &r.CreatedAt); err != nil {
+			continue
+		}
+		r.Target = orNullJSON(json.RawMessage(target.String))
+		r.ReleaseUID = release.String
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// ListForDocument اصلاحات یک سند با وضعیت (و در صورت نیاز نسل مشخص).
+func (s *Service) ListForDocument(docUID, status, releaseUID string) ([]Revision, error) {
+	q := `SELECT uid, document_uid, owner_user, change_type, target_json, base_hash, reason, old_value, new_value, status, release_uid, created_at
+		FROM overlay_revisions WHERE document_uid=? AND status=?`
+	args := []any{docUID, status}
+	if releaseUID != "" {
+		q += ` AND release_uid=?`
+		args = append(args, releaseUID)
+	}
+	rows, err := s.db.Query(q+` ORDER BY created_at ASC`, args...)
+	if err != nil {
+		return nil, err
+	}
+	return scanRevisions(rows)
+}
+
+// ListReady همهٔ اصلاحاتِ آمادهٔ انتشار (برای ساخت نسل بعد).
+func (s *Service) ListReady() ([]Revision, error) {
+	rows, err := s.db.Query(`SELECT uid, document_uid, owner_user, change_type, target_json, base_hash, reason, old_value, new_value, status, release_uid, created_at
+		FROM overlay_revisions WHERE status='ready' ORDER BY created_at ASC`)
+	if err != nil {
+		return nil, err
+	}
+	return scanRevisions(rows)
+}
+
 // Releases فهرست نسل‌ها.
 func (s *Service) Releases() ([]map[string]any, error) {
 	rows, err := s.db.Query(`SELECT uid, created_by, status, notes, created_at FROM content_releases ORDER BY created_at DESC LIMIT 50`)
@@ -197,10 +214,10 @@ func (s *Service) Releases() ([]map[string]any, error) {
 
 // orNullJSON RawMessage خالی → «null» (JSON معتبر) تا Marshal پاسخ هرگز خالی نشود.
 func orNullJSON(raw json.RawMessage) json.RawMessage {
-        if len(raw) == 0 || string(raw) == "" {
-                return json.RawMessage("null")
-        }
-        return raw
+	if len(raw) == 0 || string(raw) == "" {
+		return json.RawMessage("null")
+	}
+	return raw
 }
 
 // TextHashFor hash متن بلوک هدف (برای validate) — از محتوا محاسبه می‌شود.

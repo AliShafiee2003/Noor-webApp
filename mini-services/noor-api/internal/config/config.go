@@ -20,7 +20,7 @@ type Config struct {
 	SessionMaxAge  time.Duration
 	SessionIdle    time.Duration
 	IndexVersion   string
-	Engine         string // local | opensearch
+	Engine         string // local | fts5 | opensearch
 	OpenSearchURL  string
 	OpenSearchUser string
 	OpenSearchPass string
@@ -35,6 +35,13 @@ type Config struct {
 	// محدودساز تلاش ورود (SEC-09) — پیش‌فرض تولید ۵ در دقیقه؛ فقط محیط توسعه/E2E بیشتر می‌کند
 	LoginRateMax    int
 	LoginRateWindow time.Duration
+	// TrustProxy اگر true باشد X-Real-IP/X-Forwarded-For برای clientIP پذیرفته می‌شود؛
+	// در تولید فقط وقتی فعال شود که API دقیقاً پشت یک reverse-proxy معتمد است.
+	TrustProxy bool
+	// سقف نرخ هر کاربر (در دقیقه): جست‌وجو (پرهزینه‌ترین مسیر CPU) و نوشتن‌های UGC.
+	// صفر = خاموش. پیش‌فرض‌ها برای کار پژوهشی عادی گشاده‌اند و فقط سیل را می‌بندند.
+	SearchRatePerMin int
+	WriteRatePerMin  int
 }
 
 // FromEnv خواندن با پیش‌فرض‌های سندباکس.
@@ -50,7 +57,6 @@ func FromEnv() *Config {
 		SessionMaxAge:      durEnv("NOOR_SESSION_MAX_AGE", 7*24*time.Hour),
 		SessionIdle:        durEnv("NOOR_SESSION_IDLE", 24*time.Hour),
 		IndexVersion:       env("NOOR_INDEX_VERSION", "idx-1"),
-		Engine:             env("NOOR_ENGINE", "local"),
 		OpenSearchURL:      env("NOOR_OPENSEARCH_URL", "http://opensearch:9200"),
 		OpenSearchUser:     env("NOOR_OPENSEARCH_USER", ""),
 		OpenSearchPass:     env("NOOR_OPENSEARCH_PASSWORD", ""),
@@ -60,6 +66,11 @@ func FromEnv() *Config {
 		SearchSessionTTL:   durEnv("NOOR_SEARCH_SESSION_TTL", 30*time.Minute),
 		LoginRateMax:       intEnv("NOOR_LOGIN_RATE_MAX", 5),
 		LoginRateWindow:    durEnv("NOOR_LOGIN_RATE_WINDOW", time.Minute),
+		TrustProxy:         env("NOOR_TRUSTED_PROXY", "false") == "true",
+		SearchRatePerMin:   intEnv("NOOR_SEARCH_RATE_PER_MIN", 120),
+		WriteRatePerMin:    intEnv("NOOR_WRITE_RATE_PER_MIN", 300),
+		// پیش‌فرض موتور fts5 است (الف-۲): موتور قدیمی local فقط با انتخاب صریح.
+		Engine: env("NOOR_ENGINE", "fts5"),
 	}
 	return c
 }

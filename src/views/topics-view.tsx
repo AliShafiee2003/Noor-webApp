@@ -10,7 +10,8 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { BookOpenText, ChevronLeft, Compass, Search } from "lucide-react";
+import { BookOpenText, Search } from "lucide-react";
+import { TopicOption } from "@/components/design-system/topic-option";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -73,34 +74,12 @@ function TopicRow({
 }) {
   return (
     <li style={{ marginInlineStart: depth > 0 ? `${depth * 16}px` : undefined }}>
-      <button
-        type="button"
+      <TopicOption
+        title={topic.title}
+        selected={selected}
         onClick={() => onSelect(topic)}
-        aria-current={selected ? "true" : undefined}
-        className={`flex min-h-11 w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-start transition-colors focus-visible:outline-2 focus-visible:outline-ring ${
-          selected
-            ? "bg-primary/10 text-primary"
-            : "hover:bg-accent focus-visible:bg-accent"
-        }`}
-      >
-        <span className="flex min-w-0 items-center gap-2">
-          <Compass
-            className={`size-4 shrink-0 ${selected ? "text-primary" : "text-muted-foreground"}`}
-            aria-hidden="true"
-          />
-          <span className="truncate text-sm font-medium">{topic.title}</span>
-        </span>
-        <span className="flex shrink-0 items-center gap-1">
-          {typeof topic.count === "number" ? (
-            <Badge variant="secondary" className="font-normal">
-              {faNum(topic.count)} اثر
-            </Badge>
-          ) : (
-            <span className="text-xs text-muted-foreground">تعداد: ثبت نشده</span>
-          )}
-          <ChevronLeft className="size-4 text-muted-foreground" aria-hidden="true" />
-        </span>
-      </button>
+        metadata={typeof topic.count === "number" ? <Badge variant="secondary" className="font-normal">{faNum(topic.count)} اثر</Badge> : undefined}
+      />
       {topic.children?.length ? (
         <ul className="mt-1 space-y-1">
           {topic.children.map((child) => (

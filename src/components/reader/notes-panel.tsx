@@ -287,7 +287,12 @@ export function NotesPanel({
       setDeletingHl(null);
       refreshAnnotations();
     } catch (err) {
-      toast({ title: errorMessage(err, "حذف هایلایت ممکن نشد."), variant: "destructive" });
+      if (err instanceof ApiError && err.status === 404) {
+        setDeletingHl(null);
+        refreshAnnotations();
+      } else {
+        toast({ title: errorMessage(err, "حذف هایلایت ممکن نشد."), variant: "destructive" });
+      }
     } finally {
       setHlPendingUid(null);
     }

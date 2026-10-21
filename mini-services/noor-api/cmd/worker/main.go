@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -18,8 +19,13 @@ import (
 	"noor/internal/config"
 	"noor/internal/index"
 	"noor/internal/norm"
+	"noor/internal/overlay"
 	"noor/internal/search"
 )
+
+// apiClient کلاینت با تایم‌اوت — apiClient بدون تایم‌اوت بود و اگر API
+// هنگ می‌کرد worker برای همیشه قفل می‌شد.
+var apiClient = &http.Client{Timeout: 30 * time.Second}
 
 func main() {
 	cfg := config.FromEnv()
@@ -34,13 +40,37 @@ func main() {
 			continue
 		}
 		log.Println("job claimed:", job["uid"])
-		switch fmt.Sprint(job["kind"]) {
-		case "index_rebuild":
-			runIndexRebuild(cfg, api, job)
-		default:
-			fail(api, fmt.Sprint(job["uid"]), "نوع کار شناخته نشده است")
+		runJobSafe(cfg, api, job)
+	}
+}
+
+// runJobSafe اجرای یک کار با recover: panic یک کار (دادهٔ خراب) worker را نمی‌اندازد و
+// کار صادقانه failed می‌شود تا lease آن بی‌دلیل منتظر انقضا نماند.
+func runJobSafe(cfg *config.Config, api string, job map[string]any) {
+	uid := fmt.Sprint(job["uid"])
+	defer func() {
+		if p := recover(); p != nil {
+			log.Printf("worker: panic in job %s: %v", uid, p)
+			fail(api, uid, fmt.Sprintf("خطای داخلی worker: %v", p))
+		}
+	}()
+	switch fmt.Sprint(job["kind"]) {
+	case "index_rebuild":
+		runIndexRebuild(cfg, api, job)
+	default:
+		fail(api, uid, "نوع کار شناخته نشده است")
+	}
+}
+
+// ftsShardCount شمار شاردهای FTS5 (NOOR_FTS_SHARDS، پیش‌فرض ۴).
+func ftsShardCount() int {
+	n := 4
+	if v := os.Getenv("NOOR_FTS_SHARDS"); v != "" {
+		if _, err := fmt.Sscan(v, &n); err != nil || n < 1 || n > 64 {
+			n = 4
 		}
 	}
+	return n
 }
 
 // envOr خواندن متغیر محیطی با مقدار پیش‌فرض (هم‌سبک config.env).
@@ -54,7 +84,7 @@ func envOr(key, def string) string {
 func claim(api string) map[string]any {
 	req, _ := http.NewRequest("POST", api+"/api/v1/internal/jobs/claim", nil)
 	req.Header.Set("X-Noor-Service", os.Getenv("NOOR_SERVICE_TOKEN"))
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := apiClient.Do(req)
 	if err != nil {
 		return nil
 	}
@@ -76,7 +106,7 @@ func progress(api, uid string, p int, note string) string {
 	b, _ := json.Marshal(map[string]any{"progress": p, "note": note})
 	req, _ := http.NewRequest("POST", api+"/api/v1/internal/jobs/"+uid+"/progress", bytes.NewReader(b))
 	req.Header.Set("X-Noor-Service", os.Getenv("NOOR_SERVICE_TOKEN"))
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := apiClient.Do(req)
 	if err == nil {
 		var out struct {
 			Status string `json:"status"`
@@ -92,7 +122,7 @@ func complete(api, uid string, result map[string]any) {
 	b, _ := json.Marshal(map[string]any{"result": result})
 	req, _ := http.NewRequest("POST", api+"/api/v1/internal/jobs/"+uid+"/complete", bytes.NewReader(b))
 	req.Header.Set("X-Noor-Service", os.Getenv("NOOR_SERVICE_TOKEN"))
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := apiClient.Do(req)
 	if err == nil {
 		resp.Body.Close()
 	}
@@ -102,7 +132,7 @@ func fail(api, uid, msg string) {
 	b, _ := json.Marshal(map[string]any{"error": msg})
 	req, _ := http.NewRequest("POST", api+"/api/v1/internal/jobs/"+uid+"/fail", bytes.NewReader(b))
 	req.Header.Set("X-Noor-Service", os.Getenv("NOOR_SERVICE_TOKEN"))
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := apiClient.Do(req)
 	if err == nil {
 		resp.Body.Close()
 	}
@@ -138,8 +168,10 @@ func runIndexRebuildBody(cfg *config.Config, api, uid string, payload struct {
 		failJob("کاتالوگ خوانده نشد: " + err.Error())
 		return err
 	}
+	releaseUID := "rel-" + fmt.Sprint(time.Now().UnixNano())
 	// نسل جدید در فایل موقت ساخته می‌شود؛ پس از موفقیت جابه‌جا (نسل immutable)
-	tmp := filepath.Join(cfg.DataDir, "index.building.sqlite")
+	// نام یکتا: با دو worker موازی (یا enqueue هم‌زمان) فایل ساختنِ همدیگر پاک نمی‌شود
+	tmp := filepath.Join(cfg.DataDir, "index.building-"+releaseUID+".sqlite")
 	_ = os.Remove(tmp)
 	idxDB, err := index.OpenWrite(tmp)
 	if err != nil {
@@ -173,6 +205,54 @@ func runIndexRebuildBody(cfg *config.Config, api, uid string, payload struct {
 	skipped := 0
 	parseErrDocs := 0
 	cancelled := false
+	// اصلاحات آمادهٔ اعمال: همهٔ readyها + اصلاح ارجاع‌شدهٔ همین کار
+	overlaysByDoc, _ := fetchActiveOverlays(api, payload.OverlayUID)
+	overlaysApplied := 0
+	// ویژگی‌های واقعی هر اثر از مدل اسناد (منبع حقیقت پوشش در /works)
+	workFeats := map[string]map[string]bool{}
+	overlayAppliedUIDs := map[string]bool{}
+	overlayRequested := map[string]bool{}
+	for _, reps := range overlaysByDoc {
+		for _, rep := range reps {
+			overlayRequested[rep.UID] = true
+		}
+	}
+
+	// موتور FTS5 (§۲۴): نسل FTS در همان حلقه، با همان releaseUID و همان ترتیب کاتالوگ ساخته
+	// می‌شود تا دو نمایه هرگز از دو برداشت متفاوت کاتالوگ نباشند. ساخت در fts/<rel>.building،
+	// commit (بررسی checksum) پیش از جابه‌سازی index.sqlite و انتشار ACTIVE پس از آن.
+	var ftsW *index.FTSIndexWriter
+	abortFTS := func() {
+		if ftsW != nil {
+			ftsW.Close()
+			ftsW = nil
+		}
+		if cfg.Engine == "fts5" {
+			index.AbortFTSBuild(cfg.DataDir, releaseUID)
+		}
+	}
+	if cfg.Engine == "fts5" {
+		index.AbortFTSBuild(cfg.DataDir, releaseUID)
+		ftsW, err = index.NewFTSIndexWriter(index.FTSShardOptions{
+			ReleaseUID: releaseUID,
+			OutputDir:  index.FTSBuildingDir(cfg.DataDir, releaseUID),
+			NumShards:  ftsShardCount(),
+		})
+		if err != nil {
+			idxDB.Close()
+			_ = os.Remove(tmp)
+			failJob("نمایهٔ FTS5 باز نشد: " + err.Error())
+			return err
+		}
+	}
+	ftsPublished := false
+	defer func() {
+		// مسیرهای خطا/لغو: نسل نیم‌ساخت یا commit‌شده‌ولی‌منتشرنشدهٔ FTS حذف می‌شود
+		if cfg.Engine == "fts5" && !ftsPublished {
+			abortFTS()
+			_ = os.RemoveAll(index.FTSReleaseDir(cfg.DataDir, releaseUID))
+		}
+	}()
 	next := func() (*index.DocInput, error) {
 		for {
 			if pos >= len(refs) {
@@ -190,20 +270,66 @@ func runIndexRebuildBody(cfg *config.Config, api, uid string, payload struct {
 			m, err := cat.ModelUncached(r.docUID)
 			if err != nil {
 				skipped++
+				if ftsW != nil {
+					ftsW.RecordFailure(r.docUID, err)
+				}
 				log.Println("skip doc (reported):", r.docUID, err)
 				continue // سند ردشده صادقانه شمرده می‌شود؛ جریان ادامه می‌یابد
+			}
+			// اعمال اصلاحات محتوایی پیش از نمایه‌سازی — متنِ نمایه‌شده = متنِ نمایشی
+			if reps, ok := overlaysByDoc[r.docUID]; ok {
+				for _, rep := range reps {
+					if ch := overlay.ApplyToModel(m, []overlay.Replacement{rep}); ch > 0 {
+						overlaysApplied += ch
+						overlayAppliedUIDs[rep.UID] = true
+					}
+				}
+			}
+			// جمع‌ویژگی‌های واقعی اثر (DATA-08) — از همان مدلی که نمایه می‌شود
+			feats := workFeats[r.workUID]
+			if feats == nil {
+				feats = map[string]bool{}
+				workFeats[r.workUID] = feats
+			}
+			if len(m.Blocks) > 0 {
+				feats["searchable"] = true
+			}
+			if len(m.Hadiths) > 0 {
+				feats["hadith"] = true
+			}
+			if len(m.Citations) > 0 {
+				feats["quran"] = true
+			}
+			if len(m.Footnotes) > 0 {
+				feats["footnotes"] = true
+			}
+			if len(m.Pages) > 0 {
+				feats["pages"] = true
+			}
+			if len(m.Sections) > 0 {
+				feats["toc"] = true
+			}
+			for bi := range m.Blocks {
+				if len(m.Blocks[bi].Links) > 0 {
+					feats["links"] = true
+					break
+				}
 			}
 			// DB-03: سند ناقص (خطای parse/decode) به‌جای سکوت، شمرده و گزارش می‌شود
 			if len(m.ParseErrors) > 0 {
 				parseErrDocs++
 				log.Printf("doc %s ناقص نمایه شد: %d خطای parse/decode", r.docUID, len(m.ParseErrors))
 			}
+			if ftsW != nil {
+				if _, err := ftsW.WriteDocument(releaseUID, "col-fixture", r.workUID, r.docUID, r.language, m); err != nil {
+					return nil, fmt.Errorf("نمایهٔ FTS5 سند %s: %w", r.docUID, err)
+				}
+			}
 			return &index.DocInput{
 				CollectionUID: "col-fixture", WorkUID: r.workUID, DocumentUID: r.docUID, Language: r.language, Model: m,
 			}, nil
 		}
 	}
-	releaseUID := "rel-" + fmt.Sprint(time.Now().Unix())
 	n, err := w.RebuildStream(releaseUID, titles, next)
 	if err != nil {
 		failJob("ساخت نمایه ناموفق: " + err.Error())
@@ -229,6 +355,26 @@ func runIndexRebuildBody(cfg *config.Config, api, uid string, payload struct {
 		log.Println("index rebuild cancelled by admin; nothing published:", uid)
 		return nil
 	}
+	if ftsW != nil {
+		if progress(api, uid, 40, "نهایی‌سازی نمایهٔ FTS5 (optimize، integrity-check، checksum)") == "cancelled" {
+			_ = os.Remove(tmp)
+			log.Println("index rebuild cancelled by admin; nothing published:", uid)
+			return nil
+		}
+		if err := ftsW.Finalize(titles); err != nil {
+			_ = os.Remove(tmp)
+			failJob("نهایی‌سازی نمایهٔ FTS5 ناموفق بود: " + err.Error())
+			return err
+		}
+		ftsW.Close()
+		ftsW = nil
+		if err := index.CommitFTSBuild(cfg.DataDir, releaseUID); err != nil {
+			index.AbortFTSBuild(cfg.DataDir, releaseUID)
+			_ = os.Remove(tmp)
+			failJob("بررسی نسل FTS5 ناموفق بود: " + err.Error())
+			return err
+		}
+	}
 	if cfg.Engine == "opensearch" {
 		if err := bulkIndexOpenSearch(cfg, tmp, releaseUID, titles, func(p int, note string) { progress(api, uid, p, note) }); err != nil {
 			failJob("نمایه‌سازی OpenSearch ناموفق بود: " + err.Error())
@@ -243,29 +389,86 @@ func runIndexRebuildBody(cfg *config.Config, api, uid string, payload struct {
 		return nil
 	}
 	active, _ := indexFile(cfg.DataDir)
+	prevPath := filepath.Join(cfg.DataDir, "index.previous.sqlite")
+	prevOSRelease := releaseOfIndex(active) // برای پاک‌سازی OpenSearch: نسل قبلی حفظ می‌شود
+	prevFTS, _ := index.ActiveFTSRelease(cfg.DataDir)
 	// جابه‌سازی اتمیک
+	hadActive := false
 	if active != "" {
-		_ = os.Rename(active, filepath.Join(cfg.DataDir, "index.previous.sqlite"))
+		if err := os.Rename(active, prevPath); err != nil {
+			_ = os.Remove(tmp)
+			failJob("جابه‌سازی نمایهٔ قبلی ناموفق: " + err.Error())
+			return err
+		}
+		hadActive = true
 	}
 	if err := os.Rename(tmp, active2(cfg.DataDir)); err != nil {
+		if hadActive {
+			_ = os.Rename(prevPath, active2(cfg.DataDir))
+		}
 		failJob("جابه‌سازی نمایه ناموفق: " + err.Error())
 		return err
 	}
+	index.SyncDir(cfg.DataDir)
+	// restore بازگردانی کامل به نسل پیشین اگر هر مرحلهٔ انتشارِ بعدی شکست بخورد —
+	// بدون آن index.sqlite/fts/ACTIVE روی نسل جدید و pointer app.sqlite روی نسل قدیم
+	// می‌ماند (split-brain).
+	restore := func() {
+		if hadActive {
+			if err := os.Rename(prevPath, active2(cfg.DataDir)); err != nil {
+				log.Println("rollback index.sqlite failed:", err)
+			}
+		}
+		if ftsPublished {
+			if err := index.RevertFTSPublish(cfg.DataDir, releaseUID, prevFTS); err != nil {
+				log.Println("rollback fts ACTIVE failed:", err)
+			}
+			ftsPublished = false // defer پوشهٔ نسل شکست‌خورده را پاک می‌کند
+		}
+		index.SyncDir(cfg.DataDir)
+	}
+	// انتشار نسل FTS5 هم‌زمان با index.sqlite: fts/ACTIVE به‌صورت اتمیک؛ API در ≤۲ ثانیه
+	// نسل تازه را باز می‌کند و نشست‌های قدیمی روی نسل خودشان می‌مانند.
+	if cfg.Engine == "fts5" {
+		if err := index.PublishFTSRelease(cfg.DataDir, releaseUID, 2); err != nil {
+			restore()
+			failJob("انتشار نسل FTS5 ناموفق بود: " + err.Error())
+			return err
+		}
+		ftsPublished = true
+	}
 	// انتشار نسل: pointer اتمیک در app.sqlite از طریق API داخلی
-	b, _ := json.Marshal(map[string]any{"release_uid": releaseUID, "manifest": map[string]any{"passages": n, "docs": len(refs) - skipped, "docs_skipped": skipped, "docs_with_parse_errors": parseErrDocs}})
+	b, _ := json.Marshal(map[string]any{"release_uid": releaseUID, "manifest": map[string]any{"passages": n, "docs": len(refs) - skipped, "docs_skipped": skipped, "docs_with_parse_errors": parseErrDocs, "overlay_blocks_changed": overlaysApplied}})
 	req, _ := http.NewRequest("POST", api+"/api/v1/internal/releases/publish", bytes.NewReader(b))
 	req.Header.Set("X-Noor-Service", os.Getenv("NOOR_SERVICE_TOKEN"))
-	if resp, err := http.DefaultClient.Do(req); err != nil {
+	resp, err := apiClient.Do(req)
+	if err == nil {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
+		resp.Body.Close()
+		if resp.StatusCode >= 300 {
+			err = fmt.Errorf("HTTP %d", resp.StatusCode)
+		}
+	}
+	if err != nil {
+		// پاسخ غیر-2xx هم شکست است (قبلاً فقط خطای شبکه دیده می‌شد)
+		restore()
 		failJob("انتشار نسل ممکن نشد: " + err.Error())
 		return err
-	} else {
-		resp.Body.Close()
 	}
-	// اصلاح محتوایی: پیوند نسل و وضعیت ready (دور ۱۴)
-	if payload.OverlayUID != "" {
-		markOverlayStatus(api, payload.OverlayUID, "published", releaseUID)
+	if cfg.Engine == "opensearch" {
+		pruneOpenSearchReleases(cfg, releaseUID, prevOSRelease)
 	}
-	complete(api, uid, map[string]any{"passages": n, "release_uid": releaseUID, "docs": len(refs) - skipped, "docs_skipped": skipped, "docs_with_parse_errors": parseErrDocs, "opensearch_indexed": cfg.Engine == "opensearch"})
+	postFeatures(api, workFeats)
+	// اصلاح محتوایی: همهٔ اصلاحات واقعاً اعمال‌شده منتشر می‌شوند؛ اصلاح درخواستی
+	// که در متن پیدا نشد صادقانه failed می‌شود (نه publishedِ جعلی).
+	for uid := range overlayAppliedUIDs {
+		markOverlayStatus(api, uid, "published", releaseUID)
+	}
+	if payload.OverlayUID != "" && !overlayAppliedUIDs[payload.OverlayUID] && overlayRequested[payload.OverlayUID] {
+		markOverlayStatus(api, payload.OverlayUID, "failed", "")
+		log.Println("overlay old_value not found in document:", payload.OverlayUID)
+	}
+	complete(api, uid, map[string]any{"passages": n, "release_uid": releaseUID, "docs": len(refs) - skipped, "docs_skipped": skipped, "docs_with_parse_errors": parseErrDocs, "opensearch_indexed": cfg.Engine == "opensearch", "overlay_blocks_changed": overlaysApplied})
 	log.Println("index rebuilt & published:", n, "passages, release", releaseUID)
 	return nil
 }
@@ -275,7 +478,7 @@ func markOverlayStatus(api, overlayUID, status, releaseUID string) {
 	b, _ := json.Marshal(map[string]any{"status": status, "release_uid": releaseUID})
 	req, _ := http.NewRequest("POST", api+"/api/v1/internal/overlays/"+overlayUID+"/status", bytes.NewReader(b))
 	req.Header.Set("X-Noor-Service", os.Getenv("NOOR_SERVICE_TOKEN"))
-	if resp, err := http.DefaultClient.Do(req); err == nil {
+	if resp, err := apiClient.Do(req); err == nil {
 		resp.Body.Close()
 	}
 }
@@ -465,4 +668,125 @@ func truncateStr(s string, n int) string {
 		return string(r[:n]) + "…"
 	}
 	return s
+}
+
+// releaseOfIndex شناسهٔ نسلِ یک index.sqlite (خالی اگر فایل/ردیفی نباشد).
+func releaseOfIndex(path string) string {
+	if path == "" {
+		return ""
+	}
+	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro")
+	if err != nil {
+		return ""
+	}
+	defer db.Close()
+	var rel string
+	_ = db.QueryRow(`SELECT release_uid FROM passages LIMIT 1`).Scan(&rel)
+	return rel
+}
+
+// pruneOpenSearchReleases اسناد نسل‌های قدیمی‌تر از «جدید + قبلی» را از OpenSearch برمی‌دارد.
+// نسل قبلی حفظ می‌شود چون نشست‌های بازِ جست‌وجو تا پایان TTL روی آن می‌مانند. ناهمگام
+// (wait_for_completion=false) و best-effort: شکست فقط لاگ می‌شود و انتشار را برنمی‌گرداند.
+func pruneOpenSearchReleases(cfg *config.Config, keep ...string) {
+	var ks []string
+	for _, k := range keep {
+		if k != "" {
+			ks = append(ks, k)
+		}
+	}
+	if len(ks) == 0 {
+		return
+	}
+	indexName := os.Getenv("NOOR_OS_INDEX")
+	if indexName == "" {
+		indexName = "noor-passages"
+	}
+	body, _ := json.Marshal(map[string]any{"query": map[string]any{"bool": map[string]any{
+		"must_not": []any{map[string]any{"terms": map[string]any{"release_uid": ks}}},
+		"filter":   []any{map[string]any{"exists": map[string]any{"field": "release_uid"}}},
+	}}})
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	raw, code, err := newOSWorkerClient(cfg).do(ctx, "POST", "/"+indexName+"/_delete_by_query?conflicts=proceed&wait_for_completion=false", body)
+	if err != nil || code >= 300 {
+		log.Printf("opensearch prune of old releases failed (code=%d err=%v): %s", code, err, truncateStr(string(raw), 300))
+	}
+}
+
+// overlayFetchItem شکل ردیف‌های /internal/overlays/active.
+type overlayFetchItem struct {
+	UID         string `json:"uid"`
+	DocumentUID string `json:"document_uid"`
+	ChangeType  string `json:"change_type"`
+	OldValue    string `json:"old_value"`
+	NewValue    string `json:"new_value"`
+}
+
+// fetchActiveOverlays فهرست اصلاحات قابل اعمال را از API داخلی می‌گیرد و بر سند
+// گروه می‌کند. خطا هرگز بی‌صدا نیست: شکستِ واکشی اصلاحات یعنی ساختِ نسل بدون
+// اصلاح — return nil تا کار با خطای صریح fail شود.
+func fetchActiveOverlays(api, includeUID string) (map[string][]overlay.Replacement, []string) {
+	u := api + "/api/v1/internal/overlays/active"
+	if includeUID != "" {
+		u += "?include=" + url.QueryEscape(includeUID)
+	}
+	req, _ := http.NewRequest("GET", u, nil)
+	req.Header.Set("X-Noor-Service", os.Getenv("NOOR_SERVICE_TOKEN"))
+	resp, err := apiClient.Do(req)
+	if err != nil {
+		log.Println("overlay fetch error:", err)
+		return nil, nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		log.Println("overlay fetch HTTP:", resp.StatusCode)
+		return nil, nil
+	}
+	var out struct {
+		Items []overlayFetchItem `json:"items"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		log.Println("overlay fetch decode:", err)
+		return nil, nil
+	}
+	byDoc := map[string][]overlay.Replacement{}
+	var uids []string
+	seen := map[string]bool{}
+	for _, it := range out.Items {
+		if it.ChangeType != "text_replace" || it.OldValue == "" || it.NewValue == "" || seen[it.UID] {
+			continue
+		}
+		seen[it.UID] = true
+		byDoc[it.DocumentUID] = append(byDoc[it.DocumentUID], overlay.Replacement{
+			UID: it.UID, ChangeType: it.ChangeType, OldValue: it.OldValue, NewValue: it.NewValue,
+		})
+		uids = append(uids, it.UID)
+	}
+	return byDoc, uids
+}
+
+// postFeatures ارسال ویژگی‌های واقعی به API داخلی (best-effort با لاگ خطا).
+func postFeatures(api string, feats map[string]map[string]bool) {
+	if len(feats) == 0 {
+		return
+	}
+	b, err := json.Marshal(map[string]any{"features": feats})
+	if err != nil {
+		log.Println("features marshal:", err)
+		return
+	}
+	req, _ := http.NewRequest("POST", api+"/api/v1/internal/features", bytes.NewReader(b))
+	req.Header.Set("X-Noor-Service", os.Getenv("NOOR_SERVICE_TOKEN"))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := apiClient.Do(req)
+	if err != nil {
+		log.Println("features post:", err)
+		return
+	}
+	defer resp.Body.Close()
+	_, _ = io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode >= 300 {
+		log.Println("features post HTTP:", resp.StatusCode)
+	}
 }

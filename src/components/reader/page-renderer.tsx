@@ -300,7 +300,7 @@ function BlockText({
               id="reader-hl-anchor"
               data-cp-start={seg.start}
               data-cp-end={seg.end}
-              className="rounded-sm bg-match px-0.5 text-foreground"
+              className="rounded-sm bg-match px-0.5 text-match-foreground"
             >
               {text}
             </mark>
@@ -323,7 +323,6 @@ function BlockText({
               onFocus={(e) => onFootnoteEnter(mark.refUid as string, label, e.currentTarget)}
               onBlur={onFootnoteLeave}
               aria-label={`پاورقی ${label} — هاور برای پیش‌نمایش، کلیک برای بازکردن در پنل`}
-              title={`پاورقی ${label}`}
             >
               ({label})
             </button>
@@ -626,6 +625,12 @@ interface BlockViewProps {
   onHadithClick?: (block: PageBlock) => void;
   /** READ-13: نمایش رنگ/نشان نقش‌های معنایی */
   semantic: boolean;
+  /** شمارهٔ سطح تیتر (۱، ۲، ۳، ۴، ۵...) برای تایپوگرافی سلسله‌مراتبی و فاصله‌گذاری */
+  headingLevel?: number;
+  /** آیا این بلوک در ابتدای صفحه است (بدون متن قبلی) */
+  isFirstOnPage?: boolean;
+  /** نوع بلوک قبلی در صفحه (برای پیوستگی تیترهای متوالی) */
+  prevBlockType?: string;
 }
 
 /** memo: در حالت پیوسته و رندرهای مکرر، بلوک‌های بی‌تغییر دوباره reconcile نمی‌شوند */
@@ -645,6 +650,9 @@ const BlockView = memo(function BlockView({
   onVerseClick,
   onHadithClick,
   semantic,
+  headingLevel,
+  isFirstOnPage,
+  prevBlockType,
 }: BlockViewProps) {
   const ts = blockTextStyle(block, prefs);
   const style: React.CSSProperties = {
@@ -668,18 +676,102 @@ const BlockView = memo(function BlockView({
   );
 
   switch (block.type) {
-    case "heading":
-      // از BlockText می‌رود تا هایلایت نتیجهٔ جست‌وجو درون سرفصل هم دیده شود
+    case "heading": {
+      const rawLevel = headingLevel ?? block.level ?? 2;
+      const level = Math.max(1, rawLevel);
+      const isSubheading = prevBlockType === "heading";
+
+      // فاصله‌گذاری سلسله‌مراتبی بر اساس سطح تیتر:
+      // تیتر ۱ (بخش/باب): بیشترین فاصله از متن قبلی، فونت بزرگ، خط زیرین مشخص
+      // تیتر ۲ (فصل): فاصله کمتر از اول، خط زیرین ملایم
+      // تیتر ۳ (مبحث): فاصله کمتر از دوم
+      // تیتر ۴ (مطلب): فاصله کمتر از سوم
+      // تیتر ۵ و بعد (بند/عنوان فرعی): فاصله کمتر از چهارم
+      if (level === 1) {
+        const topSpacing = isFirstOnPage
+          ? "mt-1 pt-0"
+          : isSubheading
+            ? "mt-5 md:mt-7 pt-0"
+            : "mt-12 md:mt-16 pt-5 md:pt-6";
+        return (
+          <h2
+            className={`${topSpacing} mb-4 pb-2.5 text-2xl md:text-3xl font-extrabold text-foreground border-b-2 border-border/80 leading-snug tracking-tight`}
+            lang={ts.lang}
+            dir={ts.dir}
+            style={{ fontFamily: ts.fontFamily }}
+          >
+            {text}
+          </h2>
+        );
+      }
+      if (level === 2) {
+        const topSpacing = isFirstOnPage
+          ? "mt-1 pt-0"
+          : isSubheading
+            ? "mt-4 md:mt-5 pt-0"
+            : "mt-10 md:mt-12 pt-4 md:pt-5";
+        return (
+          <h3
+            className={`${topSpacing} mb-3 pb-2 text-xl md:text-2xl font-bold text-foreground border-b border-border/60 leading-snug`}
+            lang={ts.lang}
+            dir={ts.dir}
+            style={{ fontFamily: ts.fontFamily }}
+          >
+            {text}
+          </h3>
+        );
+      }
+      if (level === 3) {
+        const topSpacing = isFirstOnPage
+          ? "mt-1 pt-0"
+          : isSubheading
+            ? "mt-3 md:mt-4 pt-0"
+            : "mt-8 md:mt-10 pt-3 md:pt-4";
+        return (
+          <h4
+            className={`${topSpacing} mb-2.5 pb-1 text-lg md:text-xl font-bold text-foreground/95 leading-snug`}
+            lang={ts.lang}
+            dir={ts.dir}
+            style={{ fontFamily: ts.fontFamily }}
+          >
+            {text}
+          </h4>
+        );
+      }
+      if (level === 4) {
+        const topSpacing = isFirstOnPage
+          ? "mt-1 pt-0"
+          : isSubheading
+            ? "mt-2.5 md:mt-3 pt-0"
+            : "mt-6 md:mt-8 pt-2 md:pt-3";
+        return (
+          <h5
+            className={`${topSpacing} mb-2 pb-0.5 text-[1.1rem] md:text-lg font-bold text-foreground/90 leading-snug`}
+            lang={ts.lang}
+            dir={ts.dir}
+            style={{ fontFamily: ts.fontFamily }}
+          >
+            {text}
+          </h5>
+        );
+      }
+      // level >= 5
+      const topSpacing = isFirstOnPage
+        ? "mt-1 pt-0"
+        : isSubheading
+          ? "mt-2 pt-0"
+          : "mt-4 md:mt-6 pt-1.5 md:pt-2";
       return (
-        <h3
-          className="mt-6 mb-2 border-b border-border/70 pb-1.5 text-xl font-bold text-foreground first:mt-0"
+        <h6
+          className={`${topSpacing} mb-1.5 pb-0.5 text-[1.02rem] md:text-base font-bold text-foreground/85 leading-snug`}
           lang={ts.lang}
           dir={ts.dir}
           style={{ fontFamily: ts.fontFamily }}
         >
           {text}
-        </h3>
+        </h6>
       );
+    }
     case "sanad":
       return (
         <SanadBlock
@@ -803,6 +895,8 @@ export interface PageRendererProps {
   prefs: ReaderPrefs;
   /** نگاشت block_id → section_uid برای لنگرهای فهرست */
   sectionUidByBlockId: Record<string, string>;
+  /** نگاشت block_id → level برای تعیین سطح سرتیتر */
+  sectionLevelByBlockId?: Record<string, number>;
   /** بلوک مقصد پرش از فهرست — با رنگ زمینه ظریف برجسته می‌شود */
   flashBlockId?: string | null;
   /** بازهٔ highlight نتیجهٔ جست‌وجو (code point در بلوک) */
@@ -824,12 +918,15 @@ export interface PageRendererProps {
   onVerseClick?: (block: PageBlock) => void;
   /** HAD-08: بازکردن اطلاعات روایت */
   onHadithClick?: (block: PageBlock) => void;
+  /** حالت بدون قاب برای جریان پیوسته و یکپارچه متن */
+  frameless?: boolean;
 }
 
 export function PageRenderer({
   page,
   prefs,
   sectionUidByBlockId,
+  sectionLevelByBlockId,
   flashBlockId,
   highlight,
   userHighlights,
@@ -843,6 +940,7 @@ export function PageRenderer({
   onSelection,
   onVerseClick,
   onHadithClick,
+  frameless,
 }: PageRendererProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [selRect, setSelRect] = useState<{ top: number; left: number } | null>(null);
@@ -1062,7 +1160,12 @@ export function PageRenderer({
   return (
     <div
       ref={wrapRef}
-      className="relative select-text rounded-2xl border border-border bg-reader px-4 py-5 shadow-sm md:px-8 md:py-6"
+      className={cn(
+        "relative select-text",
+        frameless
+          ? "py-1"
+          : "rounded-2xl border border-border bg-reader px-4 py-5 shadow-sm md:px-8 md:py-6"
+      )}
       onMouseUp={computeSelection}
       onKeyUp={(e) => {
         if (e.shiftKey || e.key.startsWith("Arrow")) computeSelection();
@@ -1076,9 +1179,9 @@ export function PageRenderer({
         page.blocks.map((block, idx) => {
           const sectionUid = sectionUidByBlockId[block.id];
           const flash = flashBlockId === block.id;
-          const untaggedRun =
-            block.untagged === true &&
-            (idx === 0 || page.blocks[idx - 1]?.untagged !== true);
+          const isFirstOnPage = idx === 0;
+          const prevBlock = idx > 0 ? page.blocks[idx - 1] : null;
+          const prevBlockType = prevBlock?.type;
           const hlHere =
             highlight && highlight.end > highlight.start
               ? highlight.blockId
@@ -1088,15 +1191,6 @@ export function PageRenderer({
               : null;
           return (
             <div key={block.id} className="group">
-              {untaggedRun ? (
-                <p className="mt-5 mb-2 inline-flex items-center gap-1.5 rounded-full border border-border bg-muted px-2.5 py-0.5 text-[11px] text-muted-foreground first:mt-0">
-                  <span
-                    className="inline-block size-1.5 rounded-full bg-muted-foreground/60"
-                    aria-hidden="true"
-                  />
-                  این منبع نشانه‌گذاری تخصصی ندارد
-                </p>
-              ) : null}
               <div
                 id={sectionUid ? `sec-block-${block.id}` : undefined}
                 data-block-id={block.id}
@@ -1108,6 +1202,9 @@ export function PageRenderer({
                 <BlockView
                   block={block}
                   prefs={prefs}
+                  headingLevel={block.level ?? (sectionLevelByBlockId ? sectionLevelByBlockId[block.id] : undefined)}
+                  isFirstOnPage={isFirstOnPage}
+                  prevBlockType={prevBlockType}
                   highlight={hlHere && highlight ? highlight : null}
                   userHls={userHlByBlock.get(block.id)}
                   collapsed={collapsedSanads.has(block.id)}

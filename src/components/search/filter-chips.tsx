@@ -71,19 +71,82 @@ export function FilterChips({
     });
   }
 
-  if (state.mode !== "normalized_phrase") {
+  if (state.mode === "words") {
     chips.push({
-      key: "mode",
-      label: `حالت: ${modeLabel(state.mode)}`,
-      onRemove: () => onChange({ mode: "normalized_phrase" }),
+      key: "mode-words",
+      label: "حالت: واژگان",
+      onRemove: () => onChange({ mode: "text" }),
+    });
+    if (state.wordsMatch === "any") {
+      chips.push({
+        key: "match-any",
+        label: "شرط: حداقل یک واژه",
+        onRemove: () => onChange({ wordsMatch: "all" }),
+      });
+    }
+    if (state.wordsDistance > 0) {
+      chips.push({
+        key: "words-dist",
+        label: `فاصله: تا ${faNum(state.wordsDistance)} واژه${state.wordsOrdered ? " · به‌ترتیب" : ""}`,
+        onRemove: () => onChange({ wordsDistance: 0, wordsOrdered: false }),
+      });
+    }
+  } else {
+    // حالت text
+    if (state.flex !== "similar") {
+      const flexNames: Record<string, string> = {
+        exact: "عین عبارت",
+        written: "تفاوت‌های نوشتاری",
+        spelling: "گونه‌های املایی",
+      };
+      chips.push({
+        key: "flex",
+        label: `انعطاف: ${flexNames[state.flex] ?? state.flex}`,
+        onRemove: () => onChange({ flex: "similar" }),
+      });
+    }
+    if (state.sort === "similarity") {
+      chips.push({
+        key: "sort-sim",
+        label: "ترتیب: شبیه‌ترین نقل‌ها",
+        onRemove: () => onChange({ sort: "relevance" }),
+      });
+    }
+  }
+
+  if (state.target === "titles") {
+    chips.push({
+      key: "target-titles",
+      label: "موضوع: عنوان کتاب‌ها",
+      onRemove: () => onChange({ target: "text" }),
+    });
+  } else if (state.target === "authors") {
+    chips.push({
+      key: "target-authors",
+      label: "موضوع: نام مؤلف",
+      onRemove: () => onChange({ target: "text" }),
+    });
+  }
+
+  if (state.author.trim() !== "") {
+    chips.push({
+      key: "scope-author",
+      label: `محدود به مؤلف: ${state.author.trim()}`,
+      onRemove: () => onChange({ author: "", scope: "library" }),
     });
   }
 
   if (state.scope === "titles") {
     chips.push({
       key: "scope-titles",
-      label: "دامنه: نام کتاب‌ها",
-      onRemove: () => onChange({ scope: "library", mode: "normalized_phrase", work: "", doc: "" }),
+      label: "دامنه: عنوان کتاب‌ها",
+      onRemove: () => onChange({ scope: "library", work: "", doc: "" }),
+    });
+  } else if (state.scope === "authors") {
+    chips.push({
+      key: "scope-authors",
+      label: "دامنه: پدیدآور (مؤلف)",
+      onRemove: () => onChange({ scope: "library", work: "", doc: "" }),
     });
   } else if (state.scope === "work") {
     chips.push({
@@ -124,12 +187,43 @@ export function FilterChips({
     });
   }
 
-  if (state.mode === "near") {
+  if (state.diacritics !== "") {
     chips.push({
-      key: "near",
-      label: `فاصلهٔ واژه‌ها: تا ${state.slop} واژه${state.ordered ? " · به‌ترتیب" : ""}`,
-      onRemove: () => onChange({ mode: "normalized_phrase" }),
+      key: "diacritics",
+      label: state.diacritics === "respect_strict" ? "رعایت اعراب (سخت‌گیرانه)" : "رعایت اعرابِ نوشته‌شده",
+      onRemove: () => onChange({ diacritics: "" }),
     });
+  }
+
+  if (state.mode === "text") {
+    if (state.layers.length > 0) {
+      chips.push({
+        key: "layers",
+        label: `لایه‌ها: ${state.layers.join("، ")}`,
+        onRemove: () => onChange({ layers: [] }),
+      });
+    }
+    if (state.minScore > 0) {
+      chips.push({
+        key: "min-score",
+        label: `کمینهٔ شباهت: ${faNum(Math.round(state.minScore * 100))}٪`,
+        onRemove: () => onChange({ minScore: 0 }),
+      });
+    }
+    if (state.nearSpelling) {
+      chips.push({
+        key: "near-spelling",
+        label: "واژهٔ نزدیک (L5)",
+        onRemove: () => onChange({ nearSpelling: false }),
+      });
+    }
+    if (state.expandMorphology) {
+      chips.push({
+        key: "morphology",
+        label: "صورت صرفی (مفرد/جمع)",
+        onRemove: () => onChange({ expandMorphology: false }),
+      });
+    }
   }
 
   if (chips.length === 0) return null;
@@ -137,7 +231,13 @@ export function FilterChips({
   const clearAll = () => {
     onChange({
       q: "",
-      mode: "normalized_phrase",
+      target: "text",
+      author: "",
+      mode: "text",
+      flex: "similar",
+      wordsMatch: "all",
+      wordsDistance: 0,
+      wordsOrdered: false,
       scope: "library",
       work: "",
       doc: "",
@@ -145,6 +245,12 @@ export function FilterChips({
       lang: "",
       slop: 3,
       ordered: true,
+      diacritics: "",
+      sort: "relevance",
+      minScore: 0,
+      nearSpelling: false,
+      expandMorphology: false,
+      layers: [],
     });
   };
 
@@ -157,14 +263,14 @@ export function FilterChips({
       {chips.map((chip) => (
         <span
           key={chip.key}
-          className="inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-surface py-1 pe-1 ps-3 text-sm"
+          className="inline-flex max-w-full items-center gap-2 rounded-full border border-border bg-surface py-1 pe-1 ps-3 text-sm"
         >
-          <span className="truncate">{chip.label}</span>
+          <span className="min-w-0 truncate" title={chip.label}>{chip.label}</span>
           <button
             type="button"
             onClick={chip.onRemove}
             aria-label={`حذف فیلتر: ${chip.label}`}
-            className="flex size-7 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+            className="flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
           >
             <X className="size-3.5" aria-hidden="true" />
           </button>

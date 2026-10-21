@@ -20,7 +20,6 @@ import {
   Bookmark as BookmarkIcon,
   BookmarkCheck,
   ChevronLeft,
-  ChevronRight,
   Copy,
   FileDown,
   List,
@@ -38,20 +37,23 @@ import type { Bookmark as BookmarkT, Highlight as HighlightT, HighlightColor, No
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
-import { api, errorMessage } from "@/lib/api";
-import { faNum } from "@/lib/format";
+import { api, ApiError, errorMessage } from "@/lib/api";
+import { faNum, normalizePersian } from "@/lib/format";
 import { toast } from "@/hooks/use-toast";
 import type {
   BlockLink,
   PageBlock,
   PagePayload,
   PageRef,
+  SearchResultItem,
+  SearchScope,
   TocSection,
   WorkDetail,
 } from "@/lib/types";
 import { blockOffsets } from "@/lib/types";
 import { useWorkspaceStore } from "@/store/workspace";
 import { useIsCompact } from "@/hooks/use-mobile";
+import { cn } from "@/lib/utils";
 import { PageRenderer, type ReaderSelection } from "@/components/reader/page-renderer";
 import { TocPanel } from "@/components/reader/toc-panel";
 import { FootnotePanel, type FootnotePanelData } from "@/components/reader/footnote-panel";
@@ -60,7 +62,10 @@ import { HadithLocationsDialog } from "@/components/search/hadith-locations-dial
 import { ReaderToolbar } from "@/components/reader/reader-toolbar";
 import { SettingsPopover } from "@/components/reader/settings-popover";
 import { NotesPanel } from "@/components/reader/notes-panel";
+import { SiteHeader } from "@/components/site-header";
 import { PdfExportDialog } from "@/components/reader/pdf-export-dialog";
+import { BookSearchPanel } from "@/components/reader/book-search-panel";
+import { normalizeOffsets } from "@/components/search/result-card";
 
 export function ReaderView({ documentUid }: { documentUid: string }) {
   const queryClient = useQueryClient();
@@ -89,12 +94,22 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
   const workQuery = useQuery({
     queryKey: ["reader-work", documentUid],
     queryFn: async () => {
-      const works = await api.get<{ items: WorkDetail[] }>("/works");
-      for (const w of works.items) {
-        const full = await api.get<WorkDetail>(`/works/${w.uid}`);
-        if (full.documents.some((d) => d.uid === documentUid)) return full;
+      // ۱. استعلام مستقیم O(1) از اندپوینت سند
+      try {
+        return await api.get<WorkDetail>(`/documents/${documentUid}/work`);
+      } catch {
+        // ۲. استخراج شناسه اثر از شناسه سند: d-disc-series-doc -> w-disc-series
+        const parts = documentUid.split("-");
+        if (parts.length >= 3 && parts[0] === "d") {
+          const derivedWorkUid = `w-${parts[1]}-${parts[2]}`;
+          try {
+            return await api.get<WorkDetail>(`/works/${derivedWorkUid}`);
+          } catch {
+            // ادامه
+          }
+        }
+        throw new Error("این سند در کتابخانهٔ موجود نیست.");
       }
-      throw new Error("این سند در کتابخانهٔ موجود نیست.");
     },
     retry: false,
   });
@@ -293,6 +308,19 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
     return map;
   }, [tocQuery.data]);
 
+  /* ---------- نگاشت بلوک→سطح تیتر برای استایل‌دهی سلسله‌مراتبی ---------- */
+  const sectionLevelByBlockId = useMemo(() => {
+    const map: Record<string, number> = {};
+    const walk = (secs: TocSection[]) => {
+      for (const s of secs) {
+        if (s.block_id && typeof s.level === "number") map[s.block_id] = s.level;
+        walk(s.children ?? []);
+      }
+    };
+    walk(tocQuery.data?.sections ?? []);
+    return map;
+  }, [tocQuery.data]);
+
   const activeSectionUid = useMemo(() => {
     if (!activePayload) return null;
     for (const b of activePayload.blocks) {
@@ -311,8 +339,13 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
   const [ficheOpen, setFicheOpen] = useState(false);
   const [saveFlash, setSaveFlash] = useState<string | null>(null);
   const [pdfOpen, setPdfOpen] = useState(false);
-  /** تب پنل زمینه: پاورقی/آیه/روایت یا یادداشت‌ها */
-  const [ctxTab, setCtxTab] = useState<"context" | "notes">("context");
+  /** تب پنل کناری: پاورقی/آیه/روایت یا یادداشت‌ها یا نتایج جست‌وجو */
+  const [ctxTab, setCtxTab] = useState<"context" | "notes" | "search">("context");
+  /** وضعیت‌های جست‌وجو در متن همین کتاب (SEARCH-09) */
+  const [inBookSearchQuery, setInBookSearchQuery] = useState("");
+  const [inBookSearchScope, setInBookSearchScope] = useState<"work" | "document">("work");
+  const [selectedSearchPassageUid, setSelectedSearchPassageUid] = useState<string | null>(null);
+  const [searchSheetOpen, setSearchSheetOpen] = useState(false);
   /** شیت یادداشت‌ها در موبایل/تبلت */
   const [notesSheetOpen, setNotesSheetOpen] = useState(false);
   /* §۴۷: پرس‌وجوی میان‌کتابی روایت از پنل زمینه */
@@ -490,37 +523,117 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
     };
   }, [continuous, pagesPendingCount === 0]);
 
+  /* پنهان‌سازی خودکار نوار بالای کتاب‌خوان با اسکرول به پایین (با قابلیت سنجاق‌کردن دائم) */
+  const [headerVisible, setHeaderVisible] = useState(true);
+  const [headerPinned, setHeaderPinned] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true;
+    try {
+      const saved = window.localStorage.getItem("noor:reader-header-pinned");
+      return saved !== null ? saved === "true" : true;
+    } catch {
+      return true;
+    }
+  });
+
+  const toggleHeaderPinned = useCallback(() => {
+    setHeaderPinned((prev) => {
+      const next = !prev;
+      try {
+        window.localStorage.setItem("noor:reader-header-pinned", String(next));
+      } catch {}
+      if (next) setHeaderVisible(true);
+      return next;
+    });
+  }, []);
+
+  const siteHeaderRef = useRef<HTMLDivElement | null>(null);
+  const [siteHeaderHeight, setSiteHeaderHeight] = useState(105);
+
+  useEffect(() => {
+    const el = siteHeaderRef.current;
+    if (!el) return;
+    const update = () => {
+      const inner = el.firstElementChild as HTMLElement | null;
+      const h = inner ? inner.offsetHeight : el.offsetHeight;
+      if (h > 0) setSiteHeaderHeight(h);
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    if (el.firstElementChild) ro.observe(el.firstElementChild);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [studyMode]);
+
+  const lastScrollTopRef = useRef(0);
+
+  useEffect(() => {
+    const main = mainRef.current;
+    if (!main) return;
+    const onScroll = () => {
+      if (headerPinned) {
+        setHeaderVisible(true);
+        return;
+      }
+      const top = main.scrollTop;
+      const diff = top - lastScrollTopRef.current;
+
+      if (diff > 8 && top > 30) {
+        setHeaderVisible(false);
+      } else if (diff < -6 || top <= 15) {
+        setHeaderVisible(true);
+      }
+
+      lastScrollTopRef.current = top;
+    };
+    main.addEventListener("scroll", onScroll, { passive: true });
+    return () => main.removeEventListener("scroll", onScroll);
+  }, [headerPinned]);
+
   const onJumpSection = useCallback(
     (s: TocSection) => {
       setTocOpen(false);
-      if (!s.block_id) return;
-      const blockId: string = s.block_id;
-      /* مقصد فهرست: بلوک در هر حالتی — در صفحه‌محور اگر در صفحهٔ فعلی است flash؛
-         در پیوسته اسکرول به بلوک؛ در غیر این صورت پرش به صفحهٔ دارای بلوک */
-      const pageUid = blockPage[blockId];
-      if (pageUid && pageUid !== currentPageUid) {
-        goToPage(pageUid);
-        window.setTimeout(() => {
-          const el = document.querySelector<HTMLElement>(`[data-block-id="${blockId}"]`);
-          if (el) {
-            el.scrollIntoView({ behavior: "smooth", block: "start" });
-            setFlashBlockId(blockId);
-            window.setTimeout(() => setFlashBlockId(null), 1800);
-          }
-        }, 450);
+      // ۱. تعیین صفحهٔ مقصد
+      let targetPageUid: string | undefined = s.page_uid || undefined;
+      const blockId: string | undefined = s.block_id || undefined;
+
+      if (!targetPageUid && blockId && blockPage[blockId]) {
+        targetPageUid = blockPage[blockId];
+      }
+      if (!targetPageUid && s.page_label) {
+        const match = pageRefs.find((p) => p.label === s.page_label || p.num === s.page_label);
+        if (match) targetPageUid = match.page_uid;
+      }
+
+      // ۲. در صورتی که صفحه نیاز به تغییر دارد:
+      if (targetPageUid && targetPageUid !== currentPageUid) {
+        goToPage(targetPageUid);
+        if (blockId) {
+          window.setTimeout(() => {
+            const el = document.querySelector<HTMLElement>(`[data-block-id="${blockId}"]`);
+            if (el) {
+              el.scrollIntoView({ behavior: "smooth", block: "start" });
+              setFlashBlockId(blockId);
+              window.setTimeout(() => setFlashBlockId(null), 1800);
+            }
+          }, 450);
+        }
         return;
       }
-      const el = document.querySelector<HTMLElement>(`[data-block-id="${blockId}"]`);
-      if (el) {
-        el.scrollIntoView({ behavior: "smooth", block: "start" });
-        setFlashBlockId(blockId);
-        window.setTimeout(() => setFlashBlockId(null), 1800);
-      } else if (activePayload?.blocks.some((b) => b.id === blockId)) {
-        setFlashBlockId(blockId);
-        window.setTimeout(() => setFlashBlockId(null), 1800);
+
+      // ۳. اگر در همین صفحه است، اسکرول و برجسته‌سازی
+      if (blockId) {
+        const el = document.querySelector<HTMLElement>(`[data-block-id="${blockId}"]`);
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "start" });
+          setFlashBlockId(blockId);
+          window.setTimeout(() => setFlashBlockId(null), 1800);
+        } else if (activePayload?.blocks.some((b) => b.id === blockId)) {
+          setFlashBlockId(blockId);
+          window.setTimeout(() => setFlashBlockId(null), 1800);
+        }
       }
     },
-    [blockPage, currentPageUid, goToPage, activePayload],
+    [blockPage, currentPageUid, goToPage, activePayload, pageRefs],
   );
 
   /* ---------- ذخیرهٔ موضع (READ-12) — PUT /workspace/position با debounce ---------- */
@@ -664,7 +777,7 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
     [documentUid, queryClient, flash],
   );
 
-  /* حذف هایلایت — خوش‌بینانه */
+  /* حذف هایلایت — خوش‌بینانه و تاب‌آور */
   const onHighlightDelete = useCallback(
     async (uid: string) => {
       const qk = ["annotations", documentUid] as const;
@@ -672,16 +785,25 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
       queryClient.setQueryData<{ items: HighlightT[] }>(qk, (old) => ({
         items: (old?.items ?? []).filter((h) => h.uid !== uid),
       }));
+      if (uid.startsWith("temp-")) {
+        flash("هایلایت حذف شد");
+        return;
+      }
       try {
         await api.del(`/annotations/${uid}`);
         flash("هایلایت حذف شد");
       } catch (err) {
-        if (prev) queryClient.setQueryData(qk, prev);
-        toast({
-          title: "حذف هایلایت ناموفق بود",
-          description: errorMessage(err, "دوباره تلاش کنید."),
-          variant: "destructive",
-        });
+        const isNotFound = err instanceof ApiError && err.status === 404;
+        if (!isNotFound) {
+          if (prev) queryClient.setQueryData(qk, prev);
+          toast({
+            title: "حذف هایلایت ناموفق بود",
+            description: errorMessage(err, "دوباره تلاش کنید."),
+            variant: "destructive",
+          });
+        } else {
+          flash("هایلایت حذف شد");
+        }
       }
     },
     [documentUid, queryClient, flash],
@@ -774,11 +896,101 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
     [hadithFiche, isCompact],
   );
 
-  const onSearchInDocument = useCallback(
-    (q: string) => {
-      window.location.hash = `#/search?q=${encodeURIComponent(q)}&mode=normalized_phrase&scope=document&doc=${documentUid}`;
+  /* ---------- جست‌وجو در متن همین کتاب (SEARCH-09) ---------- */
+  const workUid = workQuery.data?.uid;
+  const inBookSearch = useQuery({
+    queryKey: ["reader-inbook-search", workUid, inBookSearchScope, documentUid, inBookSearchQuery.trim()],
+    queryFn: async ({ signal }) => {
+      const q = inBookSearchQuery.trim();
+      if (!q || !workUid) return null;
+      const scopeObj: SearchScope =
+        inBookSearchScope === "document"
+          ? { target: "document", document_uids: [documentUid], work_uid: workUid }
+          : { target: "work", work_uid: workUid };
+
+      return await api.post<import("@/lib/types").SearchResponse>("/search", {
+        query: q,
+        mode: "normalized_phrase",
+        scope: scopeObj,
+        page_size: 100,
+      });
     },
-    [documentUid],
+    enabled: Boolean(inBookSearchQuery.trim() && workUid),
+    staleTime: 60_000,
+  });
+
+  const handleExecuteSearch = useCallback(
+    (q: string) => {
+      const trimmed = q.trim();
+      if (!trimmed) return;
+      setInBookSearchQuery(trimmed);
+      setSelectedSearchPassageUid(null);
+      setCtxTab("search");
+      if (isCompact) {
+        setSearchSheetOpen(true);
+      }
+    },
+    [isCompact],
+  );
+
+  const handleClearSearch = useCallback(() => {
+    setInBookSearchQuery("");
+    setSelectedSearchPassageUid(null);
+    if (ctxTab === "search") {
+      setCtxTab("context");
+    }
+    setSearchSheetOpen(false);
+  }, [ctxTab]);
+
+  const handleSelectSearchResult = useCallback(
+    (item: SearchResultItem) => {
+      setSelectedSearchPassageUid(item.passage_uid);
+      const offsets =
+        normalizeOffsets(item.match_offsets) ??
+        normalizeOffsets(item.source_offsets);
+      const hlParam = offsets ? `${offsets.start}:${offsets.end}` : undefined;
+
+      // اگر نتیجه در جلد/سند دیگری از همین اثر است:
+      if (item.document?.uid && item.document.uid !== documentUid) {
+        const q = new URLSearchParams({
+          ...(item.page?.uid ? { pg: item.page.uid } : {}),
+          ...(hlParam ? { hl: hlParam } : {}),
+        });
+        window.location.hash = `#/read/${item.document.uid}?${q.toString()}`;
+        if (isCompact) setSearchSheetOpen(false);
+        return;
+      }
+
+      // در همین سند:
+      if (item.page?.uid) {
+        goToPage(item.page.uid, {
+          ...(hlParam ? { hl: hlParam } : {}),
+        });
+
+        // اسکرول و برجسته‌سازی بلوک
+        if (offsets) {
+          const payload =
+            payloadByUid[item.page.uid] ??
+            (pageQuery.data?.page_uid === item.page.uid ? pageQuery.data : null);
+          if (payload) {
+            const matchingBlock = payload.blocks.find((b) => {
+              const range = blockOffsets(b);
+              return range && offsets.start >= range.start && offsets.start < range.end;
+            });
+            if (matchingBlock) {
+              setFlashBlockId(matchingBlock.id);
+              window.setTimeout(() => setFlashBlockId(null), 2500);
+              window.setTimeout(() => {
+                const el = document.querySelector<HTMLElement>(`[data-block-id="${matchingBlock.id}"]`);
+                if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+              }, 300);
+            }
+          }
+        }
+      }
+      if (isCompact) setSearchSheetOpen(false);
+    },
+    [documentUid, goToPage, isCompact, payloadByUid, pageQuery.data],
   );
 
   /* ---------- ناوبری صفحه‌ای ---------- */
@@ -860,13 +1072,40 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
 
   if (workQuery.isPending || pagesQuery.isPending) {
     return (
-      <div className="mx-auto w-full max-w-3xl space-y-4 p-4">
-        <Skeleton className="h-10 w-2/3" />
-        <Skeleton className="h-4 w-1/3" />
-        <Skeleton className="h-64 w-full" />
-        <p className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="size-4 animate-spin" /> در حال بازکردن متن…
-        </p>
+      <div className="flex h-full w-full flex-col overflow-hidden bg-background" aria-busy="true" aria-live="polite">
+        <div className="flex h-11 items-center justify-between border-b border-border bg-surface px-4">
+          <div className="flex items-center gap-3">
+            <Skeleton className="size-6 rounded-md" />
+            <Skeleton className="h-5 w-48" />
+          </div>
+          <div className="flex items-center gap-2">
+            <Skeleton className="h-8 w-24 rounded-md" />
+            <Skeleton className="size-8 rounded-md" />
+          </div>
+        </div>
+        <div className="flex flex-1 min-h-0">
+          <aside className="hidden w-72 border-e border-border p-3 lg:block xl:w-80">
+            <Skeleton className="h-5 w-32 mb-4" />
+            <div className="space-y-2.5">
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-4/5" />
+              <Skeleton className="h-4 w-3/4" />
+              <Skeleton className="h-4 w-5/6" />
+            </div>
+          </aside>
+          <div className="flex-1 overflow-hidden bg-reader p-6 md:p-8">
+            <div className="mx-auto max-w-[760px] space-y-4">
+              <Skeleton className="h-6 w-1/2" />
+              <Skeleton className="h-4 w-1/4" />
+              <Skeleton className="h-64 w-full rounded-xl" />
+              <Skeleton className="h-40 w-full rounded-xl" />
+              <p className="flex items-center gap-2 text-xs text-muted-foreground pt-4">
+                <Loader2 className="size-3.5 animate-spin" /> در حال بازکردن متن کتاب…
+              </p>
+            </div>
+          </div>
+        </div>
+        <span className="sr-only">در حال بارگیری کتاب‌خوان…</span>
       </div>
     );
   }
@@ -906,7 +1145,7 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
   );
 
   /* رندر یک صفحه — مشترک میان دو حالت */
-  const renderPage = (payload: PagePayload, opts: { flashHere: boolean }) => {
+  const renderPage = (payload: PagePayload, opts: { flashHere: boolean; frameless?: boolean }) => {
     const userHls = [
       ...(userHlsByPage[payload.page_uid] ?? []),
       ...(sharedHl && sharedHlPageUid === payload.page_uid ? [sharedHl] : []),
@@ -915,7 +1154,9 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
       <PageRenderer
         page={payload}
         prefs={prefs}
+        frameless={opts.frameless}
         sectionUidByBlockId={sectionUidByBlockId}
+        sectionLevelByBlockId={sectionLevelByBlockId}
         flashBlockId={opts.flashHere ? flashBlockId : null}
         highlight={highlightByPage[payload.page_uid] ?? null}
         userHighlights={userHls.length > 0 ? userHls : undefined}
@@ -933,75 +1174,134 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
     );
   };
 
+  const currentVisiblePageUid = continuous ? (contCurrentUid || currentPageUid) : currentPageUid;
+  const activePageLabel =
+    activePayload?.label ??
+    pageRefs.find((r) => r.page_uid === currentVisiblePageUid)?.label ??
+    "…";
+  const cleanWorkTitle = normalizePersian(work.title);
+
   return (
-    <div className="flex h-[calc(100vh-8.5rem)] min-h-0 flex-col" dir="rtl">
-      {studyMode ? (
-        /* ---------- حالت مطالعهٔ مینیمال: فقط یک نوار باریک ---------- */
-        <div className="flex items-center justify-between gap-2 border-b border-border bg-surface/95 px-3 py-1.5 backdrop-blur">
-          <div className="flex min-w-0 items-center gap-2 text-[13px] leading-5">
-            <BookOpenCheck className="size-4 shrink-0 text-primary" aria-hidden="true" />
-            <span className="max-w-[12rem] truncate font-semibold text-foreground md:max-w-[18rem]">
-              {work.title}
-            </span>
-            <span aria-hidden="true" className="text-muted-foreground">/</span>
-            <span className="shrink-0 font-medium text-muted-foreground">
-              صفحهٔ {activePayload?.label ?? "…"}
-            </span>
-          </div>
-          <div className="flex items-center gap-1">
-            {saveFlash ? <span className="text-xs text-muted-foreground">{saveFlash}</span> : null}
-            <Button
-              variant="outline"
-              size="sm"
-              className="min-h-9 gap-1.5"
-              onClick={() => toggleStudyMode(false)}
-              title="خروج از حالت مطالعه (Esc)"
-            >
-              <Minimize2 className="size-4" aria-hidden="true" />
-              خروج از حالت مطالعه
-            </Button>
+    <div className="relative flex h-full w-full min-h-0 flex-col overflow-hidden" dir="rtl">
+      {/* حسگر بالای صفحه برای آشکارسازی فوری هدر اصلی با بردن ماوس به بالا */}
+      <div
+        className="absolute top-0 inset-x-0 h-2.5 z-50 pointer-events-auto"
+        onMouseEnter={() => setHeaderVisible(true)}
+        aria-hidden="true"
+      />
+
+      {/* هدر اصلی سایت — فقط این بخش با اسکرول رو به پایین به‌صورت نرم بالا می‌رود و پنهان می‌شود */}
+      {!studyMode ? (
+        <div
+          style={{
+            height: headerPinned || headerVisible ? `${siteHeaderHeight}px` : "0px",
+          }}
+          className={cn(
+            "overflow-hidden shrink-0 transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] z-40",
+            headerPinned || headerVisible
+              ? "opacity-100 pointer-events-auto"
+              : "opacity-0 pointer-events-none"
+          )}
+          onMouseEnter={() => setHeaderVisible(true)}
+        >
+          <div
+            ref={siteHeaderRef}
+            className={cn(
+              "transition-transform duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]",
+              headerPinned || headerVisible ? "translate-y-0" : "-translate-y-2"
+            )}
+          >
+            <SiteHeader />
           </div>
         </div>
-      ) : (
-        <ReaderToolbar
-          workTitle={work.title}
-          documentLabel={docLabel}
-          pageLabel={activePayload?.label ?? "…"}
-          display={display}
-          onDisplayChange={(d) => useWorkspaceStore.getState().updatePrefs({ display: d })}
-          pageRefs={pageRefs}
-          currentPageUid={currentPageUid}
-          onJumpToPage={(ref) => goToPage(ref.page_uid)}
-          documentUid={documentUid}
-          onSearchInDocument={onSearchInDocument}
-          bookmarked={isBookmarked}
-          bookmarkPending={bookmarkPending}
-          onToggleBookmark={() => void toggleBookmark()}
-          onCopyAddress={() => void copyAddress()}
-          onExportPdf={() => setPdfOpen(true)}
-          studyMode={false}
-          onToggleStudyMode={() => toggleStudyMode(true)}
-          settingsTrigger={
-            <SettingsPopover
-              trigger={
-                <Button variant="ghost" size="icon" aria-label="تنظیمات خواندن" className="size-11 md:size-9">
-                  <SlidersHorizontal className="size-4" />
-                </Button>
-              }
-            />
-          }
-          highlightActive={!!hl}
-          onClearHighlight={() => {
-            const q = new URLSearchParams(window.location.hash.split("?")[1] ?? "");
-            q.delete("hl");
-            q.delete("hlb");
-            window.location.hash = `#/read/${documentUid}?${q.toString()}`;
-          }}
-          onPrev={prevRef ? () => gotoNeighbor(prevRef) : null}
-          onNext={nextRef ? () => gotoNeighbor(nextRef) : null}
-          saveIndicator={saveFlash ? <span className="text-xs text-muted-foreground">{saveFlash}</span> : null}
-        />
-      )}
+      ) : null}
+
+      {/* نوار ابزار کتاب‌خوان (همیشه در همه حالات دیده می‌شود) */}
+      <div className="shrink-0 z-30 bg-chrome">
+        {studyMode ? (
+          /* ---------- حالت مطالعهٔ مینیمال: فقط یک نوار باریک ---------- */
+          <div className="flex h-14 md:h-15 items-center justify-between gap-2 border-b border-border bg-surface/95 px-3 md:px-4 backdrop-blur shadow-xs">
+            <div className="flex min-w-0 items-center gap-2 text-xs md:text-[13px] leading-5">
+              <BookOpenCheck className="size-4.5 shrink-0 text-primary" aria-hidden="true" />
+              <span className="max-w-[12rem] truncate font-semibold text-foreground md:max-w-[18rem]">
+                {cleanWorkTitle}
+              </span>
+              <span aria-hidden="true" className="text-muted-foreground">/</span>
+              <span className="shrink-0 font-medium text-muted-foreground">
+                صفحه {faNum(activePageLabel)}
+              </span>
+            </div>
+            <div className="flex items-center gap-1">
+              {saveFlash ? <span className="text-xs text-muted-foreground">{saveFlash}</span> : null}
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9 min-h-9 gap-1.5 text-xs"
+                onClick={() => toggleStudyMode(false)}
+                title="خروج از حالت مطالعه (Esc)"
+              >
+                <Minimize2 className="size-4" aria-hidden="true" />
+                خروج از حالت مطالعه
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <ReaderToolbar
+            workTitle={cleanWorkTitle}
+            documentLabel={docLabel}
+            pageLabel={activePageLabel}
+            display={display}
+            onDisplayChange={(d) => useWorkspaceStore.getState().updatePrefs({ display: d })}
+            pageRefs={pageRefs}
+            currentPageUid={currentVisiblePageUid}
+            onJumpToPage={(ref) => goToPage(ref.page_uid)}
+            documentUid={documentUid}
+            searchQuery={inBookSearchQuery}
+            onSearch={handleExecuteSearch}
+            onClearSearch={handleClearSearch}
+            isSearching={inBookSearch.isFetching}
+            totalSearchMatches={inBookSearch.data?.results?.length ?? null}
+            bookmarked={isBookmarked}
+            bookmarkPending={bookmarkPending}
+            onToggleBookmark={() => void toggleBookmark()}
+            onCopyAddress={() => void copyAddress()}
+            onExportPdf={() => setPdfOpen(true)}
+            studyMode={false}
+            onToggleStudyMode={() => toggleStudyMode(true)}
+            pinned={headerPinned}
+            onTogglePin={toggleHeaderPinned}
+            settingsTrigger={
+              <SettingsPopover
+                trigger={
+                  <button
+                    type="button"
+                    className="group flex w-20 flex-col items-center gap-1 text-muted-foreground transition-colors hover:text-foreground"
+                    aria-label="تنظیمات خواندن"
+                    title="تنظیمات خواندن"
+                  >
+                    <span className="inline-flex size-9 items-center justify-center rounded-lg transition-colors group-hover:bg-accent">
+                      <SlidersHorizontal className="size-4.5" aria-hidden="true" />
+                    </span>
+                    <span aria-hidden="true" className="text-center text-sm leading-5">
+                      تنظیمات
+                    </span>
+                  </button>
+                }
+              />
+            }
+            highlightActive={!!hl}
+            onClearHighlight={() => {
+              const q = new URLSearchParams(window.location.hash.split("?")[1] ?? "");
+              q.delete("hl");
+              q.delete("hlb");
+              window.location.hash = `#/read/${documentUid}?${q.toString()}`;
+            }}
+            onPrev={prevRef ? () => gotoNeighbor(prevRef) : null}
+            onNext={nextRef ? () => gotoNeighbor(nextRef) : null}
+            saveIndicator={saveFlash ? <span className="text-xs text-muted-foreground">{saveFlash}</span> : null}
+          />
+        )}
+      </div>
 
       {/* banner اشتراک (§۷-الف-۳): مقصد دقیق با هایلایت/یادداشت اشتراکی */}
       {sharedUid ? (
@@ -1046,7 +1346,7 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
         </div>
       ) : null}
 
-      <div className="flex min-h-0 flex-1">
+      <div className="relative flex min-h-0 flex-1">
         {/* فهرست — دسکتاپ (در حالت مطالعه پنهان؛ از قرص شناور باز می‌شود) */}
         {!studyMode ? (
           <aside className="hidden w-72 shrink-0 border-e border-border lg:block xl:w-80">
@@ -1070,8 +1370,8 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
         {/* سطح اصلی متن — دو حالت نمایش */}
         <main ref={mainRef} className="min-w-0 flex-1 overflow-y-auto bg-reader" aria-label="متن کتاب">
           {continuous ? (
-            /* ---------- پیوسته: همهٔ صفحه‌ها پشت‌سرهم ---------- */
-            <div className="mx-auto max-w-[760px] py-4">
+            /* ---------- پیوسته: همهٔ صفحه‌ها پشت‌سرهم در یک قاب واحد و بدون خط‌کشی ---------- */
+            <div className="mx-auto my-4 max-w-[760px] rounded-2xl border border-border bg-reader px-4 py-6 shadow-sm md:px-8 md:py-8">
               {pageRefs.map((ref) => {
                 const payload = payloadByUid[ref.page_uid];
                 const q = pagesQueries[pageRefs.indexOf(ref)];
@@ -1080,23 +1380,15 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
                     key={ref.page_uid}
                     id={`pgsec-${ref.page_uid}`}
                     data-page-uid={ref.page_uid}
-                    className="scroll-mt-2 border-b border-dashed border-border/70 pb-6 mb-6 last:border-b-0"
+                    className="scroll-mt-4"
                   >
-                    <div className="mb-2 flex flex-wrap items-center justify-between gap-2 px-4 md:px-8">
-                      <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-2.5 py-0.5 text-[11px] font-medium text-muted-foreground">
-                        صفحهٔ چاپی {faNum(ref.label)}
-                      </span>
-                      {payload?.overlay_applied ? (
-                        <span className="rounded-full border border-warning/40 bg-warning/10 px-2.5 py-0.5 text-[10px] text-foreground">
-                          شامل اصلاح سامانه
-                        </span>
-                      ) : null}
-                    </div>
                     {payload ? (
-                      renderPage(payload, { flashHere: true })
+                      payload.blocks.length > 0 ? (
+                        renderPage(payload, { flashHere: true, frameless: true })
+                      ) : null
                     ) : q?.isError ? (
-                      <div className="mx-4 rounded-xl border border-destructive/40 bg-destructive/5 p-4 text-center text-xs text-destructive md:mx-8">
-                        بازکردن این صفحه ممکن نشد.
+                      <div className="my-4 rounded-xl border border-destructive/40 bg-destructive/5 p-4 text-center text-xs text-destructive">
+                        بازکردن صفحهٔ {faNum(ref.label)} ممکن نشد.
                         <div>
                           <Button variant="outline" size="sm" className="mt-2" onClick={() => void q.refetch()}>
                             تلاش دوباره
@@ -1104,16 +1396,16 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
                         </div>
                       </div>
                     ) : (
-                      <div className="mx-4 space-y-3 md:mx-8" aria-busy="true">
+                      <div className="my-4 space-y-3" aria-busy="true">
                         <Skeleton className="h-5 w-1/2" />
-                        <Skeleton className="h-32 w-full" />
+                        <Skeleton className="h-28 w-full" />
                         <span className="sr-only">در حال بارگیری صفحهٔ {ref.label}…</span>
                       </div>
                     )}
                   </section>
                 );
               })}
-              <p className="pb-8 text-center text-xs text-muted-foreground">
+              <p className="mt-8 border-t border-border/40 pt-6 text-center text-xs text-muted-foreground">
                 پایان این جلد — {faNum(pageRefs.length)} صفحه
               </p>
             </div>
@@ -1143,19 +1435,30 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
                       </p>
                     </div>
                   )}
+                  {pageQuery.data.page_mapping === "approximate" && (
+                    <div className="mx-auto max-w-[760px] px-4 pt-3">
+                      <p className="rounded-md border border-match bg-match/20 px-3 py-2 text-xs text-foreground">
+                        مرز صفحه‌های چاپی این سند در منبع ثبت نشده و شمارهٔ صفحه تخمینی است؛ پیش از ارجاع با نسخهٔ چاپی تطبیق دهید.
+                      </p>
+                    </div>
+                  )}
                   {renderPage(pageQuery.data, { flashHere: true })}
-                  {/* ناوبری پایین صفحه — فقط در حالت صفحه‌محور */}
-                  <div className="mx-auto flex max-w-[760px] items-center justify-between px-4 pb-10 pt-2">
-                    {prevRef ? (
-                      <Button variant="outline" size="sm" onClick={() => gotoNeighbor(prevRef)}>
-                        <ChevronRight className="size-4" /> صفحهٔ قبل ({prevRef.label})
-                      </Button>
-                    ) : <span />}
+                  {/* ناوبری پایین صفحه — فقط در حالت صفحه‌محور: پرش به صفحهٔ بعد + شمار صفحه‌های جلد (قالب 2270:10348) */}
+                  <div className="mx-auto flex max-w-[760px] items-center justify-between px-4 pb-10 pt-4">
+                    <span
+                      className="select-none text-xs text-muted-foreground"
+                      title={`مجموع صفحه‌های این جلد: ${faNum(pageRefs.length)}`}
+                    >
+                      {faNum(pageRefs.length)} صفحه
+                    </span>
                     {nextRef ? (
                       <Button variant="outline" size="sm" onClick={() => gotoNeighbor(nextRef)}>
-                        صفحهٔ بعد ({nextRef.label}) <ChevronLeft className="size-4" />
+                        صفحهٔ بعد ({faNum(nextRef.label)})
+                        <ChevronLeft className="size-4" aria-hidden="true" />
                       </Button>
-                    ) : <span />}
+                    ) : (
+                      <span aria-hidden="true" />
+                    )}
                   </div>
                 </>
               )}
@@ -1166,16 +1469,44 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
         {/* پنل زمینه — دسکتاپ (در حالت مطالعه پنهان) */}
         {!studyMode ? (
           <aside className="hidden w-80 shrink-0 border-s border-border xl:block">
-            {/* تب‌های زمینه / یادداشت */}
+            {/* تب‌های جست‌وجو / زمینه / یادداشت */}
             <div role="tablist" aria-label="پنل کناری متن" className="flex border-b border-border">
+            {/* تب‌های جست‌وجو / زمینه / یادداشت — سبک تب پرِ حاضر (قالب 2270:10587) */}
+              {inBookSearchQuery ? (
+                <button
+                  role="tab"
+                  aria-selected={ctxTab === "search"}
+                  onClick={() => setCtxTab("search")}
+                  className={`min-h-11 flex-1 px-2 text-xs font-medium transition-colors md:min-h-9 ${
+                    ctxTab === "search"
+                      ? "bg-primary font-semibold text-primary-foreground"
+                      : "text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+                  }`}
+                >
+                  جست‌وجو
+                  {inBookSearch.data?.results ? (
+                    <span
+                      className={`ms-1 inline-flex min-w-5 justify-center rounded-full px-1 text-[10px] font-semibold ${
+                        ctxTab === "search"
+                          ? "bg-primary-foreground/15 text-primary-foreground"
+                          : "bg-primary/15 text-primary"
+                      }`}
+                    >
+                      {faNum(inBookSearch.data.results.length)}
+                    </span>
+                  ) : inBookSearch.isFetching ? (
+                    <Loader2 className="ms-1 inline-block size-3 animate-spin text-primary" />
+                  ) : null}
+                </button>
+              ) : null}
               <button
                 role="tab"
                 aria-selected={ctxTab === "context"}
                 onClick={() => setCtxTab("context")}
-                className={`min-h-11 flex-1 border-b-2 px-2 text-xs font-medium transition-colors md:min-h-9 ${
+                className={`min-h-11 flex-1 px-2 text-xs font-medium transition-colors md:min-h-9 ${
                   ctxTab === "context"
-                    ? "border-primary bg-primary/5 text-foreground"
-                    : "border-transparent text-muted-foreground hover:bg-accent/60"
+                    ? "bg-primary font-semibold text-primary-foreground"
+                    : "text-muted-foreground hover:bg-accent/60 hover:text-foreground"
                 }`}
               >
                 زمینه
@@ -1184,22 +1515,46 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
                 role="tab"
                 aria-selected={ctxTab === "notes"}
                 onClick={() => setCtxTab("notes")}
-                className={`min-h-11 flex-1 border-b-2 px-2 text-xs font-medium transition-colors md:min-h-9 ${
+                className={`min-h-11 flex-1 px-2 text-xs font-medium transition-colors md:min-h-9 ${
                   ctxTab === "notes"
-                    ? "border-primary bg-primary/5 text-foreground"
-                    : "border-transparent text-muted-foreground hover:bg-accent/60"
+                    ? "bg-primary font-semibold text-primary-foreground"
+                    : "text-muted-foreground hover:bg-accent/60 hover:text-foreground"
                 }`}
               >
                 یادداشت‌ها
                 {docNoteCount > 0 ? (
-                  <span className="ms-1 inline-flex min-w-5 justify-center rounded-full bg-primary/15 px-1 text-[10px] font-semibold text-primary">
+                  <span
+                    className={`ms-1 inline-flex min-w-5 justify-center rounded-full px-1 text-[10px] font-semibold ${
+                      ctxTab === "notes"
+                        ? "bg-primary-foreground/15 text-primary-foreground"
+                        : "bg-primary/15 text-primary"
+                    }`}
+                  >
                     {faNum(docNoteCount)}
                   </span>
                 ) : null}
               </button>
             </div>
             <div className="h-[calc(100%-2.75rem)] overflow-y-auto">
-              {ctxTab === "notes" ? (
+              {ctxTab === "search" ? (
+                <BookSearchPanel
+                  query={inBookSearchQuery}
+                  onExecuteSearch={handleExecuteSearch}
+                  scope={inBookSearchScope}
+                  onScopeChange={setInBookSearchScope}
+                  hasMultipleDocs={(work.documents?.length ?? 0) > 1}
+                  currentDocLabel={docLabel}
+                  results={inBookSearch.data?.results ?? []}
+                  isLoading={inBookSearch.isPending}
+                  error={inBookSearch.error instanceof Error ? inBookSearch.error : null}
+                  onRetry={() => void inBookSearch.refetch()}
+                  onClose={() => setCtxTab("context")}
+                  activePassageUid={selectedSearchPassageUid}
+                  onSelectResult={handleSelectSearchResult}
+                  currentDocUid={documentUid}
+                  currentPageUid={currentPageUid}
+                />
+              ) : ctxTab === "notes" ? (
                 <NotesPanel
                   documentUid={documentUid}
                   currentPageUid={currentPageUid}
@@ -1253,6 +1608,33 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
                 setNotesSheetOpen(true);
               }}
             />
+          </SheetContent>
+        </Sheet>
+      ) : null}
+
+      {/* نتایج جست‌وجو در کتاب — در موبایل/تبلت یا در حالت مطالعه: Sheet پایین */}
+      {(isCompact || studyMode) && searchSheetOpen ? (
+        <Sheet open={searchSheetOpen} onOpenChange={setSearchSheetOpen}>
+          <SheetContent side="bottom" className="max-h-[75vh] flex flex-col p-0">
+            <div className="flex-1 overflow-hidden min-h-0">
+              <BookSearchPanel
+                query={inBookSearchQuery}
+                onExecuteSearch={handleExecuteSearch}
+                scope={inBookSearchScope}
+                onScopeChange={setInBookSearchScope}
+                hasMultipleDocs={(work.documents?.length ?? 0) > 1}
+                currentDocLabel={docLabel}
+                results={inBookSearch.data?.results ?? []}
+                isLoading={inBookSearch.isPending}
+                error={inBookSearch.error instanceof Error ? inBookSearch.error : null}
+                onRetry={() => void inBookSearch.refetch()}
+                onClose={() => setSearchSheetOpen(false)}
+                activePassageUid={selectedSearchPassageUid}
+                onSelectResult={handleSelectSearchResult}
+                currentDocUid={documentUid}
+                currentPageUid={currentPageUid}
+              />
+            </div>
           </SheetContent>
         </Sheet>
       ) : null}
@@ -1369,19 +1751,29 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
 
       {/* دکمه‌های شناور برای موبایل — در حالت مطالعه قرصِ مینیمال جایگزین می‌شود */}
       {!studyMode ? (
-        <div className="fixed bottom-20 left-3 z-30 flex gap-2 xl:hidden">
+        <div role="toolbar" aria-label="ابزار کتاب‌خوان" className="fixed bottom-20 left-3 z-30 flex max-w-[calc(100vw-1.5rem)] gap-1 overflow-x-auto rounded-2xl border border-border bg-elevated p-1.5 shadow-lg xl:hidden">
+        <Button
+          size="icon"
+          variant="outline"
+          aria-label="جست‌وجو در کتاب"
+          title="جست‌وجو در این کتاب"
+          className="size-11 rounded-full bg-surface"
+          onClick={() => setSearchSheetOpen(true)}
+        >
+          <Search className="size-4" />
+        </Button>
         <Button
           size="icon"
           variant={pageNoteCount > 0 ? "default" : "outline"}
           aria-label={`یادداشت‌ها${pageNoteCount > 0 ? ` (${pageNoteCount} در این صفحه)` : ""}`}
           title={pageNoteCount > 0 ? `${pageNoteCount} یادداشت در این صفحه` : "یادداشت‌ها"}
-          className="size-11 rounded-full bg-surface"
+          className={cn("size-11 rounded-full", pageNoteCount === 0 && "bg-surface")}
           onClick={() => setNotesSheetOpen(true)}
         >
           <span className="relative">
             <StickyNote className="size-4" />
             {pageNoteCount > 0 ? (
-              <span className="absolute -end-1.5 -top-2 min-w-3.5 rounded-full bg-primary px-0.5 text-center text-[9px] font-bold leading-3.5 text-primary-foreground">
+              <span className="absolute -end-1.5 -top-1 min-w-3.5 rounded-full bg-primary px-0.5 text-center text-[9px] font-bold leading-3.5 text-primary-foreground">
                 {faNum(pageNoteCount)}
               </span>
             ) : null}
@@ -1390,8 +1782,8 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
         <Button
           size="icon"
           variant="outline"
-          aria-label="خروجی PDF"
-          title="خروجی PDF از این کتاب"
+          aria-label="دریافت PDF"
+          title="دریافت PDF از این کتاب"
           className="size-11 rounded-full bg-surface"
           onClick={() => setPdfOpen(true)}
         >
@@ -1409,8 +1801,9 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
         <Button
           size="icon"
           variant={isBookmarked ? "default" : "outline"}
-          aria-label="نشانک"
-          className="size-11 rounded-full bg-surface"
+          aria-label={isBookmarked ? "حذف نشانک این صفحه" : "نشانک‌کردن این صفحه"}
+          aria-pressed={isBookmarked}
+          className={cn("size-11 rounded-full", !isBookmarked && "bg-surface")}
           onClick={() => void toggleBookmark()}
           disabled={bookmarkPending}
         >
@@ -1440,8 +1833,8 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
         <Button
           size="icon"
           variant="outline"
-          aria-label="حالت مطالعهٔ مینیمال"
-          title="حالت مطالعه: صفحهٔ مینیمال با آیکون‌های فهرست و یادداشت"
+          aria-label="مطالعهٔ متمرکز"
+          title="مطالعهٔ متمرکز: صفحهٔ مینیمال با آیکون‌های فهرست و یادداشت"
           className="size-11 rounded-full bg-surface"
           onClick={() => toggleStudyMode(true)}
         >
@@ -1466,6 +1859,16 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
             onClick={() => setTocOpen(true)}
           >
             <List className="size-4.5" />
+          </Button>
+          <Button
+            size="icon"
+            variant="ghost"
+            aria-label="جست‌وجو در این کتاب"
+            title="جست‌وجو در این کتاب"
+            className="size-10 rounded-full"
+            onClick={() => setSearchSheetOpen(true)}
+          >
+            <Search className="size-4.5" />
           </Button>
           <Button
             size="icon"

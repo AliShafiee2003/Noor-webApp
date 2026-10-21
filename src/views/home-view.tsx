@@ -9,12 +9,15 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   BookOpen,
+  Boxes,
   Compass,
   FileText,
   FolderOpen,
   Library,
   Play,
   Search,
+  SlidersHorizontal,
+  Sparkles,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -30,88 +33,67 @@ import { faDate, faNum } from "@/lib/format";
 import type { Project } from "@/lib/types";
 import { useWorkspaceStore } from "@/store/workspace";
 
-type HomeSearchMode = "normalized_phrase" | "strict_phrase";
-
-const MODES: Array<{ value: HomeSearchMode; label: string; hint: string }> = [
-  { value: "normalized_phrase", label: "متن منابع", hint: "جست‌وجوی عبارت در متن کتاب‌ها" },
-  { value: "strict_phrase", label: "نام کتاب", hint: "یافتن کتاب با عنوان آن" },
-];
+import {
+  DEFAULT_SEARCH_STATE,
+  SearchForm,
+  type SearchHashState,
+} from "@/components/search/search-form";
 
 function HeroSearch() {
   const { navigate } = useRoute();
-  const [mode, setMode] = useState<HomeSearchMode>("normalized_phrase");
-  const [q, setQ] = useState("");
+  const [state, setState] = useState<SearchHashState>(DEFAULT_SEARCH_STATE);
 
-  const activeMode = MODES.find((m) => m.value === mode) ?? MODES[0];
+  const handleSubmit = () => {
+    const q = state.q.trim();
+    if (!q && !state.sure.trim()) return;
 
-  const submit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const query = q.trim();
-    if (!query) return;
-    navigate("/search", {
-      q: query,
-      mode,
-      scope: mode === "strict_phrase" ? "titles" : "library",
-    });
+    const queryParams: Record<string, string> = {
+      q,
+      mode: state.mode,
+    };
+
+    if (state.mode === "text") {
+      queryParams.flex = state.flex;
+      if (state.sort === "similarity") queryParams.sort = "similarity";
+      if (state.nearSpelling) queryParams.ns = "1";
+      if (state.expandMorphology) queryParams.mx = "1";
+      if (state.layers.length > 0) queryParams.layers = state.layers.join(",");
+      if (state.minScore > 0) queryParams.ms = String(state.minScore);
+    } else if (state.mode === "words") {
+      queryParams.match = state.wordsMatch;
+      if (state.wordsDistance > 0) {
+        queryParams.dist = String(state.wordsDistance);
+        if (state.wordsOrdered) queryParams.ord = "1";
+      }
+    }
+
+    if (state.target !== "text") queryParams.target = state.target;
+    if (state.scope !== "library") queryParams.scope = state.scope;
+    if (state.author.trim()) queryParams.author = state.author.trim();
+    if (state.work) queryParams.work = state.work;
+    if (state.doc) queryParams.doc = state.doc;
+    if (state.diacritics) queryParams.dia = state.diacritics;
+    if (state.roles.length > 0) queryParams.roles = state.roles.join(",");
+    if (state.lang) queryParams.lang = state.lang;
+    if (state.sure.trim()) {
+      queryParams.sure = state.sure.trim();
+      if (state.aya.trim()) queryParams.aya = state.aya.trim();
+    }
+
+    navigate("/search", queryParams);
   };
 
   return (
-    <section aria-labelledby="home-search-title" className="hero-surface">
-      <Card className="border-0 bg-transparent shadow-none">
-        <CardHeader className="pb-3 text-center">
-          <CardTitle id="home-search-title" className="text-2xl font-bold tracking-tight">
-            جست‌وجو در منابع
-          </CardTitle>
-          <p className="mx-auto mt-1 max-w-md text-sm leading-6 text-muted-foreground">
-            عبارت را در متن منابع بنویسید؛ فقط مواضع تأییدشده با نشانی دقیق نمایش داده می‌شود.
-          </p>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div
-            role="group"
-            aria-label="انتخاب دامنهٔ جست‌وجو"
-            className="flex flex-wrap justify-center gap-2"
-          >
-            {MODES.map((m) => (
-              <button
-                key={m.value}
-                type="button"
-                aria-pressed={mode === m.value}
-                className="choice-chip"
-                onClick={() => setMode(m.value)}
-              >
-                {m.value === "normalized_phrase" ? (
-                  <Search className="size-4" aria-hidden="true" />
-                ) : (
-                  <BookOpen className="size-4" aria-hidden="true" />
-                )}
-                {m.label}
-              </button>
-            ))}
-          </div>
-          <p className="text-center text-xs text-muted-foreground">{activeMode.hint}</p>
-          <form
-            onSubmit={submit}
-            className="mx-auto flex w-full max-w-xl flex-col gap-2 sm:flex-row"
-          >
-            <Input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="عبارت مورد نظر را بنویسید…"
-              aria-label="عبارت جست‌وجو"
-              className="min-h-11 flex-1 bg-surface shadow-sm"
-            />
-            <Button
-              type="submit"
-              className="min-h-11 gap-2 shadow-sm transition-all hover:shadow sm:w-32"
-              disabled={!q.trim()}
-            >
-              <Search className="size-4" aria-hidden="true" />
-              جست‌وجو
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
+    <section aria-labelledby="home-search-title" className="py-2 sm:py-4">
+      <div className="max-w-2xl mx-auto space-y-6">
+        <SearchForm
+          value={state}
+          onChange={(patch) => setState((prev) => ({ ...prev, ...patch }))}
+          onSubmit={handleSubmit}
+          variant="hero"
+          showTitle={true}
+        />
+      </div>
     </section>
   );
 }

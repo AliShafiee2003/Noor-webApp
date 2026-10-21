@@ -157,7 +157,7 @@ func (e *OpenSearchEngine) runVerified(ctx context.Context, req *Request, releas
 		return nil, runState{}, err
 	}
 	// ۱) کاندیدها از OpenSearch (پیمایش پایدار با PIT + search_after؛ _source حداقلی)
-	hits, candSat, err := e.collectCandidates(ctx, req, toks, citationOnly)
+	hits, candSat, err := e.collectCandidates(ctx, req, toks, citationOnly, releaseUID)
 	if err != nil {
 		return nil, runState{}, err
 	}
@@ -198,7 +198,7 @@ func (e *OpenSearchEngine) runVerified(ctx context.Context, req *Request, releas
 		}
 		for i := range rows {
 			r := &rows[i]
-			if !scopeAllows(req, r) {
+			if !scopeAllows(req, r, e.base.catalog) {
 				continue
 			}
 			if !citationAllows(req, r) {
@@ -233,7 +233,7 @@ func (e *OpenSearchEngine) runVerified(ctx context.Context, req *Request, releas
 
 // collectCandidates پرس‌وجوی recall-محور per-mode با فیلتر scope؛ همهٔ کاندیدها
 // در ترتیب قطعی PIT + search_after جمع می‌شوند.
-func (e *OpenSearchEngine) collectCandidates(ctx context.Context, req *Request, toks []string, citationOnly bool) ([]osHit, bool, error) {
+func (e *OpenSearchEngine) collectCandidates(ctx context.Context, req *Request, toks []string, citationOnly bool, releaseUID string) ([]osHit, bool, error) {
 	// پرس‌وجو باید دقیقاً همان‌طور که verifier می‌بیند نرمال شود (پاریتی با LocalEngine):
 	// همهٔ حالت‌ها روی text_n1 با شکل نرمال عبارت؛ زبانی با Fold (هم‌سان با verifier).
 	qN, _ := norm.Normalize(req.Query)
@@ -272,7 +272,11 @@ func (e *OpenSearchEngine) collectCandidates(ctx context.Context, req *Request, 
 		return nil, false, errors.New("حالت جست‌وجو معتبر نیست")
 	}
 	// فیلتر scope روی فیلدهای keyword + kind
-	filter := []any{map[string]any{"term": map[string]any{"kind": "passage"}}}
+	// فقط نسلِ نشست — نتایج نسل‌های قدیمیِ مانده در ایندکس هرگز برنمی‌گردند
+	filter := []any{
+		map[string]any{"term": map[string]any{"kind": "passage"}},
+		map[string]any{"term": map[string]any{"release_uid": releaseUID}},
+	}
 	if req.Scope.Target == "work" && req.Scope.WorkUID != nil {
 		filter = append(filter, map[string]any{"term": map[string]any{"work_uid": *req.Scope.WorkUID}})
 	}

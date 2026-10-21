@@ -737,7 +737,7 @@ export function ProjectView({ uid }: { uid: string }) {
       >
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>تاریخچهٔ فیش</DialogTitle>
+            <DialogTitle>تاریخچهٔ یادداشت</DialogTitle>
             <DialogDescription>
               نسخه‌های پیشین این فیش؛ با هر ذخیره، نسخهٔ قبلی نگه داشته می‌شود.
             </DialogDescription>
@@ -764,6 +764,12 @@ export function ProjectView({ uid }: { uid: string }) {
                   <p className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
                     <Clock className="size-3.5" aria-hidden="true" />
                     نسخهٔ {faNum(typeof rev.version === "number" ? rev.version : 0)}
+                    {typeof rev.version === "number" &&
+                    historyClip?.version === rev.version ? (
+                      <Badge variant="secondary" className="font-normal">
+                        فعلی
+                      </Badge>
+                    ) : null}
                     {typeof rev.updated_at === "string" ? ` · ${faDate(rev.updated_at)}` : ""}
                   </p>
                   <p className="whitespace-pre-wrap text-sm leading-7">

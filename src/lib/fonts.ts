@@ -28,6 +28,9 @@ export const PROSE_FONT_OPTIONS: readonly FontOption[] = [
   { id: "amiri", label: "امیری", note: "نسخ کلاسیک، مناسب اعراب‌گذاری متن حدیث" },
   { id: "scheherazade", label: "شهرزاد جدید", note: "نسخ باز و روشن با اعراب بلند" },
   { id: "vazirmatn", label: "وزیرمتن", note: "بدنهٔ مدرن و یکدست با رابط" },
+  { id: "b-zar", label: "B Zar", note: "قلم سنتی و آشنای مطبوعاتی و کتابی" },
+  { id: "bahij-greta", label: "گرتا", note: "طراحی مدرن و شیوا برای متون و عناوین عربی" },
+  { id: "portada", label: "پورتادا", note: "طراحی مدرن، خوانا و متناسب کتب عربی (Portada ARA)" },
 ] as const;
 
 /** قلم قرآنی — انتخاب نهایی بین Amiri Quran و Scheherazade New روی آیات واقعی مجموعه انجام شد */
@@ -79,6 +82,12 @@ export function arabicStackFor(prose?: string, latin?: string): string {
       return `${latinPart}, "Vazirmatn", "Amiri", Tahoma, sans-serif`;
     case "scheherazade":
       return `${latinPart}, "Scheherazade New", "Amiri", "Vazirmatn", serif`;
+    case "b-zar":
+      return `${latinPart}, "B Zar", "Amiri", "Vazirmatn", serif`;
+    case "bahij-greta":
+      return `${latinPart}, "گرتا", "Amiri", "Vazirmatn", serif`;
+    case "portada":
+      return `${latinPart}, "Portada ARA", "Amiri", "Vazirmatn", serif`;
     default:
       return `${latinPart}, "Amiri", "Scheherazade New", "Vazirmatn", serif`;
   }
@@ -95,6 +104,36 @@ export function uiStackFor(): string {
   return `"Vazirmatn", "Inter", "Segoe UI", Tahoma, sans-serif`;
 }
 
+export const READER_PREFS_STORAGE_KEY = "noor:reader-prefs";
+
+/** خواندن همگام ترجیحات ذخیره‌شدهٔ قلم و خواننده از localStorage برای رندر بدون پرش (FOUT) */
+export function loadCachedReaderPrefs(): Partial<ReaderPrefs> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(READER_PREFS_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") {
+      return parsed as Partial<ReaderPrefs>;
+    }
+  } catch {
+    /* localStorage غیرفعال یا خطای parse */
+  }
+  return {};
+}
+
+/** ذخیرهٔ کش محلی ترجیحات خواننده */
+export function saveCachedReaderPrefs(prefs: Partial<ReaderPrefs>): void {
+  if (typeof window === "undefined") return;
+  try {
+    const existing = loadCachedReaderPrefs();
+    const merged = { ...existing, ...prefs };
+    window.localStorage.setItem(READER_PREFS_STORAGE_KEY, JSON.stringify(merged));
+  } catch {
+    /* صرف‌نظر در صورت محدودیت storage */
+  }
+}
+
 /** اعمال ترجیحات قلم روی متغیرهای سراسری — در Providers و پس از هر تغییر prefs */
 export function applyFontPrefs(prefs?: Partial<ReaderPrefs>): void {
   if (typeof document === "undefined") return;
@@ -103,6 +142,13 @@ export function applyFontPrefs(prefs?: Partial<ReaderPrefs>): void {
   root.style.setProperty("--font-arabic", arabicStackFor(prefs?.font_family, prefs?.font_latin));
   root.style.setProperty("--font-quran", quranStackFor(prefs?.font_quran));
   root.style.setProperty("--font-latin", latinStackFor(prefs?.font_latin));
+}
+
+/** یک‌بار در آغاز کلاینت — پیش از نخستین رندر، تا پرش قلم (FOUT) رخ ندهد */
+export function initFontPrefs(): void {
+  if (typeof window === "undefined") return;
+  const cached = loadCachedReaderPrefs();
+  applyFontPrefs(cached);
 }
 
 /** مقدار معتبر قلم نثر — برای پالایش ورودی prefs قدیمی */

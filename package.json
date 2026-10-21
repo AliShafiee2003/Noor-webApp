@@ -3,10 +3,14 @@
   "version": "0.2.1",
   "private": true,
   "scripts": {
-    "dev": "next dev -p 3000 2>&1 | tee dev.log",
-    "build": "next build && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/",
-    "start": "NODE_ENV=production bun .next/standalone/server.js 2>&1 | tee server.log",
-    "lint": "eslint ."
+    "dev": "next dev -p 3000",
+    "build": "next build",
+    "start": "next start -p 3000",
+    "lint": "eslint .",
+    "check": "tsc --noEmit && next build",
+    "check:lint": "eslint .",
+    "check:all": "tsc --noEmit && eslint . && next build",
+    "design:tokens": "node scripts/sync-design-tokens.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

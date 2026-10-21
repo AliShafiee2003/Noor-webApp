@@ -17,8 +17,13 @@ export interface GoUser {
   role: "admin" | "reader";
 }
 
+export interface GoSession {
+  user: GoUser;
+  csrf: string;
+}
+
 /** فراخوانی GET /auth/session سامانهٔ Go با کوکی‌های همان درخواست */
-export async function resolveGoUser(cookieHeader: string | null): Promise<GoUser | null> {
+export async function resolveGoSession(cookieHeader: string | null): Promise<GoSession | null> {
   if (!cookieHeader) return null;
   try {
     const resp = await fetch(`${UPSTREAM}/api/v1/auth/session`, {
@@ -26,12 +31,20 @@ export async function resolveGoUser(cookieHeader: string | null): Promise<GoUser
       cache: "no-store",
     });
     if (!resp.ok) return null;
-    const data = (await resp.json()) as { user?: GoUser | null };
-    if (data.user && typeof data.user.uid === "string" && data.user.uid) return data.user;
+    const data = (await resp.json()) as { user?: GoUser | null; csrf?: string | null };
+    if (data.user && typeof data.user.uid === "string" && data.user.uid) {
+      return { user: data.user, csrf: data.csrf ?? "" };
+    }
     return null;
   } catch {
     return null;
   }
+}
+
+/** فراخوانی GET /auth/session سامانهٔ Go و بازگرداندن کاربر */
+export async function resolveGoUser(cookieHeader: string | null): Promise<GoUser | null> {
+  const sess = await resolveGoSession(cookieHeader);
+  return sess?.user ?? null;
 }
 
 export function unauthorized(): Response {
@@ -99,6 +112,18 @@ export async function forwardToGo(
     body: init.body,
     extraHeaders,
   });
+
+  /* 204/205/304 در constructor پاسخ با بدنهٔ غیر null مجاز نیست — بدون بدنه برمی‌گردیم */
+  if (resp.status === 204 || resp.status === 205 || resp.status === 304) {
+    const headers = new Headers();
+    const setCookie = resp.headers.get("set-cookie");
+    if (setCookie) headers.set("set-cookie", setCookie);
+    return new Response(null, {
+      status: resp.status,
+      headers,
+    });
+  }
+
   const text = await resp.text();
   return new Response(text, {
     status: resp.status,

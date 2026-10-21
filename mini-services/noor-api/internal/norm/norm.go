@@ -14,7 +14,14 @@ import (
 // Version نسخهٔ فعلی قواعد نرمال‌سازی؛ در index و release ثبت می‌شود.
 // n1-1.1.0: افزودن NFC در ابتدای خط نرمال‌سازی (SEARCH-04) + حذف U+064D کسرتان
 // (SEARCH-05) — تغییر قواعد؛ نمایه‌های ساخته‌شده با نسخهٔ قبلی باید بازسازی شوند.
-const Version = "n1-1.1.0"
+// n1-1.2.0: علائم نگارشی تازه (گیومهٔ خمیده، –، …، ﴾﴿، ۞، · و §) مرز واژه‌اند؛ N2 دیگر
+// پیشوند چسبان را حذف نمی‌کند و جدول قرآنی در صورت حرفی N2 است — بازسازی نمایه لازم است.
+// n1-1.3.0: جدول کامل شکل‌های نمایشی عربی (presentation_tables.go)؛ نویسه‌های کنترلی نامرئی (ZWJ، RLM/LRM/ALM، BOM، soft-hyphen، U+2066..2069،
+// U+061C) حذف می‌شوند و شکل‌های نمایشی چسبیدهٔ پرکاربرد (لا/لآ/لأ/الله) به صورت پایه
+// می‌رسند — تغییر قواعد؛ نمایه‌های ساخته‌شده با نسخهٔ قبلی باید بازسازی شوند.
+// n1-1.4.0: «ۀ» = «هٔ» (L2)؛ رقم بالانویس و «[۱]» چسبیده ارجاع‌اند نه واژه؛ جدول واژگانی N2
+// (همزه روی کرسی، داود/داوود …) — بازسازی نمایه لازم است.
+const Version = "n1-1.4.0"
 
 // ArabicDiacritics مجموعهٔ مصوب علامت‌های اعراب و تطویل (نه بازهٔ کور یونیکد).
 // ۰x064D (تنوین کسر/کسرتان) نیز عضو مجموعه است (SEARCH-05) — نسخهٔ مشابه همین
@@ -30,6 +37,16 @@ var ArabicDiacritics = map[rune]bool{
 
 // ZWNJ نیم‌فاصله — به فاصلهٔ استاندارد نگاشت می‌شود (قرارداد تعریف‌شدهٔ §۴۴).
 const ZWNJ = '\u200C'
+
+// invisibleRunes نویسه‌های کنترلی نامرئی که در N0/N1 حذف می‌شوند (n1-1.3.0):
+// ZWJ، LRM/RLM/ALM و کنترل‌های جهت، BOM، soft-hyphen، U+2066..2069 و U+061C.
+// حذف‌اند نه جداکننده — تا واژه را نشکنند (برخلاف ZWNJ که مرز واژه است).
+var invisibleRunes = map[rune]bool{
+	'\u200B': true, '\u200D': true, '\u200E': true, '\u200F': true,
+	'\u202A': true, '\u202B': true, '\u202C': true, '\u202D': true, '\u202E': true,
+	'\u2066': true, '\u2067': true, '\u2068': true, '\u2069': true,
+	'\u061C': true, '\u00AD': true, '\uFEFF': true,
+}
 
 var digitMap = map[rune]rune{
 	'٠': '0', '١': '1', '٢': '2', '٣': '3', '٤': '4', '٥': '5', '٦': '6', '٧': '7', '٨': '8', '٩': '9',
@@ -47,7 +64,7 @@ func Normalize(s string) (out string, mapToOrig []int) {
 	mapToOrig = make([]int, 0, len(runes))
 	prevSpace := false
 	for i, r := range runes {
-		if r == ZWNJ || unicode.IsSpace(r) {
+		if r == ZWNJ || unicode.IsSpace(r) || IsApprovedPunctuation(r) {
 			if !prevSpace && b.Len() > 0 {
 				b.WriteRune(' ')
 				mapToOrig = append(mapToOrig, nfcMap[i])
@@ -55,26 +72,33 @@ func Normalize(s string) (out string, mapToOrig []int) {
 			prevSpace = true
 			continue
 		}
-		prevSpace = false
-		var emit rune
-		switch {
-		case ArabicDiacritics[r] || r == '\u0640': // اعراب و تطویل: حذف
-			continue
-		case digitMap[r] != 0:
-			emit = digitMap[r]
-		case r == 'ي':
-			emit = 'ی'
-		case r == 'ك':
-			emit = 'ک'
-		case r < 0x250 && unicode.IsUpper(r):
-			emit = unicode.ToLower(r)
-		default:
-			emit = r
+		if invisibleRunes[r] {
+			continue // نامرئی: نه حرف است نه مرز — وضعیت فاصلهٔ قبلی دست نمی‌خورد
 		}
-		b.WriteRune(emit)
-		mapToOrig = append(mapToOrig, nfcMap[i])
+		prevSpace = false
+		if pf, ok := presentationForms[r]; ok {
+			// شکل نمایشی ← صورت پایه؛ هر نویسهٔ حاصل از همان قواعد عبور می‌کند (ي←ی، اعراب حذف…)
+			for _, pr := range pf {
+				if e := mapN1Rune(pr); e != 0 {
+					b.WriteRune(e)
+					mapToOrig = append(mapToOrig, nfcMap[i])
+				}
+			}
+			continue
+		}
+		if e := mapN1Rune(r); e != 0 {
+			b.WriteRune(e)
+			mapToOrig = append(mapToOrig, nfcMap[i])
+		}
 	}
-	return b.String(), mapToOrig
+	res := b.String()
+	for len(res) > 0 && res[len(res)-1] == ' ' {
+		res = res[:len(res)-1]
+		if len(mapToOrig) > 0 {
+			mapToOrig = mapToOrig[:len(mapToOrig)-1]
+		}
+	}
+	return res, mapToOrig
 }
 
 // Fold گسترده‌تر فقط برای mode زبانی (N2 جداست): همزه‌ها، شکل‌های الف، ة/ه، ي/ی، ى.
@@ -134,7 +158,11 @@ func Trigrams(s string) []string {
 
 // WordBoundary بررسی مرز واژه در متن نرمال: نویسهٔ قبل/بعد حرف/رقم نباشند.
 func WordBoundary(s string, start, end int) bool {
-	rs := []rune(s)
+	return WordBoundaryRunes([]rune(s), start, end)
+}
+
+// WordBoundaryRunes همان WordBoundary روی متنی که از پیش به rune تبدیل شده است.
+func WordBoundaryRunes(rs []rune, start, end int) bool {
 	if start < 0 || end > len(rs) || start >= end {
 		return false
 	}
@@ -145,4 +173,38 @@ func WordBoundary(s string, start, end int) bool {
 		return false
 	}
 	return true
+}
+
+// mapN1Rune نگاشت تک‌نویسهٔ N1؛ صفر یعنی حذف (اعراب و تطویل).
+func mapN1Rune(r rune) rune {
+	switch {
+	case ArabicDiacritics[r] || r == '\u0640':
+		return 0
+	case digitMap[r] != 0:
+		return digitMap[r]
+	case r == 'ي':
+		return 'ی'
+	case r == 'ك':
+		return 'ک'
+	case r < 0x250 && unicode.IsUpper(r):
+		return unicode.ToLower(r)
+	}
+	return r
+}
+
+// mapN0Rune نگاشت تک‌نویسهٔ N0 (اعراب حفظ؛ فقط تطویل حذف).
+func mapN0Rune(r rune) rune {
+	switch {
+	case r == '\u0640':
+		return 0
+	case digitMap[r] != 0:
+		return digitMap[r]
+	case r == 'ي':
+		return 'ی'
+	case r == 'ك':
+		return 'ک'
+	case r < 0x250 && unicode.IsUpper(r):
+		return unicode.ToLower(r)
+	}
+	return r
 }

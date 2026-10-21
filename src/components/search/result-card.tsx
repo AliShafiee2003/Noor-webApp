@@ -23,6 +23,7 @@ import {
   Plus,
   Quote,
   TriangleAlert,
+  User,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -43,7 +44,10 @@ import type {
   MatchType,
   Project,
   SearchHighlight,
+  SearchLayer,
+  SearchResponse,
   SearchResultItem,
+  SimilarityCounts,
 } from "@/lib/types";
 import { useToast } from "@/hooks/use-toast";
 import { HadithLocationsDialog } from "@/components/search/hadith-locations-dialog";
@@ -67,23 +71,147 @@ export function roleChipLabel(role: string): string {
   return ROLE_CHIP_LABELS[role] ?? role;
 }
 
-/* ---------- نشان نوع تطبیق — هر حالت رنگ متمایز ---------- */
+/* ---------- نشان نوع تطبیق — هر حالت رنگ متمایز با برچسب لایه (L1 تا L4 طبق §۲۰) ---------- */
 
-const MATCH_TONE: Record<MatchType, string> = {
+const MATCH_TONE: Record<string, string> = {
   exact: "border-primary/40 bg-primary/10 text-primary",
   normalized: "border-link/40 bg-link/10 text-link",
-  linguistic: "border-ayah/50 bg-ayah-soft text-foreground",
+  linguistic: "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+  similar: "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400",
   fuzzy: "border-border bg-muted text-muted-foreground",
 };
 
-function MatchTypeBadge({ type }: { type: MatchType }) {
+const LAYER_INFO: Record<SearchLayer, { label: string; tone: string }> = {
+  L1: { label: "عین متن", tone: MATCH_TONE.exact },
+  L2: { label: "نرمال‌شده", tone: MATCH_TONE.normalized },
+  L3: { label: "هم‌ارزی املایی", tone: MATCH_TONE.linguistic },
+  L4: { label: "نقل‌قول مشابه", tone: MATCH_TONE.similar },
+  L5: { label: "واژهٔ نزدیک", tone: MATCH_TONE.fuzzy },
+};
+
+/**
+ * برچسب لایهٔ تطبیق. موتور FTS5 فیلد `layer` را صریح می‌فرستد؛ برای موتورهای دیگر
+ * (local/opensearch) لایه از `match_type` حدس زده می‌شود (سازگاری عقب‌رو).
+ */
+export function matchTypeLayerLabel(type: string, layer?: SearchLayer | null): { label: string; layer: string } {
+  if (layer && LAYER_INFO[layer]) {
+    if (layer === "L3" && type.includes("پیوستگی")) return { label: "تفاوت پیوستگی", layer };
+    return { label: LAYER_INFO[layer].label, layer };
+  }
+  if (type === "exact") return { label: "عبارت دقیق", layer: "L1" };
+  if (type === "normalized") return { label: "نرمال‌شده", layer: "L2" };
+  if (type.includes("پیوستگی")) return { label: "تفاوت پیوستگی", layer: "L3" };
+  if (type === "linguistic") return { label: "هم‌ارزی املایی", layer: "L3" };
+  if (type.startsWith("L4") || type === "similar") return { label: "نقل‌قول مشابه", layer: "L4" };
+  if (type.startsWith("L5")) return { label: "واژهٔ نزدیک", layer: "L5" };
+  return { label: matchTypeLabels[type as MatchType] ?? type, layer: "L" };
+}
+
+function layerOf(result: SearchResultItem): SearchLayer | null {
+  if (result.layer) return result.layer;
+  const l = matchTypeLayerLabel(result.match_type).layer;
+  return l === "L" ? null : (l as SearchLayer);
+}
+
+const faPercent = (v: number) => `${faNum(Math.round(v * 100))}٪`;
+
+function MatchTypeBadge({ result }: { result: SearchResultItem }) {
+  if (result.passage_uid?.startsWith("title-") || result.match_type === "title") {
+    const isAuthor = result.page?.label === "پدیدآور";
+    return (
+      <Badge
+        variant="outline"
+        className="shrink-0 font-medium gap-1.5 border-primary/40 bg-primary/10 text-primary"
+      >
+        {isAuthor ? <User className="size-3.5" aria-hidden="true" /> : <LibraryBig className="size-3.5" aria-hidden="true" />}
+        <span>{isAuthor ? "پدیدآور" : "عنوان کتاب"}</span>
+      </Badge>
+    );
+  }
+  const type = result.match_type;
+  const layer = layerOf(result);
+  const info = matchTypeLayerLabel(type, result.layer);
+  const tone = layer ? LAYER_INFO[layer].tone : (MATCH_TONE[type] ?? MATCH_TONE.fuzzy);
+  const score = layer === "L4" ? (result.similarity?.score ?? null) : null;
   return (
     <Badge
       variant="outline"
-      className={`shrink-0 font-medium ${MATCH_TONE[type] ?? ""}`}
+      className={`shrink-0 font-medium gap-1.5 ${tone}`}
     >
-      {matchTypeLabels[type] ?? "تطبیق"}
+      <span className="font-mono text-xs px-1.5 py-0.2 rounded bg-background/60 font-bold border border-current/20">
+        {info.layer}
+      </span>
+      <span>{info.label}</span>
+      {score !== null ? (
+        <span className="text-[11px] opacity-80 mr-0.5" title="امتیاز شباهت لفظی (نه درصد اطمینان علمی)">
+          ({faPercent(score)})
+        </span>
+      ) : null}
     </Badge>
+  );
+}
+
+/** خلاصهٔ شمار تغییرات هم‌ترازی L4 به زبان کاربر */
+function similarityCountsText(c: SimilarityCounts): string {
+  const parts: string[] = [];
+  if (c.substitutions) parts.push(`${faNum(c.substitutions)} جانشینی`);
+  if (c.deletions) parts.push(`${faNum(c.deletions)} حذف`);
+  if (c.insertions) parts.push(`${faNum(c.insertions)} افزوده`);
+  if (c.transpositions) parts.push(`${faNum(c.transpositions)} جابه‌جایی`);
+  if (c.block_moves) parts.push(`${faNum(c.block_moves)} جابه‌جایی بلوک`);
+  if (c.near_spelling) parts.push(`${faNum(c.near_spelling)} واژهٔ نزدیک`);
+  if (c.orthographic) parts.push(`${faNum(c.orthographic)} تفاوت املایی`);
+  if (c.honorific) parts.push(`${faNum(c.honorific)} واژهٔ عبارت دعایی`);
+  return parts.join("، ");
+}
+
+/** کادر تفاوت‌ها: L3 (هم‌ارزی‌های اعمال‌شده)، L4 (هم‌ترازی)، L5 (واژهٔ نزدیک) — §۲۰/§۲۳ */
+function MatchDiffs({ result }: { result: SearchResultItem }) {
+  const layer = layerOf(result);
+  if (layer !== "L3" && layer !== "L4" && layer !== "L5") return null;
+  const sim = result.similarity ?? null;
+  const diffs = (result.diffs && result.diffs.length > 0 ? result.diffs : sim?.diffs) ?? [];
+  let summary: string;
+  if (layer === "L4") {
+    summary = sim
+      ? `شباهت لفظی ${faPercent(sim.score)} · پوشش پرسش ${faPercent(sim.coverage)}` +
+        (similarityCountsText(sim.counts) ? ` · ${similarityCountsText(sim.counts)}` : "")
+      : "تطبیق با هم‌ترازی واژگانی؛ شامل تغییر، حذف یا جابه‌جایی در نقل‌قول.";
+  } else if (layer === "L5") {
+    summary = "واژه‌ای با یک تفاوت حرفی با واژهٔ پرسش (فقط با گزینهٔ «واژهٔ نزدیک»)؛ در شمار قطعی نیست.";
+  } else if (result.match_type.includes("پیوستگی")) {
+    summary = "گونهٔ پیوسته/گسستهٔ خط فارسی («می/نمی»، «ها/های» — §۱۶).";
+  } else {
+    summary = "هم‌ارزی املایی: همزه، ة/ه، ی/ى، رسم‌الخط قرآنی یا پیشوند چسبان (و، ف، ب، ک، ل، ال).";
+  }
+  return (
+    <div className="mt-2.5 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
+      <div className="flex items-center gap-1.5 font-medium">
+        <span className="inline-block size-1.5 rounded-full bg-amber-500" />
+        <span>{layer === "L3" ? "علت تطبیق (تفاوت‌های املایی):" : "علت تطبیق:"}</span>
+      </div>
+      <p className="mt-1 text-[11px] text-muted-foreground">{summary}</p>
+      {diffs.length > 0 ? (
+        <ul className="mt-1.5 flex flex-wrap gap-1.5" aria-label="فهرست تفاوت‌ها">
+          {diffs.slice(0, 12).map((d, i) => (
+            <li
+              key={`${i}-${d}`}
+              className="rounded border border-amber-500/30 bg-background/70 px-1.5 py-0.5 text-[11px] text-foreground"
+            >
+              {d}
+            </li>
+          ))}
+          {diffs.length > 12 ? (
+            <li className="px-1 text-[11px] text-muted-foreground">و {faNum(diffs.length - 12)} مورد دیگر</li>
+          ) : null}
+        </ul>
+      ) : null}
+      {sim && layer === "L4" ? (
+        <p className="mt-1 text-[10px] text-muted-foreground/80" dir="ltr">
+          {sim.algorithm} v{sim.version}
+        </p>
+      ) : null}
+    </div>
   );
 }
 
@@ -166,7 +294,7 @@ export function HighlightedSnippet({
         seg.highlighted ? (
           <mark
             key={i}
-            className="rounded-sm bg-match px-0.5 text-foreground"
+            className="rounded-sm bg-match px-0.5 text-match-foreground"
           >
             {seg.text}
           </mark>
@@ -416,6 +544,8 @@ export function ResultCard({
     }
   };
 
+  const isTitle = result.passage_uid?.startsWith("title-") || result.match_type === "title";
+
   return (
     <article
       className={`quiet-card anim-rise rounded-xl border bg-surface p-4 transition-all duration-200 hover:-translate-y-px hover:shadow-[0_2px_12px_-4px_rgb(0_0_0/0.08)] ${
@@ -437,35 +567,46 @@ export function ResultCard({
                 {docLabel}
               </span>
             ) : null}
-            {pageLabel ? (
+            {pageLabel && !isTitle ? (
               <span className="inline-flex items-center gap-1">
                 <FileText className="size-3.5" aria-hidden="true" />
                 ص {pageLabel}
               </span>
             ) : null}
             {result.section?.title ? (
-              <span className="inline-flex items-center gap-1">
-                <ListTree className="size-3.5" aria-hidden="true" />
-                {result.section.title}
+              <span className="inline-flex items-center gap-1 font-medium text-foreground/80">
+                <span className="text-muted-foreground">پدیدآور:</span>
+                {result.section.title.replace(/^مؤلف:\s*/, "")}
               </span>
             ) : null}
-            {!docLabel && !pageLabel && !result.section?.title ? (
+            {isTitle && result.work?.label && result.work.label !== result.work.title ? (
+              <span className="inline-flex items-center gap-1">
+                <span className="text-muted-foreground">عنوان کوتاه:</span>
+                {result.work.label}
+              </span>
+            ) : null}
+            {!isTitle && !docLabel && !pageLabel && !result.section?.title ? (
               <span>مشخصات جای‌گیری ثبت نشده</span>
             ) : null}
           </p>
         </div>
-        <MatchTypeBadge type={result.match_type} />
+        <MatchTypeBadge result={result} />
       </div>
 
-      <blockquote className="mt-3 rounded-lg border-s-4 border-match/70 bg-reader px-3.5 py-3">
-        <p
-          lang="ar"
-          dir="rtl"
-          className="font-reader text-[15px] leading-9 text-foreground sm:text-base sm:leading-[2.1]"
-        >
-          <HighlightedSnippet snippet={result.snippet} highlight={result.highlight} />
-        </p>
-      </blockquote>
+      {result.snippet ? (
+        <blockquote className="mt-3 rounded-lg border-s-4 border-match/70 bg-reader px-3.5 py-3">
+          <p
+            lang="ar"
+            dir="rtl"
+            className="font-reader text-[15px] leading-9 text-foreground sm:text-base sm:leading-[2.1]"
+          >
+            <HighlightedSnippet snippet={result.snippet} highlight={result.highlight} />
+          </p>
+        </blockquote>
+      ) : null}
+
+      {/* کادر تفاوت‌های لفظی و رسم‌الخطی برای L3، L4 و L5 (§۲۰/§۲۳) */}
+      <MatchDiffs result={result} />
 
       {roles.length > 0 || result.local_hadith_uid ? (
         <div className="mt-2.5 flex flex-wrap gap-1.5" aria-label="نقش‌های تطبیق">
@@ -528,20 +669,22 @@ export function ResultCard({
             className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground shadow-sm transition-all hover:bg-primary/90 hover:shadow"
           >
             <BookOpenText className="size-4" aria-hidden="true" />
-            بازکردن اثر
+            مشاهده کتاب
           </HashLink>
         ) : null}
-        <Button
-          type="button"
-          variant="outline"
-          className="min-h-11 gap-2"
-          onClick={() => setClipOpen(true)}
-          disabled={!hasDocument || !offsets}
-          aria-label="افزودن این نتیجه به فیش"
-        >
-          <Plus className="size-4" aria-hidden="true" />
-          افزودن به فیش
-        </Button>
+        {!isTitle ? (
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-11 gap-2"
+            onClick={() => setClipOpen(true)}
+            disabled={!hasDocument || !offsets}
+            aria-label="افزودن این نتیجه به فیش"
+          >
+            <Plus className="size-4" aria-hidden="true" />
+            افزودن به فیش
+          </Button>
+        ) : null}
         <Button
           type="button"
           variant="ghost"
@@ -607,7 +750,7 @@ export function VerifiedCountLine({
   passages,
   hadiths,
 }: {
-  occurrences: number | null;
+  occurrences: number | null | undefined;
   countRelation: string;
   passages?: number | null;
   hadiths?: number | null;
@@ -615,23 +758,75 @@ export function VerifiedCountLine({
   if (occurrences === null || occurrences === undefined) {
     return (
       <p className="text-sm text-muted-foreground">
-        شمارش تطبیق‌ها هنوز کامل نشده است؛ فهرست زیر مواضع تأییدشده است.
+        در حال بررسی و شمارش نتایج…
       </p>
     );
   }
   const exact = countRelation === "exact";
   const parts: string[] = [];
   if (typeof passages === "number" && passages > 0) {
-    parts.push(`${faNum(passages)} قطعهٔ متمایز`);
+    parts.push(`${faNum(passages)} موضع متن`);
   }
   if (typeof hadiths === "number" && hadiths > 0) {
-    parts.push(`${faNum(hadiths)} روایت متمایز`);
+    parts.push(`${faNum(hadiths)} روایت`);
   }
   return (
-    <p className="text-sm text-muted-foreground" aria-live="polite">
-      تطبیق‌های تأییدشده تا این لحظه: {faNum(occurrences)}
-      {exact ? " (شمارش کامل)" : ""}
-      {parts.length > 0 ? ` — شامل ${parts.join(" و ")}` : ""}
-    </p>
+    <div className="flex flex-wrap items-baseline gap-2" aria-live="polite">
+      <span className="text-base font-bold text-foreground">
+        {faNum(occurrences)} نتیجه یافت شد
+      </span>
+      {parts.length > 0 ? (
+        <span className="text-xs text-muted-foreground">
+          (در {parts.join(" و ")})
+        </span>
+      ) : null}
+      {!exact ? (
+        <span className="inline-flex items-center text-[11px] font-medium text-amber-700 dark:text-amber-300 bg-amber-500/15 px-2 py-0.5 rounded-full">
+          در حال شمارش نهایی…
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+const FRIENDLY_LAYER_NAMES: Record<SearchLayer, string> = {
+  L1: "عین عبارت",
+  L2: "تفاوت نوشتاری",
+  L3: "گونه املایی",
+  L4: "مشابه",
+  L5: "نزدیک",
+};
+
+/**
+ * تفکیک نوع تطبیق به زبان ساده و کاربرپسند به جای اصطلاحات فنی L1/L2/L3
+ */
+export function LayerCountsLine({ meta }: { meta: SearchResponse | null | undefined }) {
+  if (!meta) return null;
+  const lc = meta.layer_counts ?? null;
+  const layers = (["L1", "L2", "L3", "L4", "L5"] as SearchLayer[]).filter((l) => (lc?.[l] ?? 0) > 0);
+  const similar = meta.similar_occurrences ?? 0;
+  if (layers.length === 0 && similar === 0) return null;
+  return (
+    <div className="space-y-1 pt-1">
+      {layers.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-1.5 text-xs">
+          <span className="text-muted-foreground text-[11px]">تفکیک تطبیق:</span>
+          {layers.map((l) => (
+            <span
+              key={l}
+              className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md text-[11px] bg-muted/60 border border-border/70 text-foreground"
+            >
+              <span className="text-muted-foreground">{FRIENDLY_LAYER_NAMES[l] || LAYER_INFO[l].label}:</span>
+              <span className="font-semibold text-primary">{faNum(lc?.[l] ?? 0)}</span>
+            </span>
+          ))}
+        </div>
+      ) : null}
+      {similar > 0 ? (
+        <p className="text-[11px] text-muted-foreground">
+          همچنین {faNum(similar)} مورد با شباهت تقریبی یافت شد.
+        </p>
+      ) : null}
+    </div>
   );
 }

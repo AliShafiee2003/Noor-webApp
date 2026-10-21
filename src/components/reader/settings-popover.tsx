@@ -21,15 +21,19 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { ReadingModeControl } from "@/components/design-system/reading-mode-control";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Slider } from "@/components/ui/slider";
 import { useWorkspaceStore } from "@/store/workspace";
 import {
+  PROSE_FONT_OPTIONS,
   QURAN_FONT_OPTIONS,
   QURAN_FONT_SIZE_DEFAULT,
   QURAN_LINE_HEIGHT_DEFAULT,
+  arabicStackFor,
 } from "@/lib/fonts";
-import type { ReaderDisplay, ReaderTextWidth } from "@/lib/types";
+import type { ReaderTextWidth } from "@/lib/types";
 
 const WIDTH_LABELS: Record<ReaderTextWidth, string> = {
   narrow: "باریک",
@@ -135,6 +139,11 @@ export function SettingsPopover({
           <p className="text-sm font-semibold">تنظیمات خواندن</p>
         </div>
 
+        <div className="space-y-2">
+          <Label>نحوهٔ نمایش</Label>
+          <ReadingModeControl value={prefs.display} onValueChange={(display) => updatePrefs({ display })} />
+        </div>
+
         {/* اندازهٔ قلم */}
         <div className="space-y-2">
           <div className="flex items-center justify-between">
@@ -199,29 +208,14 @@ export function SettingsPopover({
         {/* فونت نثر عربی */}
         <div className="space-y-2">
           <Label>قلم نثر عربی</Label>
-          <div className="flex gap-2">
-            <SegButton
-              label="قلم امیری"
-              pressed={(prefs.font_family ?? "amiri") === "amiri"}
-              onClick={() => updatePrefs({ font_family: "amiri" })}
-            >
-              <span style={{ fontFamily: '"Amiri", serif' }}>امیری</span>
-            </SegButton>
-            <SegButton
-              label="قلم شهرزاد جدید"
-              pressed={prefs.font_family === "scheherazade"}
-              onClick={() => updatePrefs({ font_family: "scheherazade" })}
-            >
-              <span style={{ fontFamily: '"Scheherazade New", serif' }}>شهرزاد</span>
-            </SegButton>
-            <SegButton
-              label="قلم وزیرمتن"
-              pressed={prefs.font_family === "vazirmatn"}
-              onClick={() => updatePrefs({ font_family: "vazirmatn" })}
-            >
-              <span style={{ fontFamily: "var(--font-ui)" }}>وزیرمتن</span>
-            </SegButton>
-          </div>
+          <Select value={prefs.font_family ?? "amiri"} onValueChange={(font_family) => updatePrefs({ font_family })}>
+            <SelectTrigger className="w-full" aria-label="قلم نثر عربی"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {PROSE_FONT_OPTIONS.map((o) => (
+                <SelectItem key={o.id} value={o.id}><span style={{ fontFamily: arabicStackFor(o.id) }}>{o.label}</span></SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
 
         {/* قلم قرآنی + اندازهٔ متن قرآنی — تخصیص بر اساس نقش تگ آیه */}
@@ -307,27 +301,6 @@ export function SettingsPopover({
           </div>
         </div>
 
-        {/* حالت نمایش */}
-        <div className="space-y-2">
-          <Label>نحوهٔ نمایش</Label>
-          <div className="flex gap-2">
-            <SegButton
-              label="نمایش صفحه‌محور"
-              pressed={prefs.display === "paged"}
-              onClick={() => updatePrefs({ display: "paged" as ReaderDisplay })}
-            >
-              صفحه‌محور
-            </SegButton>
-            <SegButton
-              label="نمایش پیوسته"
-              pressed={prefs.display === "continuous"}
-              onClick={() => updatePrefs({ display: "continuous" as ReaderDisplay })}
-            >
-              پیوسته
-            </SegButton>
-          </div>
-        </div>
-
         <Separator />
 
         {/* حالت روشن/تیره */}
@@ -367,6 +340,9 @@ export function SettingsPopover({
             تغییر این تنظیمات موضع مطالعهٔ شما را جابه‌جا نمی‌کند.
           </p>
         </div>
+        <p className="text-[11px] text-muted-foreground">
+          برای گزینه‌های بیشتر، پنل را پیمایش کنید.
+        </p>
         <SaveStateLine />
       </PopoverContent>
     </Popover>

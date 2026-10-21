@@ -6,6 +6,7 @@
  */
 import { create } from "zustand";
 import { api, ApiError } from "@/lib/api";
+import { loadCachedReaderPrefs, saveCachedReaderPrefs } from "@/lib/fonts";
 import type { ReaderPrefs, WorkspaceState } from "@/lib/types";
 
 export const defaultReaderPrefs: ReaderPrefs = {
@@ -50,7 +51,7 @@ function schedulePersist(getState: () => WorkspaceStoreState, set: (partial: Par
 }
 
 export const useWorkspaceStore = create<WorkspaceStoreState>((set, get) => ({
-  prefs: { ...defaultReaderPrefs },
+  prefs: { ...defaultReaderPrefs, ...loadCachedReaderPrefs() },
   prefsLoaded: false,
   prefsSaveState: "idle",
   recent: [],
@@ -63,6 +64,9 @@ export const useWorkspaceStore = create<WorkspaceStoreState>((set, get) => ({
     try {
       const ws = await api.get<WorkspaceState>("/workspace");
       const reader = ws.prefs?.reader;
+      if (reader) {
+        saveCachedReaderPrefs(reader);
+      }
       set({
         recent: Array.isArray(ws.recent) ? ws.recent : [],
         prefs: reader ? { ...get().prefs, ...reader } : get().prefs,
@@ -81,7 +85,9 @@ export const useWorkspaceStore = create<WorkspaceStoreState>((set, get) => ({
   },
 
   updatePrefs: (partial, opts) => {
-    set({ prefs: { ...get().prefs, ...partial } });
+    const next = { ...get().prefs, ...partial };
+    saveCachedReaderPrefs(next);
+    set({ prefs: next });
     if (opts?.persist === false) return;
     schedulePersist(get, set);
   },

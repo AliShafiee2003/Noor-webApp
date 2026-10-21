@@ -44,6 +44,33 @@ func ugcUUID() string {
 	return h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:32]
 }
 
+// validateAnchor لنگر سند/صفحه را با کاتالوگ می‌سنجد (nil-امن برای تست‌ها):
+// هایلایت/اشتراک با مقصد ناموجود ثبت نمی‌شود.
+func (s *Server) validateAnchor(w http.ResponseWriter, r *http.Request, documentUID, pageUID string) bool {
+	if s.Catalog == nil {
+		return true
+	}
+	model, err := s.Catalog.Model(documentUID)
+	if err != nil {
+		s.fail(w, r, 422, "validation", "سند ارجاع‌شده در کتابخانه موجود نیست.", false)
+		return false
+	}
+	if pageUID != "" && pageUID != "p-front" {
+		found := false
+		for i := range model.Pages {
+			if model.Pages[i].UID == pageUID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			s.fail(w, r, 422, "validation", "صفحهٔ ارجاع‌شده در سند موجود نیست.", false)
+			return false
+		}
+	}
+	return true
+}
+
 // ugcColors رنگ‌های مجاز هایلایت — همان HIGHLIGHT_COLORS سمت فرانت.
 var ugcColors = map[string]bool{"yellow": true, "green": true, "blue": true, "pink": true, "orange": true}
 
@@ -228,6 +255,9 @@ func (s *Server) handleCreateAnnotation(w http.ResponseWriter, r *http.Request) 
 	}
 	if start < 0 || start >= end || end > 20000 {
 		s.fail(w, r, 422, "validation", "بازهٔ هایلایت نامعتبر است (۰ ≤ ابتدا < انتها ≤ ۲۰٬۰۰۰).", false)
+		return
+	}
+	if !s.validateAnchor(w, r, documentUID, pageUID) {
 		return
 	}
 	color := ugcStr(m, "color")
@@ -447,6 +477,9 @@ func (s *Server) handleCreateShare(w http.ResponseWriter, r *http.Request) {
 	pageUID := ""
 	if v := ugcStrPtr(m, "page_uid"); v != nil {
 		pageUID = *v
+	}
+	if !s.validateAnchor(w, r, documentUID, pageUID) {
+		return
 	}
 	uid := ugcNewID("sh")
 	now := ugcNow()

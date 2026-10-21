@@ -112,46 +112,16 @@ func GoldenQueries() []GoldenCase {
 	add("any_words", "واژهٔ تکراری پرس‌وجو", &Request{Query: "الله الله", Mode: AnyWords, Scope: scopeLib(), PageSize: *pg})
 
 	// — نزدیکی (near) — ۱۰
-	add("near", "دو واژهٔ نزدیک با slop=2", &Request{Query: "الفرق الرسول", Mode: Near, Scope: scopeLib(), Near: &struct {
-		Slop    int  `json:"slop"`
-		Ordered bool `json:"ordered"`
-	}{Slop: 2, Ordered: false}, PageSize: *pg})
-	add("near", "سه واژه با ترتیب", &Request{Query: "الفرق الرسول النبي", Mode: Near, Scope: scopeLib(), Near: &struct {
-		Slop    int  `json:"slop"`
-		Ordered bool `json:"ordered"`
-	}{Slop: 3, Ordered: true}, PageSize: *pg})
-	add("near", "با ترتیب غلط → بی‌نتیجه", &Request{Query: "النبي الفرق", Mode: Near, Scope: scopeLib(), Near: &struct {
-		Slop    int  `json:"slop"`
-		Ordered bool `json:"ordered"`
-	}{Slop: 2, Ordered: true}, PageSize: *pg})
-	add("near", "بدون ترتیب → تطبیق", &Request{Query: "النبي الفرق", Mode: Near, Scope: scopeLib(), Near: &struct {
-		Slop    int  `json:"slop"`
-		Ordered bool `json:"ordered"`
-	}{Slop: 2, Ordered: false}, PageSize: *pg})
-	add("near", "slop بزرگ", &Request{Query: "العلم المال", Mode: Near, Scope: scopeLib(), Near: &struct {
-		Slop    int  `json:"slop"`
-		Ordered bool `json:"ordered"`
-	}{Slop: 6, Ordered: false}, PageSize: *pg})
-	add("near", "slop صفر (مجاورت کامل)", &Request{Query: "بيت الله", Mode: Near, Scope: scopeLib(), Near: &struct {
-		Slop    int  `json:"slop"`
-		Ordered bool `json:"ordered"`
-	}{Slop: 0, Ordered: false}, PageSize: *pg})
-	add("near", "واژه‌های دور در متن فارسی", &Request{Query: "آفاق انفس قرآن", Mode: Near, Scope: scopeLib(), Near: &struct {
-		Slop    int  `json:"slop"`
-		Ordered bool `json:"ordered"`
-	}{Slop: 4, Ordered: false}, PageSize: *pg})
-	add("near", "بدون نتیجه", &Request{Query: "الكعبة الصلاة", Mode: Near, Scope: scopeLib(), Near: &struct {
-		Slop    int  `json:"slop"`
-		Ordered bool `json:"ordered"`
-	}{Slop: 1, Ordered: false}, PageSize: *pg})
-	add("near", "عبارت قرآنی نزدیک", &Request{Query: "معكم أين", Mode: Near, Scope: scopeLib(), Near: &struct {
-		Slop    int  `json:"slop"`
-		Ordered bool `json:"ordered"`
-	}{Slop: 1, Ordered: true}, PageSize: *pg})
-	add("near", "slop منفی معتبر نیست → رفتار پیش‌فرض", &Request{Query: "العلم المال", Mode: Near, Scope: scopeLib(), Near: &struct {
-		Slop    int  `json:"slop"`
-		Ordered bool `json:"ordered"`
-	}{Slop: 0, Ordered: false}, PageSize: *pg})
+	add("near", "دو واژهٔ نزدیک با slop=2", &Request{Query: "الفرق الرسول", Mode: Near, Scope: scopeLib(), Near: &NearOpts{Slop: 2, Ordered: false}, PageSize: *pg})
+	add("near", "سه واژه با ترتیب", &Request{Query: "الفرق الرسول النبي", Mode: Near, Scope: scopeLib(), Near: &NearOpts{Slop: 3, Ordered: true}, PageSize: *pg})
+	add("near", "با ترتیب غلط → بی‌نتیجه", &Request{Query: "النبي الفرق", Mode: Near, Scope: scopeLib(), Near: &NearOpts{Slop: 2, Ordered: true}, PageSize: *pg})
+	add("near", "بدون ترتیب → تطبیق", &Request{Query: "النبي الفرق", Mode: Near, Scope: scopeLib(), Near: &NearOpts{Slop: 2, Ordered: false}, PageSize: *pg})
+	add("near", "slop بزرگ", &Request{Query: "العلم المال", Mode: Near, Scope: scopeLib(), Near: &NearOpts{Slop: 6, Ordered: false}, PageSize: *pg})
+	add("near", "slop صفر (مجاورت کامل)", &Request{Query: "بيت الله", Mode: Near, Scope: scopeLib(), Near: &NearOpts{Slop: 0, Ordered: false}, PageSize: *pg})
+	add("near", "واژه‌های دور در متن فارسی", &Request{Query: "آفاق انفس قرآن", Mode: Near, Scope: scopeLib(), Near: &NearOpts{Slop: 4, Ordered: false}, PageSize: *pg})
+	add("near", "بدون نتیجه", &Request{Query: "الكعبة الصلاة", Mode: Near, Scope: scopeLib(), Near: &NearOpts{Slop: 1, Ordered: false}, PageSize: *pg})
+	add("near", "عبارت قرآنی نزدیک", &Request{Query: "معكم أين", Mode: Near, Scope: scopeLib(), Near: &NearOpts{Slop: 1, Ordered: true}, PageSize: *pg})
+	add("near", "slop منفی معتبر نیست → رفتار پیش‌فرض", &Request{Query: "العلم المال", Mode: Near, Scope: scopeLib(), Near: &NearOpts{Slop: 0, Ordered: false}, PageSize: *pg})
 
 	// — زبانی (linguistic — Fold) — ۱۰
 	add("linguistic", "ة به جای ه", &Request{Query: "مدينة", Mode: Linguistic, Scope: scopeLib(), PageSize: *pg})
