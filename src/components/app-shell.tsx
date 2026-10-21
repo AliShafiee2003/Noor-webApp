@@ -10,6 +10,7 @@ import { useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { RouteErrorBoundary } from "@/components/route-error-boundary";
 import { setPendingDestination, useRoute, type RouteInfo } from "@/lib/hash-router";
 import { useAuthStore } from "@/store/auth";
 import { useWorkspaceStore } from "@/store/workspace";
@@ -188,19 +189,42 @@ export function AppShell() {
 
   const isReader = route.path.startsWith("/read");
 
-  if (route.path === "/recovery") return <RecoveryView />;
+  if (route.path === "/recovery")
+    return (
+      <RouteErrorBoundary routeKey={route.fullHash}>
+        <RecoveryView />
+      </RouteErrorBoundary>
+    );
 
   if (status === "loading") return <ShellSkeleton isReader={isReader} />;
 
   if (status === "guest") {
-    if (route.path === "/invite") return <InviteView />;
-    return <LoginView />;
+    if (route.path === "/invite")
+      return (
+        <RouteErrorBoundary routeKey={route.fullHash}>
+          <InviteView />
+        </RouteErrorBoundary>
+      );
+    return (
+      <RouteErrorBoundary routeKey={route.fullHash}>
+        <LoginView />
+      </RouteErrorBoundary>
+    );
   }
 
   if (status === "pending_mfa") {
     // نشست نیمهٔ ادمین — تکمیل ورود با کد دومرحله‌ای
-    if (route.path === "/invite") return <InviteView />;
-    return <LoginView />;
+    if (route.path === "/invite")
+      return (
+        <RouteErrorBoundary routeKey={route.fullHash}>
+          <InviteView />
+        </RouteErrorBoundary>
+      );
+    return (
+      <RouteErrorBoundary routeKey={route.fullHash}>
+        <LoginView />
+      </RouteErrorBoundary>
+    );
   }
 
   const navItems = user?.role === "admin" ? [...NAV_ITEMS, ADMIN_ITEM] : NAV_ITEMS;
@@ -210,7 +234,9 @@ export function AppShell() {
     return (
       <div className="h-screen w-screen overflow-hidden bg-background">
         <main className="h-full w-full overflow-hidden">
-          <CurrentView route={route} />
+          <RouteErrorBoundary routeKey={route.fullHash}>
+            <CurrentView route={route} />
+          </RouteErrorBoundary>
         </main>
       </div>
     );
@@ -220,7 +246,9 @@ export function AppShell() {
     <div className="flex min-h-screen flex-col bg-background">
       <SiteHeader navItems={navItems} />
       <main className="flex-1 pb-8">
-        <CurrentView route={route} />
+        <RouteErrorBoundary routeKey={route.fullHash}>
+          <CurrentView route={route} />
+        </RouteErrorBoundary>
       </main>
     </div>
   );

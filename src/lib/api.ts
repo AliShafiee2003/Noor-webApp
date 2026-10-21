@@ -41,8 +41,13 @@ export class ApiError extends Error {
 
 const NETWORK_ERROR_MESSAGE =
   "ارتباط با سرور برقرار نشد؛ اتصال خود را بررسی کنید و دوباره تلاش کنید.";
+const TIMEOUT_ERROR_MESSAGE =
+  "پاسخ سرور بیش از حد طول کشید؛ کمی بعد دوباره تلاش کنید.";
 const BAD_RESPONSE_MESSAGE =
   "پاسخ نامعتبری از سرور دریافت شد؛ دوباره تلاش کنید. اگر تکرار شد با مدیر سامانه در تماس باشید.";
+
+/** مهلت پیش‌فرض هر درخواست — دانلود فایل از مسیر api عبور نمی‌کند (href/open). */
+const DEFAULT_TIMEOUT_MS = 15_000;
 
 /* ---------- CSRF (فقط حافظه) ---------- */
 
@@ -135,6 +140,10 @@ async function execute<T>(options: RequestOptions, csrf: string | null): Promise
   const isMutation = method !== "GET";
   if (isMutation && csrf) headers[CSRF_HEADER] = csrf;
 
+  /* ترکیب مهلت پیش‌فرض با signal صادرکننده — لغو خود caller حفظ می‌شود */
+  const timeoutSignal = AbortSignal.timeout(DEFAULT_TIMEOUT_MS);
+  const abort = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+
   let response: Response;
   try {
     response = await fetch(apiUrl(path, params), {
@@ -142,10 +151,18 @@ async function execute<T>(options: RequestOptions, csrf: string | null): Promise
       headers,
       credentials: "include",
       body: body === undefined ? undefined : JSON.stringify(body),
-      signal,
+      signal: abort,
     });
   } catch (err) {
-    if (err instanceof DOMException && err.name === "AbortError") throw err;
+    if (signal?.aborted) throw err;
+    if (err instanceof DOMException && err.name === "TimeoutError") {
+      throw new ApiError({
+        code: "timeout",
+        message: TIMEOUT_ERROR_MESSAGE,
+        retryable: true,
+        status: 0,
+      });
+    }
     throw new ApiError({
       code: "unavailable",
       message: NETWORK_ERROR_MESSAGE,

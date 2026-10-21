@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ThemeProvider, useTheme } from "next-themes";
 import { DirectionProvider } from "@radix-ui/react-direction";
 import { Toaster } from "@/components/ui/toaster";
+import { ApiError } from "@/lib/api";
 import { initPalette, applyStoredPaletteForMode } from "@/lib/palette";
 import { applyFontPrefs, initFontPrefs } from "@/lib/fonts";
 import { useAuthStore } from "@/store/auth";
@@ -21,7 +22,11 @@ export function Providers({ children }: { children: React.ReactNode }) {
         defaultOptions: {
           queries: {
             staleTime: 30_000,
-            retry: false,
+            /* تلاش مجدد فقط برای خطای گذرا (retryable) و حداکثر ۲ بار؛
+               خطاهای منطقی/اعتبارسنجی فوری تمام می‌شوند تا پیام درست نمایش یابد. */
+            retry: (failureCount, error) =>
+              (error instanceof ApiError ? error.retryable : false) &&
+              failureCount < 2,
             refetchOnWindowFocus: false,
           },
         },
