@@ -149,14 +149,36 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
     }
   }, [requestedPageUid, fallbackPageUid, pagesQuery.isSuccess, pageRefs, positionQuery.data, documentUid]);
 
-  /* ---------- حالت پیوسته: همهٔ صفحه‌ها با موازی‌سازی محدود ---------- */
+  /* صفحهٔ فعلی در حالت پیوسته — با اسکرول به‌روز می‌شود */
+  const [contCurrentUid, setContCurrentUid] = useState<string | null>(null);
+  const contCurrentRef = useRef<string | null>(null);
+
+  /* ---------- حالت پیوسته: پنجرهٔ اسکرول (STAB-01) ----------
+     قبل: همهٔ صفحه‌های جلد همزمان استعلام می‌شدند (تا ~۴۷۰ درخواست موازی،
+     مرورگر و API را قفل می‌کرد). حالا فقط صفحه‌های نزدیکِ موضع فعال
+     می‌شوند: ۲ صفحه عقب + ۱۳ صفحه جلو. کش و staleTime ۵ دقیقه حفظ است،
+     پس متنِ بارگذاری‌شده هنگام خارج‌شدن از پنجره محو نمی‌شود. */
   const continuous = display === "continuous";
+  const CONT_WINDOW_BEFORE = 2;
+  const CONT_WINDOW_AFTER = 12;
+  const contFocusedUid = contCurrentUid ?? requestedPageUid ?? fallbackPageUid;
+  const contWindow = useMemo(() => {
+    if (!continuous) return new Set<string>();
+    const idx = contFocusedUid
+      ? pageRefs.findIndex((r) => r.page_uid === contFocusedUid)
+      : -1;
+    const at = idx >= 0 ? idx : 0;
+    const from = Math.max(0, at - CONT_WINDOW_BEFORE);
+    const to = Math.min(pageRefs.length, at + 1 + CONT_WINDOW_AFTER);
+    return new Set(pageRefs.slice(from, to).map((r) => r.page_uid));
+  }, [continuous, contFocusedUid, pageRefs]);
+
   const pagesQueries = useQueries({
     queries: (continuous ? pageRefs : []).map((ref) => ({
       queryKey: ["reader-page", documentUid, ref.page_uid],
       queryFn: () => api.get<PagePayload>(`/documents/${documentUid}/pages/${ref.page_uid}`),
       retry: false,
-      enabled: continuous && !!ref.page_uid,
+      enabled: continuous && contWindow.has(ref.page_uid),
       staleTime: 5 * 60_000,
     })),
   });
@@ -172,10 +194,6 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
   const pagesPendingCount = continuous
     ? pagesQueries.filter((q) => q.isPending).length
     : 0;
-
-  /* صفحهٔ فعلی در حالت پیوسته — با اسکرول به‌روز می‌شود */
-  const [contCurrentUid, setContCurrentUid] = useState<string | null>(null);
-  const contCurrentRef = useRef<string | null>(null);
 
   const currentPageUid =
     display === "continuous"
@@ -1372,9 +1390,9 @@ export function ReaderView({ documentUid }: { documentUid: string }) {
           {continuous ? (
             /* ---------- پیوسته: همهٔ صفحه‌ها پشت‌سرهم در یک قاب واحد و بدون خط‌کشی ---------- */
             <div className="mx-auto my-4 max-w-[760px] rounded-2xl border border-border bg-reader px-4 py-6 shadow-sm md:px-8 md:py-8">
-              {pageRefs.map((ref) => {
+              {pageRefs.map((ref, refIdx) => {
                 const payload = payloadByUid[ref.page_uid];
-                const q = pagesQueries[pageRefs.indexOf(ref)];
+                const q = pagesQueries[refIdx];
                 return (
                   <section
                     key={ref.page_uid}
