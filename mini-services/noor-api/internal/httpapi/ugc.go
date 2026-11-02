@@ -15,7 +15,9 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -178,15 +180,16 @@ type ugcHighlightRow struct {
 	StartCP, EndCP                              int
 	Text, Color                                 string
 	Note                                        sql.NullString
+	GroupUID                                    sql.NullString
 	CreatedAt, UpdatedAt                        string
 }
 
-const ugcHighlightCols = `uid, user_uid, document_uid, page_uid, block_id, start_cp, end_cp, text, color, note, created_at, updated_at`
+const ugcHighlightCols = `uid, user_uid, document_uid, page_uid, block_id, start_cp, end_cp, text, color, note, group_uid, created_at, updated_at`
 
 func scanUGCHighlight(row interface{ Scan(...any) error }) (*ugcHighlightRow, bool) {
 	h := &ugcHighlightRow{}
 	err := row.Scan(&h.UID, &h.UserUID, &h.DocumentUID, &h.PageUID, &h.BlockID,
-		&h.StartCP, &h.EndCP, &h.Text, &h.Color, &h.Note, &h.CreatedAt, &h.UpdatedAt)
+		&h.StartCP, &h.EndCP, &h.Text, &h.Color, &h.Note, &h.GroupUID, &h.CreatedAt, &h.UpdatedAt)
 	if err != nil {
 		return nil, false
 	}
@@ -202,7 +205,7 @@ func highlightJSON(h *ugcHighlightRow) map[string]any {
 	return map[string]any{
 		"uid": h.UID, "document_uid": h.DocumentUID, "page_uid": h.PageUID,
 		"block_id": h.BlockID, "start": h.StartCP, "end": h.EndCP,
-		"text": h.Text, "color": color, "note": ugcNil(h.Note),
+		"text": h.Text, "color": color, "note": ugcNil(h.Note), "group_uid": ugcNil(h.GroupUID),
 		"created_at": h.CreatedAt, "updated_at": h.UpdatedAt,
 	}
 }
@@ -264,19 +267,31 @@ func (s *Server) handleCreateAnnotation(w http.ResponseWriter, r *http.Request) 
 	if !isHighlightColor(color) {
 		color = "yellow"
 	}
+	/* هایلایت چندپاراگرافی: همهٔ قطعه‌ها یک group_uid مشترک دارند تا حذف/ویرایش
+	   هر قطعه به کل گروه اعمال شود. تک‌هایلایت بدون گروه می‌ماند (سازگاری). */
+	groupUID := strings.TrimSpace(ugcStr(m, "group_uid"))
+	if len(groupUID) > 100 {
+		s.fail(w, r, 422, "validation", "شناسهٔ گروه هایلایت نامعتبر است.", false)
+		return
+	}
+	var groupArg any
+	if groupUID != "" {
+		groupArg = groupUID
+	}
 	uid := ugcNewID("hl")
 	now := ugcNow()
 	storedText := ugcTrimRunes(text, 4000)
 	if _, err := s.DB.Exec(`INSERT INTO highlights(`+ugcHighlightCols+`)
-                VALUES(?,?,?,?,?,?,?,?,?,NULL,?,?)`,
+                VALUES(?,?,?,?,?,?,?,?,?,NULL,?,?,?)`,
 		uid, u.UID, documentUID, pageUID, blockID, start, end,
-		storedText, color, now, now); err != nil {
+		storedText, color, groupArg, now, now); err != nil {
 		s.fail(w, r, 500, "internal", "ثبت هایلایت ممکن نشد؛ دوباره تلاش کنید.", true)
 		return
 	}
 	h := &ugcHighlightRow{UID: uid, UserUID: u.UID, DocumentUID: documentUID, PageUID: pageUID,
 		BlockID: blockID, StartCP: int(start), EndCP: int(end), Text: storedText,
-		Color: color, CreatedAt: now, UpdatedAt: now}
+		Color: color, GroupUID: sql.NullString{String: groupUID, Valid: groupUID != ""},
+		CreatedAt: now, UpdatedAt: now}
 	s.okStatus(w, 201, highlightJSON(h))
 }
 
@@ -323,8 +338,16 @@ func (s *Server) handleUpdateAnnotation(w http.ResponseWriter, r *http.Request) 
 	}
 	now := ugcNow()
 	sets = append(sets, "updated_at=?")
-	args = append(args, now, uid)
-	if _, err := s.DB.Exec(`UPDATE highlights SET `+strings.Join(sets, ", ")+` WHERE uid=?`, args...); err != nil {
+	args = append(args, now)
+	where := "uid=?"
+	if h.GroupUID.Valid && h.GroupUID.String != "" {
+		/* رنگ/یادداشت روی هر قطعه به کل گروه چندپاراگرافی اعمال می‌شود. */
+		where = "user_uid=? AND group_uid=?"
+		args = append(args, u.UID, h.GroupUID.String)
+	} else {
+		args = append(args, uid)
+	}
+	if _, err := s.DB.Exec(`UPDATE highlights SET `+strings.Join(sets, ", ")+` WHERE `+where, args...); err != nil {
 		s.fail(w, r, 500, "internal", "به‌روزرسانی هایلایت ممکن نشد؛ دوباره تلاش کنید.", true)
 		return
 	}
@@ -345,7 +368,13 @@ func (s *Server) handleDeleteAnnotation(w http.ResponseWriter, r *http.Request) 
 		s.fail(w, r, 404, "not_found", "هایلایت مورد نظر یافت نشد.", false)
 		return
 	}
-	if _, err := s.DB.Exec(`DELETE FROM highlights WHERE uid=?`, uid); err != nil {
+	if h.GroupUID.Valid && h.GroupUID.String != "" {
+		/* حذف یک قطعه = حذف کل هایلایت چندپاراگرافی */
+		if _, err := s.DB.Exec(`DELETE FROM highlights WHERE user_uid=? AND group_uid=?`, u.UID, h.GroupUID.String); err != nil {
+			s.fail(w, r, 500, "internal", "حذف هایلایت ممکن نشد؛ دوباره تلاش کنید.", true)
+			return
+		}
+	} else if _, err := s.DB.Exec(`DELETE FROM highlights WHERE uid=?`, uid); err != nil {
 		s.fail(w, r, 500, "internal", "حذف هایلایت ممکن نشد؛ دوباره تلاش کنید.", true)
 		return
 	}
@@ -379,18 +408,31 @@ func scanUGCShare(row interface{ Scan(...any) error }) (*ugcShareRow, bool) {
 	return sh, true
 }
 
-// shareURLPath مسیر hash-router کتاب‌خوان: #/read/<doc>?pg=<page>&shared=<uid>
+// shareURLPath مسیر مطالعهٔ کتاب‌خوان پس از فاز ۲: /library/book/read?d=<doc>&pg=<N>&shared=<uid>
+// (نام اثر را خود کتاب‌خوان پس از بازگشایی می‌نویسد؛ pg عددی می‌شود: p-001 → 1)
 func shareURLPath(documentUID, pageUID, id string) string {
 	params := url.Values{}
+	if documentUID != "" {
+		params.Set("d", documentUID)
+	}
 	if pageUID != "" {
-		params.Set("pg", pageUID)
+		params.Set("pg", pageTerm(pageUID))
 	}
 	params.Set("shared", id)
-	qs := params.Encode()
-	if qs != "" {
-		return fmt.Sprintf("#/read/%s?%s", documentUID, qs)
+	return "/library/book/read?" + params.Encode()
+}
+
+// pageTerm شمارهٔ صفحه در نشانی: p-016 → 16؛ غیرعددی همان raw می‌ماند.
+func pageTerm(pageUID string) string {
+	m := regexp.MustCompile(`^p-(\d+)$`).FindStringSubmatch(pageUID)
+	if m == nil {
+		return pageUID
 	}
-	return "#/read/" + documentUID
+	n, err := strconv.Atoi(m[1])
+	if err != nil {
+		return pageUID
+	}
+	return strconv.Itoa(n)
 }
 
 func (sh *ugcShareRow) kindJSON() string {

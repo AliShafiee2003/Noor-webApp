@@ -1,0 +1,388 @@
+/* ==========================================================================
+   ریدر موبایل نور — پورت مستقیم epub_reader_prototype.html با اسکوپ .rm-root
+   (قاب ۴۱۲×۸۶۰ پروتوتایپ → تمام‌صفحهٔ موبایل؛ عرض/ارتفاع با --rm-w/--rm-h از JS)
+   ========================================================================== */
+
+/* ۱. فونت‌ها — ۹ خانوادهٔ پروتوتایپ (Vazirmatn و Inter از fontsource می‌آیند) */
+@font-face{font-family:'MaterialIcons';src:url('/fonts/reader/MaterialIcons-Regular.otf') format('opentype');font-weight:400;font-style:normal;font-display:block}
+/* ۲. توکن‌ها: بوم مطالعه (--reader/--reader-text) + کروم رابط کاربری از پوسته‌های اصلی سایت */
+.rm-root{
+  --fs:20px; --lh:1.8; --para:.6; --hm:20px; --rm-w:412px; --rm-h:860px; --rm-card-scale:.218;
+  --font:'Vazirmatn',sans-serif; --talign:start; --cdir:rtl; --prog:rtl;
+  /* بوم مطالعه از --reader و --reader-text تغذیه می‌کند؛ هدر و فوتر از کروم پوستهٔ اصلی سایت (--chrome/--surface/--text) */
+  --page-bg:var(--reader); --page-text:var(--reader-text,var(--text)); --page-sec:var(--reader-muted,var(--muted)); --page-ctrl:var(--reader-ctrl,var(--muted-soft));
+  --accent:var(--primary); --accent-dark:color-mix(in srgb,var(--primary) 78%,#000); --accent-light:color-mix(in srgb,var(--primary) 85%,#fff);
+  --sel:color-mix(in srgb,var(--primary) 25%,transparent); --hit-cur:color-mix(in srgb,var(--primary) 45%,transparent); --bm-wash:color-mix(in srgb,var(--match) 70%,transparent);
+  --chrome-surface:var(--chrome,var(--surface)); --chrome-t2:color-mix(in srgb,var(--chrome,var(--surface)) 82%,var(--text)); --chrome-card:var(--surface); --chrome-low:var(--paper-2);
+  --on-surface:var(--text); --on-surface-var:var(--muted); --txt:var(--text); --sec:var(--muted);
+  --primary-container:var(--accent-soft); --on-primary-container:var(--text);
+  --secondary-container:var(--muted-soft); --on-secondary-container:var(--text);
+  --outline:var(--control-border); --outline-var:var(--border); --divider:var(--border);
+  --track:color-mix(in srgb,var(--surface) 70%,var(--text));
+}
+
+/* ۳. قاب اپ */
+.rm-root{position:relative;width:100%;height:100dvh;overflow:hidden;background:var(--page-bg);color:var(--page-text);font-family:'Vazirmatn',sans-serif;direction:rtl;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent}
+.rm-root *{box-sizing:border-box;scrollbar-width:none}
+.rm-root ::-webkit-scrollbar{display:none}
+.rm-root button{font-family:inherit;color:inherit;background:none;border:0;cursor:pointer;padding:0}
+.rm-root .rm-mi{font-family:'MaterialIcons';font-style:normal;font-weight:400;font-size:24px;line-height:1;display:inline-block;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;user-select:none;flex:none}
+.rm-root .rm-flip{transform:scaleX(-1)}
+
+/* ── لایه ۱: محتوای کتاب ── */
+.rm-stage{position:absolute;inset:0;z-index:1;touch-action:none;cursor:default;--text:var(--page-text);--muted:var(--page-sec);--color-foreground:var(--page-text);--color-muted-foreground:var(--page-sec)}
+.rm-root[data-mode="scroll"] .rm-stage{touch-action:pan-y}
+.rm-pages-view,.rm-scroll-view{position:absolute;inset:0}
+.rm-pages-view{overflow:hidden}
+.rm-scroll-view{overflow-y:auto;padding:18px var(--hm) 96px;display:none;overscroll-behavior:contain;touch-action:pan-y;cursor:grab}
+.rm-scroll-view.dragging{cursor:grabbing}
+.rm-root[data-mode="scroll"] .rm-pages-view{display:none}
+.rm-root[data-mode="scroll"] .rm-scroll-view{display:block}
+.rm-pages-track{position:absolute;top:0;bottom:0;right:0;width:100%;height:100%;display:flex;direction:var(--prog);transition:transform .32s cubic-bezier(.215,.61,.355,1);will-change:transform}
+.rm-pages-track.dragging{transition:none}
+.rm-page{flex:0 0 var(--rm-w);width:var(--rm-w);height:var(--rm-h);padding:18px var(--hm) 34px;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-start}
+.rm-measurer{position:absolute;visibility:hidden;pointer-events:none;left:-9999px;top:0;width:calc(var(--rm-w) - 2*var(--hm))}
+.rm-book{font-family:var(--font);font-size:var(--fs);line-height:var(--lh);color:var(--page-text);text-align:var(--talign);direction:var(--cdir);-webkit-touch-callout:none}
+.rm-root:not(.selecting) .rm-book,.rm-root:not(.selecting) .select-text{user-select:none;-webkit-user-select:none}
+.rm-sec{content-visibility:auto;contain-intrinsic-size:auto 520px}
+.rm-sec-placeholder{height:140px}
+.rm-book .group{margin-bottom:calc(var(--fs)*var(--para))}
+.rm-book p{text-align:var(--talign)}
+.rm-book-p{margin:0 0 calc(var(--fs)*var(--para));text-align:var(--talign);direction:var(--cdir);unicode-bidi:plaintext}
+.rm-book-h{font-size:1.25em;font-weight:700;line-height:1.45;margin:0 0 .55em;color:var(--page-text);direction:var(--cdir);unicode-bidi:plaintext}
+.rm-scroll-view .rm-book-h.chapter-start{margin-top:1.4em;padding-top:.6em;border-top:1px solid var(--divider)}
+.rm-scroll-view .rm-book-h.chapter-start:first-child{margin-top:0;padding-top:0;border-top:0}
+.rm-book-img{margin:.35em 0 calc(var(--fs)*var(--para));border-radius:8px;overflow:hidden;color:var(--page-sec)}
+a.rm-fn{color:var(--accent);font-size:.7em;vertical-align:super;line-height:0;cursor:pointer;text-decoration:none;font-weight:700;padding:0 2px}
+a.rm-ilink{color:var(--accent);text-decoration:underline;text-underline-offset:3px;cursor:pointer}
+.rm-root mark.rm-hit{background:var(--sel);color:inherit;border-radius:3px;padding:0;box-decoration-break:clone;-webkit-box-decoration-break:clone}
+.rm-root mark.rm-hit.cur{background:var(--hit-cur);outline:1.5px solid var(--accent)}
+.rm-bm-flash{background:var(--bm-wash);border-radius:3px;animation:rmbmflash 3s ease-out forwards;box-decoration-break:clone;-webkit-box-decoration-break:clone}
+@keyframes rmbmflash{0%,70%{background:var(--bm-wash)}100%{background:transparent}}
+.rm-root.selecting .rm-pages-view,.rm-root.selecting .rm-scroll-view{user-select:text;-webkit-user-select:text}
+/* دسکتاپ: انتخاب با ماوس فعال است، حتی پیش از افزوده‌شدن کلاس selecting */
+@media (hover:hover) and (pointer:fine){
+  .rm-root:not(.locked) .rm-book,.rm-root:not(.locked) .select-text{user-select:text;-webkit-user-select:text}
+  .rm-root:not(.locked) .rm-book{cursor:text}
+}
+.rm-root ::selection{background:var(--sel);color:inherit}
+
+/* کپسول شماره صفحه شناور (نمایش موقت ۳ ثانیه‌ای با افکت شیشه‌ای مدرن) */
+#rm-pill{position:absolute;bottom:12px;left:50%;transform:translateX(-50%) translateY(4px);z-index:9;background:rgba(0,0,0,.68);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);color:#fff;font-size:12px;font-weight:500;padding:5px 14px;border-radius:999px;border:1px solid rgba(255,255,255,.16);box-shadow:0 3px 10px rgba(0,0,0,.35);cursor:pointer;white-space:nowrap;font-family:'Vazirmatn',sans-serif;opacity:0;pointer-events:none;transition:opacity .35s cubic-bezier(.215,.61,.355,1),transform .35s cubic-bezier(.215,.61,.355,1)}
+#rm-pill.visible{opacity:1;pointer-events:auto;transform:translateX(-50%) translateY(0)}
+.bars-on #rm-pill,.rm-root[data-mode="scroll"] #rm-pill,.rm-root.no-pill #rm-pill{display:none!important}
+/* اسکرول‌بار سریع (نوار باریک در مطالعه، عریض با باکس فصل و صفحه در ۲ ثانیه) */
+#rm-scrubber{position:absolute;top:0;bottom:0;right:0;width:14px;z-index:15;display:none;touch-action:none}
+.rm-root[data-mode="scroll"] #rm-scrubber{display:block}
+#rm-scrubThumb{position:absolute;right:2px;width:3px;height:48px;border-radius:999px;background:color-mix(in srgb,var(--page-text) 28%,transparent);opacity:0;transition:opacity .25s ease,width .22s cubic-bezier(.215,.61,.355,1),background-color .22s ease;pointer-events:none;will-change:width,opacity}
+#rm-scrubber.show #rm-scrubThumb{opacity:.75}
+#rm-scrubber.drag #rm-scrubThumb,#rm-scrubber.hold #rm-scrubThumb{width:6px;opacity:1;background:var(--primary);box-shadow:0 0 6px color-mix(in srgb,var(--primary) 40%,transparent)}
+#rm-scrubTip{position:absolute;right:32px;min-width:130px;max-width:260px;padding:8px 12px;border-radius:12px;background:rgba(20,26,34,.92);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,.16);box-shadow:0 4px 20px rgba(0,0,0,.45);color:#fff;pointer-events:none;opacity:0;transform:translateX(6px);transition:opacity .25s cubic-bezier(.215,.61,.355,1),transform .25s cubic-bezier(.215,.61,.355,1);z-index:20;font-family:'Vazirmatn',sans-serif;display:flex;flex-direction:column;gap:3px;direction:rtl;text-align:start}
+#rm-scrubber.drag #rm-scrubTip,#rm-scrubber.hold #rm-scrubTip{opacity:1;transform:translateX(0)}
+.rm-scrub-title{font-size:12px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.4}
+.rm-scrub-meta{font-size:11px;font-weight:500;color:rgba(255,255,255,.75);display:flex;align-items:center;gap:6px;font-variant-numeric:tabular-nums;line-height:1.3;white-space:nowrap}
+.rm-scrub-dot{opacity:.5;font-size:9px}
+
+/* منوی انتخاب متن + دستگیره‌ها */
+#rm-selBubble{position:absolute;z-index:6;display:none;background:var(--chrome-card);color:var(--on-surface);border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.3),0 4px 12px rgba(0,0,0,.25);overflow:hidden;white-space:nowrap;font-family:'Vazirmatn',sans-serif;max-width:calc(100vw - 16px)}
+#rm-selBubble.show{display:flex}
+#rm-selBubble button{padding:9px 10px;font-size:13px;font-weight:500;color:var(--on-surface);min-height:40px}
+#rm-selBubble button:hover{background:rgba(127,127,127,.14)}
+#rm-selBubble button.rm-swatch{display:flex;align-items:center;justify-content:center;padding:9px 6px}
+.rm-selHandle{position:absolute;z-index:6;width:22px;height:22px;background:var(--accent);display:none;touch-action:none;cursor:grab;box-shadow:0 1px 3px rgba(0,0,0,.35);padding:0;border:0}
+.rm-selHandle.show{display:block}
+#rm-hStart{border-radius:50% 0 50% 50%}
+#rm-hEnd{border-radius:0 50% 50% 50%}
+
+/* ── لایه ۲: روبان نشانک ── */
+#rm-ribbon{position:absolute;top:0;right:14px;width:14px;height:36px;z-index:2;pointer-events:none;transform:translateY(-110%);transition:transform .28s cubic-bezier(.215,.61,.355,1)}
+#rm-ribbon.on{transform:none}
+#rm-ribbon svg{overflow:visible;display:block}
+/* ── لایه ۳: تاریک‌کنندهٔ روشنایی ── */
+
+/* ==========================================================================
+   ۴. نوار ابزار بالا
+   ========================================================================== */
+#rm-toolbar{position:absolute;top:0;left:0;right:0;z-index:10;background:var(--chrome-surface);color:var(--on-surface);box-shadow:0 2px 4px rgba(0,0,0,.2),0 3px 6px rgba(0,0,0,.14);transition:transform .25s cubic-bezier(.215,.61,.355,1)}
+.bars-off #rm-toolbar,.locked #rm-toolbar{transform:translateY(-300%)}
+.rm-t1{height:40px;display:flex;align-items:center}
+.rm-t1-title{flex:1;text-align:center;font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rm-t1-badge{font-size:12px;font-weight:500;padding-right:8px;display:none}
+.searching .rm-t1-badge{display:block}
+.rm-t1-count{position:absolute;top:1px;right:1px;min-width:16px;height:16px;padding:0 4px;border-radius:999px;background:var(--primary);color:var(--primary-foreground,#fff);font-size:9px;font-weight:700;line-height:16px;text-align:center;pointer-events:none}
+.rm-t1-spacer{width:48px}
+.rm-hr{height:1px;background:var(--divider)}
+.rm-root .ib{width:40px;height:40px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;color:var(--on-surface);position:relative;flex:none;transition:background .15s}
+.rm-root .ib:hover{background:rgba(127,127,127,.14)}
+.rm-root .ib:active{background:rgba(127,127,127,.26)}
+.rm-root .ib.big{width:48px;height:48px}
+.rm-root .ib[disabled]{opacity:.38;pointer-events:none}
+.rm-root .ib.acc{color:var(--accent)}
+.rm-root .ib.pri{color:var(--primary)}
+.rm-t2{height:46px;background:var(--chrome-t2);position:relative;overflow:hidden}
+.rm-t2-scroll{height:100%;overflow-x:auto;overflow-y:hidden;display:flex;cursor:grab;touch-action:pan-x;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+.rm-t2-scroll::-webkit-scrollbar{display:none}
+.rm-t2-scroll.drag{cursor:grabbing}
+/* margin auto: وسط‌چین وقتی جا هست، و اسکرول‌پذیر وقتی سرریز می‌کند */
+.rm-t2-row{display:flex;align-items:center;gap:clamp(22px,calc((100vw - 232px) / 5),34px);margin:0 auto;padding:0 14px;width:max-content;height:100%}
+.rm-root .ib .rm-mi,.rm-root .ib svg{transition:scale .16s cubic-bezier(.215,.61,.355,1)}
+@media (hover:hover){
+  .rm-root .ib:hover{background:rgba(127,127,127,.2)}
+  .rm-root .ib:active{background:rgba(127,127,127,.28)}
+  .rm-root .ib:hover .rm-mi,.rm-root .ib:hover svg{scale:1.14}
+}
+.rm-t2-fade{position:absolute;top:0;bottom:0;width:48px;pointer-events:none;z-index:3;opacity:0;transition:opacity .25s ease}
+.rm-t2-fade.r{right:0;background:linear-gradient(to left,var(--chrome-t2) 15%,color-mix(in srgb,var(--chrome-t2) 75%,transparent) 55%,transparent 100%);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);-webkit-mask-image:linear-gradient(to left,rgba(0,0,0,1) 0%,rgba(0,0,0,.6) 45%,rgba(0,0,0,0) 100%);mask-image:linear-gradient(to left,rgba(0,0,0,1) 0%,rgba(0,0,0,.6) 45%,rgba(0,0,0,0) 100%);box-shadow:inset 8px 0 10px -6px rgba(0,0,0,.25)}
+.rm-t2-fade.l{left:0;background:linear-gradient(to right,var(--chrome-t2) 15%,color-mix(in srgb,var(--chrome-t2) 75%,transparent) 55%,transparent 100%);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);-webkit-mask-image:linear-gradient(to right,rgba(0,0,0,1) 0%,rgba(0,0,0,.6) 45%,rgba(0,0,0,0) 100%);mask-image:linear-gradient(to right,rgba(0,0,0,1) 0%,rgba(0,0,0,.6) 45%,rgba(0,0,0,0) 100%);box-shadow:inset -8px 0 10px -6px rgba(0,0,0,.25)}
+.rm-t2-fade.on{opacity:1}
+
+/* ==========================================================================
+   ۵. نوار پایین
+   ========================================================================== */
+#rm-bottom{position:absolute;bottom:0;left:0;right:0;z-index:10;transition:transform .25s cubic-bezier(.215,.61,.355,1)}
+.bars-off #rm-bottom,.locked #rm-bottom{transform:translateY(140%)}
+#rm-previewBox{display:none;padding:14px 0 8px;background:linear-gradient(to top,rgba(0,0,0,.65),rgba(0,0,0,.55) 33%,rgba(0,0,0,.30) 66%,transparent)}
+.previewing #rm-previewBox{display:block}
+#rm-carousel{height:186px;display:flex;align-items:center;gap:12px;overflow-x:auto;scroll-snap-type:x mandatory;padding:0 calc(50% - 46px);cursor:grab;direction:rtl;touch-action:pan-x}
+#rm-carousel.drag{cursor:grabbing}
+.rm-pitem{flex:none;width:92px;display:flex;flex-direction:column;align-items:center;gap:6px;scroll-snap-align:center;cursor:pointer;user-select:none}
+.rm-pcard{width:92px;height:136px;border-radius:8px;background:var(--page-bg);color:var(--page-text);overflow:hidden;border:1px solid rgba(255,255,255,.28);position:relative;transition:box-shadow .18s,border-color .18s,transform .18s;box-shadow:0 3px 6px rgba(0,0,0,.45)}
+.rm-pitem.sel .rm-pcard{border:2.5px solid var(--accent);box-shadow:0 0 14px 2px color-mix(in srgb,var(--accent) 55%,transparent);transform:translateY(-2px)}
+.rm-pcard-scale{width:var(--rm-w);height:var(--rm-h);transform:scale(var(--rm-card-scale));transform-origin:top right;pointer-events:none;background:var(--page-bg);color:var(--page-text)}
+.rm-pcard .bmk{position:absolute;top:0;right:6px;width:6px;height:14px;background:var(--accent);clip-path:polygon(0 0,100% 0,100% 100%,50% 78%,0 100%);z-index:2}
+.rm-pnum{font-size:13px;font-weight:500;color:rgba(255,255,255,.72);font-variant-numeric:tabular-nums;line-height:1;font-family:'Vazirmatn',sans-serif}
+.rm-pitem.sel .rm-pnum{color:#fff;font-weight:700}
+#rm-bigIndicator{text-align:center;color:#fff;font-size:18px;font-weight:700;letter-spacing:1.2px;margin-top:4px;font-family:'Vazirmatn',sans-serif}
+#rm-slideBar{padding:4px 12px 6px;background:var(--chrome-surface);color:var(--on-surface);box-shadow:0 -1px 3px rgba(0,0,0,.18);display:flex;flex-direction:column;gap:1px}
+.previewing #rm-slideBar{background:rgba(0,0,0,.72);color:#fff;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+.previewing #rm-slideBar .ib{color:#fff}
+.rm-slide-top{position:relative;display:flex;align-items:center;justify-content:center;gap:8px;height:22px}
+.rm-slide-badge{background:color-mix(in srgb,currentColor 8%,transparent);border:1px solid color-mix(in srgb,currentColor 14%,transparent);color:inherit;font-size:11.5px;font-weight:600;padding:1px 10px;border-radius:999px;cursor:pointer;white-space:nowrap;font-variant-numeric:tabular-nums;font-family:'Vazirmatn',sans-serif;transition:background .15s,transform .15s}
+.rm-slide-badge:hover{background:color-mix(in srgb,currentColor 16%,transparent);transform:scale(1.02)}
+/* درصد در سمت چپ اسکرول‌ر، بالای دکمهٔ پیش‌نمایش */
+.rm-slide-pct{position:absolute;inset-inline-end:2px;top:50%;translate:0 -50%;background:none;border:0;color:color-mix(in srgb,currentColor 75%,transparent);font-size:11.5px;font-weight:500;padding:1px 6px;cursor:pointer;border-radius:6px;font-variant-numeric:tabular-nums;font-family:'Vazirmatn',sans-serif;transition:background .15s,color .15s}
+.rm-slide-pct:hover{background:color-mix(in srgb,currentColor 12%,transparent);color:inherit}
+.rm-slide-bot{display:flex;align-items:center;height:38px;gap:4px}
+.rm-slide-history{display:flex;align-items:center}
+/* جلوگیری از پوشاندن دکمه‌های فوتر موبایل توسط آیکون Next.js DevTools در حالت توسعه */
+body > button[aria-label*="Next.js Dev Tools"],
+body > div[data-nextjs-toast],
+nextjs-portal {
+  display: none !important;
+}
+.previewing .sl-progress .sl-track{background:rgba(255,255,255,.24)}
+/* کارت پیش‌نمایش — متن سبک صفحه (نه کلون کامل؛ اسناد بزرگ) */
+.rm-pcard-scale{padding:18px 16px 34px;font-family:var(--font);font-size:var(--fs);line-height:var(--lh);text-align:start;overflow:hidden}
+.rm-pcard-head{font-size:calc(var(--fs) * 0.72);font-weight:700;color:var(--page-sec);margin-bottom:0.7em;border-bottom:1px solid color-mix(in srgb,var(--page-text) 15%,transparent);padding-bottom:0.35em;display:flex;justify-content:space-between}
+.rm-pcard-scale .rm-book-h{font-size:1.15em;font-weight:700;line-height:1.4;margin:0 0 .45em;color:var(--page-text)}
+.rm-pcard-scale .rm-book-p{margin:0 0 calc(var(--fs)*var(--para));text-align:var(--talign);direction:var(--cdir);unicode-bidi:plaintext}
+.rm-pcard-scale p{margin:0;overflow-wrap:break-word}
+.rm-pcard-skel{display:flex;flex-direction:column;gap:10px;padding-top:4px}
+.rm-pcard-skel span{display:block;height:9px;border-radius:2px;background:color-mix(in srgb,var(--page-text) 12%,transparent)}
+.rm-pcard-skel span:nth-child(2){width:92%}
+.rm-pcard-skel span:nth-child(3){width:86%}
+.rm-pcard-skel span:nth-child(4){width:56%}
+.rm-pcard-skel span:nth-child(5){width:75%}
+.rm-pcard-skel span:nth-child(6){width:42%}
+
+/* اسلایدر عمومی (RTL از سمت راست پر می‌شود) */
+.rm-root .sl{position:relative;height:40px;display:flex;align-items:center;cursor:pointer;touch-action:none;direction:rtl;flex:1;min-width:0;margin:0 4px}
+.rm-root .sl-track{position:absolute;left:10px;right:10px;top:50%;margin-top:-2px;height:4px;border-radius:2px;background:var(--track)}
+.rm-root .sl-fill{position:absolute;right:0;top:0;bottom:0;width:calc(var(--f,0)*100%);border-radius:2px;background:var(--fillc,var(--track))}
+.rm-root .sl-thumb{position:absolute;top:50%;right:calc(var(--f,0)*100%);width:20px;height:20px;margin:-10px -10px 0 0;border-radius:50%;background:var(--thumbc,var(--primary));box-shadow:0 1px 4px rgba(0,0,0,.35);transition:box-shadow .15s}
+.rm-root .sl.active .sl-thumb{box-shadow:0 0 0 10px color-mix(in srgb,var(--thumbc,var(--primary)) 18%,transparent),0 1px 4px rgba(0,0,0,.35)}
+.rm-root .sl.small .sl-thumb{width:12px;height:12px;margin:-6px -6px 0 0}
+.rm-root .sl.small .sl-track{height:3px;margin-top:-1.5px;left:6px;right:6px}
+.rm-root .sl.small{height:32px}
+.rm-root .sl.small.active .sl-thumb{box-shadow:none}
+.rm-root .sl.acc{--fillc:var(--accent);--thumbc:var(--accent)}
+.rm-root .sl.pri-fill{--fillc:var(--primary);--thumbc:var(--primary)}
+.rm-root .sl-tip{position:absolute;bottom:18px;right:calc(var(--f,0)*100%);transform:translateX(50%);background:var(--primary);color:var(--on-primary);font-size:12px;font-weight:600;padding:4px 9px;border-radius:14px 14px 14px 2px;opacity:0;pointer-events:none;transition:opacity .12s;white-space:nowrap;font-family:'Vazirmatn',sans-serif}
+.rm-root .sl.active .sl-tip{opacity:1}
+
+/* ==========================================================================
+   ۶. کپسول جستجو / قفل
+   ========================================================================== */
+#rm-searchNav{position:absolute;bottom:74px;left:50%;transform:translate(-50%,20px);z-index:11;background:var(--chrome-surface);color:var(--on-surface);border-radius:24px;box-shadow:0 2px 8px rgba(0,0,0,.28);display:flex;align-items:center;padding:2px 6px;opacity:0;pointer-events:none;transition:opacity .2s,transform .2s,bottom .25s;white-space:nowrap}
+.searching:not(.locked) #rm-searchNav{opacity:1;pointer-events:auto;transform:translate(-50%,0)}
+.bars-off #rm-searchNav{bottom:20px}
+#rm-searchNav span.cnt{font-size:13px;font-weight:600;padding:0 8px;font-family:'Vazirmatn',sans-serif}
+#rm-lockRing{position:absolute;top:8px;right:8px;width:44px;height:44px;z-index:12;display:none;align-items:center;justify-content:center;cursor:pointer;touch-action:none}
+.locked #rm-lockRing{display:flex}
+#rm-lockRing .rm-lock-ring{position:relative;width:22px;height:22px}
+#rm-lockRing svg{position:absolute;inset:0;transform:rotate(-90deg)}
+#rm-lockRing .rm-mi{position:absolute;left:50%;top:50%;font-size:9px;transform:translate(-50%,-50%);color:color-mix(in srgb,var(--page-text) 55%,transparent)}
+#rm-lockHint{position:absolute;top:56px;right:8px;z-index:12;font-size:11px;background:rgba(0,0,0,.6);color:#fff;border-radius:8px;padding:4px 9px;opacity:0;transition:opacity .25s;pointer-events:none;font-family:'Vazirmatn',sans-serif}
+#rm-lockHint.show{opacity:1}
+
+/* ==========================================================================
+   ۷. مودال‌ها: بریر + شیت تنظیمات + پنل‌ها + پانویس + دیالوگ
+   ========================================================================== */
+#rm-barrier{position:absolute;inset:0;z-index:50;background:rgba(0,0,0,.18);opacity:0;pointer-events:none;transition:opacity .2s}
+#rm-barrier.on{opacity:1;pointer-events:auto}
+.rm-pop{position:absolute;z-index:51;background:var(--chrome-surface);color:var(--on-surface);box-shadow:0 3px 14px rgba(0,0,0,.35);opacity:0;pointer-events:none;transition:transform .25s cubic-bezier(.215,.61,.355,1),opacity .25s;display:flex;flex-direction:column;overflow:hidden;font-family:'Vazirmatn',sans-serif}
+.rm-pop.on{opacity:1;pointer-events:auto;transform:none!important}
+#rm-settings{top:0;left:0;right:0;max-height:75%;border-radius:0 0 16px 16px;transform:translateY(-35%)}
+.rm-sh-head{display:flex;align-items:center;height:48px;flex:none}
+.rm-sh-head .sp{width:48px}
+.rm-tabs{flex:1;display:flex;justify-content:center;position:relative;height:48px}
+.rm-root .rm-tab{padding:0 14px;height:48px;font-size:13.5px;font-weight:500;color:var(--on-surface-var);display:flex;align-items:center;white-space:nowrap;position:relative;transition:color .2s}
+.rm-root .rm-tab.on{color:var(--primary);font-weight:600}
+.rm-tab-ind{position:absolute;bottom:0;height:2px;background:var(--primary);border-radius:2px 2px 0 0;transition:right .3s cubic-bezier(.215,.61,.355,1),width .3s}
+.rm-tabs-div{height:1px;background:var(--divider);flex:none}
+.rm-sh-body{height:468px;overflow:hidden;position:relative;flex:none;max-height:580px;transition:height .22s cubic-bezier(.215,.61,.355,1)}
+.rm-sh-body[data-tab="theme"]{height:196px}
+.rm-sh-body[data-tab="reading"]{height:332px}
+.rm-sh-body[data-tab="screen"]{height:280px}
+.rm-sh-foot{display:flex;align-items:center;justify-content:space-between;padding:8px 16px;border-top:1px solid var(--divider);font-size:12px;flex:none;background:var(--chrome-surface)}
+.rm-pane{position:absolute;inset:0;overflow-y:auto;padding:16px;display:none;touch-action:pan-y;overscroll-behavior:contain}
+.rm-pane.on{display:block;animation:rmPaneIn .25s ease-out}
+@keyframes rmPaneIn{from{opacity:0}to{opacity:1}}
+.rm-root .row,.rm-root .rm-row{display:flex;align-items:center}
+.rm-t-sm{font-size:14px;font-weight:500;color:var(--on-surface)}
+.rm-lbl-sm{font-size:12px;font-weight:700;color:var(--primary)}
+.rm-gap12{height:12px}.rm-gap4{height:4px}.rm-gap8{height:8px}
+.rm-divider{height:1px;background:var(--divider);margin:7.5px 0}
+.rm-lsr-head{display:flex;align-items:center;justify-content:space-between}
+.rm-card{background:var(--chrome-card);border:1px solid var(--outline-var);border-radius:12px;overflow:hidden}
+.rm-exp-head{display:flex;align-items:center;gap:16px;padding:6px 16px;min-height:60px;cursor:pointer}
+.rm-exp-head .txt{flex:1}
+.rm-exp-head .sub{font-size:13px;font-weight:700;color:var(--primary);margin-top:1px}
+.rm-exp-chev{transition:transform .25s}
+.rm-card.open .rm-exp-chev{transform:rotate(180deg)}
+.rm-exp-body{max-height:0;overflow:hidden;transition:max-height .28s cubic-bezier(.215,.61,.355,1)}
+.rm-card.open .rm-exp-body{max-height:226px}
+.rm-fontlist{max-height:220px;overflow-y:auto;border-top:1px solid var(--divider);padding:4px 0;touch-action:pan-y;overscroll-behavior:contain}
+.rm-fitem{display:flex;align-items:center;height:42px;padding:0 16px;font-size:15px;cursor:pointer;border-bottom:1px solid var(--divider)}
+.rm-fitem:last-child{border-bottom:0}
+.rm-fitem.on{background:color-mix(in srgb,var(--primary-container) 40%,transparent);font-weight:700;color:var(--primary)}
+.rm-fitem .rm-mi{margin-right:auto;font-size:20px}
+.rm-stepper{display:flex;align-items:center}
+.rm-stepper b{min-width:28px;text-align:center;font-weight:500;font-size:14px;font-family:'Vazirmatn',sans-serif}
+.rm-root .seg{display:flex;border:1px solid var(--outline);border-radius:20px;overflow:hidden;height:40px}
+.rm-root .seg button{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;font-size:14px;font-weight:500;color:var(--on-surface);border-left:1px solid var(--outline);transition:background .2s;padding:0 6px;white-space:nowrap}
+.rm-root .seg button:last-child{border-left:0}
+.rm-root .seg button .rm-mi{font-size:20px}
+.rm-root .seg button.on{background:var(--secondary-container);color:var(--on-secondary-container)}
+.rm-root .seg.compact button .rm-mi{font-size:18px}
+.rm-root .seg button:hover{background:rgba(127,127,127,.10)}
+.rm-root .seg button.on:hover{background:var(--secondary-container)}
+.rm-root .stile{display:flex;align-items:center;gap:16px;padding:6px 0;min-height:56px;cursor:pointer}
+.rm-root .stile .txt{flex:1}
+.rm-root .stile .ttl{font-size:16px;color:var(--on-surface)}
+.rm-root .stile .sub{font-size:12px;color:var(--on-surface-var);margin-top:2px;line-height:1.6}
+.rm-root .stile .lead{color:var(--on-surface-var)}
+.rm-root .sw{position:relative;width:52px;height:32px;border-radius:16px;background:var(--chrome-low);border:2px solid var(--outline);flex:none;transition:background .2s,border-color .2s}
+.rm-root .sw::after{content:"";position:absolute;top:6px;right:6px;width:16px;height:16px;border-radius:50%;background:var(--outline);transition:all .2s}
+.rm-root .sw.on{background:var(--primary);border-color:var(--primary)}
+.rm-root .sw.on::after{width:24px;height:24px;top:2px;right:2px;transform:translateX(-20px);background:var(--on-primary)}
+.rm-swatches{display:flex;justify-content:space-evenly;margin-bottom:12px}
+.rm-swatch{width:52px;height:52px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:all .25s cubic-bezier(.215,.61,.355,1);font-size:18px;font-weight:700;position:relative}
+.rm-swatch .rm-mi{font-size:26px;animation:rmpop .2s ease-out}
+.rm-palette-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.rm-root .rm-palette-card{display:flex;flex-direction:column;align-items:stretch;gap:10px;padding:12px;border-radius:12px;border:1.5px solid var(--outline-var);background:var(--chrome-card);text-align:right;transition:border-color .18s,background .18s,box-shadow .18s;cursor:pointer}
+.rm-root .rm-palette-card:hover{background:color-mix(in srgb,var(--primary-container) 25%,var(--chrome-card))}
+.rm-root .rm-palette-card.on{border-color:var(--primary);background:color-mix(in srgb,var(--primary-container) 45%,var(--chrome-card));box-shadow:0 0 0 1px var(--primary)}
+.rm-palette-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+.rm-palette-name{font-size:13.5px;font-weight:600;color:var(--on-surface);line-height:1.4}
+.rm-palette-note{font-size:11.5px;color:var(--on-surface-var);line-height:1.5;margin-top:3px}
+.rm-palette-dots{display:flex;align-items:center;gap:6px}
+.rm-palette-dot{width:18px;height:18px;border-radius:50%;border:1px solid rgba(127,127,127,.32);box-shadow:0 1px 2px rgba(0,0,0,.12)}
+@keyframes rmpop{from{transform:scale(0)}to{transform:scale(1)}}
+.rm-panel{inset:0;border-radius:16px;transform:translateY(8%)}
+.rm-p-head{display:flex;align-items:center;height:52px;flex:none;border-bottom:1px solid var(--divider)}
+.rm-p-head h3{flex:1;font-size:16px;font-weight:600;padding:0 16px;margin:0}
+.rm-p-body{flex:1;overflow-y:auto;touch-action:pan-y;overscroll-behavior:contain}
+/* پیش‌نمایش بصری ناحیهٔ لمسی باز کردن پنل‌ها هنگام تغییر در تنظیمات */
+#rm-tapZonePreview{position:absolute;z-index:48;pointer-events:none;border:2px dashed var(--primary);background:color-mix(in srgb,var(--primary) 18%,transparent);border-radius:12px;display:flex;align-items:center;justify-content:center;color:var(--primary);font-size:12px;font-weight:700;opacity:0;transition:opacity .22s ease,left .12s ease,top .12s ease,width .12s ease,height .12s ease;box-shadow:0 0 0 1px color-mix(in srgb,var(--primary) 30%,transparent)}
+#rm-tapZonePreview.show{opacity:1}
+#rm-tapZonePreview span{background:var(--chrome-card);color:var(--on-surface);padding:4px 10px;border-radius:999px;border:1px solid var(--primary);box-shadow:0 2px 8px rgba(0,0,0,.22)}
+.rm-root .li{display:flex;align-items:center;gap:12px;padding:0 16px;min-height:40px;font-size:14px;cursor:pointer}
+.rm-root .li:hover{background:rgba(127,127,127,.1)}
+.rm-root .li.cur{background:var(--secondary-container);color:var(--on-secondary-container);font-weight:600}
+.rm-root .li .t{flex:1;padding:8px 0;line-height:1.6}
+.rm-root .li .chev{transition:transform .25s;font-size:22px}
+.rm-root .li .chev.rm-flip{transform:scaleX(-1)}
+.rm-root .li .chev.rm-flip.open{transform:rotate(90deg) scaleX(-1)}
+.rm-sec-title{font-size:12px;font-weight:600;padding:10px 16px 4px;color:var(--on-surface-var)}
+.rm-field{margin:12px 16px 4px;display:flex;align-items:center;gap:8px;border:1px solid var(--outline);border-radius:28px;padding:0 12px;height:48px;background:var(--chrome-card)}
+.rm-field input{flex:1;border:0;outline:0;background:transparent;font:400 15px 'Vazirmatn';color:var(--on-surface);min-width:0}
+.rm-field:focus-within{border-color:var(--primary);box-shadow:0 0 0 1px var(--primary)}
+.rm-root .chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--outline);border-radius:8px;padding:5px 12px;font-size:13px;margin:4px 16px;cursor:pointer}
+.rm-root .chip.on{background:var(--secondary-container);border-color:transparent}
+.rm-rtile{margin:6px 12px;padding:10px 14px;border-radius:12px;background:var(--chrome-card);border:1px solid var(--outline-var);cursor:pointer}
+.rm-rtile:hover{border-color:var(--primary)}
+.rm-rtile.cur{border-color:var(--primary);box-shadow:0 0 0 1px var(--primary)}
+.rm-rtile .ex{font-size:13.5px;line-height:1.9;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.rm-rtile .ex b{background:var(--primary-container);color:var(--on-primary-container);border-radius:3px;padding:0 2px}
+.rm-rtile .pos{font-size:11px;color:var(--on-surface-var);margin-top:4px}
+.rm-empty{padding:40px 16px;text-align:center;color:var(--on-surface-var);font-size:14px}
+#rm-foot{left:0;right:0;bottom:0;border-radius:16px 16px 0 0;transform:translateY(40%);padding-bottom:16px}
+/* Shared panels use the app's canonical text/surface tokens. Do not remap muted
+   (a foreground token here) to a background or primary to a container color. */
+.rm-token-bridge{
+  color:var(--text);background:var(--surface);font-family:'Vazirmatn',sans-serif;direction:rtl;text-align:right;
+}
+.rm-foot-body{padding:4px 20px 8px;font-size:15px;line-height:2}
+.rm-grab{width:32px;height:4px;border-radius:2px;background:var(--outline-var);margin:10px auto 2px;flex:none}
+#rm-dialog{left:50%;top:50%;width:312px;border-radius:28px;padding:24px;transform:translate(-50%,-46%) scale(.92)!important;background:var(--chrome-card)}
+#rm-dialog.on{transform:translate(-50%,-50%) scale(1)!important}
+#rm-dialog h4{font-size:20px;font-weight:600;margin-bottom:12px}
+#rm-dialog p{font-size:14px;line-height:1.9;color:var(--on-surface-var);margin-bottom:12px}
+#rm-dialog .acts{display:flex;justify-content:flex-end;gap:8px;margin-top:16px;flex-direction:row-reverse}
+.rm-root .tbtn{padding:8px 14px;border-radius:20px;font-size:14px;font-weight:600;color:var(--primary)}
+.rm-root .tbtn:hover{background:color-mix(in srgb,var(--primary) 10%,transparent)}
+.rm-root .fbtn{padding:9px 20px;border-radius:20px;font-size:14px;font-weight:600;background:var(--primary);color:var(--on-primary);display:inline-flex;align-items:center;justify-content:center;gap:8px}
+.rm-root .fbtn:hover{filter:brightness(1.08)}
+#rm-dialog input{width:100%;border:1px solid var(--outline);border-radius:8px;padding:10px 12px;font:400 16px 'Vazirmatn';background:transparent;color:var(--on-surface);outline:0;direction:rtl;text-align:right}
+#rm-dialog input:focus{border-color:var(--primary);box-shadow:0 0 0 1px var(--primary)}
+
+#rm-toast{position:absolute;left:16px;right:16px;bottom:16px;z-index:95;background:#323232;color:#fff;font-size:14px;line-height:1.6;padding:12px 16px;border-radius:4px;box-shadow:0 3px 8px rgba(0,0,0,.4);opacity:0;transform:translateY(20px);transition:all .25s;pointer-events:none;font-family:'Vazirmatn',sans-serif}
+#rm-toast.show{opacity:1;transform:none}
+html.rm-vt::view-transition-old(root),html.rm-vt::view-transition-new(root){animation:none;mix-blend-mode:normal}
+html.rm-vt::view-transition-new(root){z-index:9999}
+
+/* ==========================================================================
+   ۸. PDF داخل پوسته — کاغذ از تم پیروی می‌کند (تصمیم کاربر: تم باید اثر بگذارد)
+   ========================================================================== */
+.rm-pdf-wrap{position:absolute;inset:0;background:var(--page-bg);overflow:hidden}
+.rm-pdf-wrap canvas{transition:filter .3s ease}
+.dark .rm-root .rm-pdf-wrap canvas,.dark .rm-root .rm-pcard canvas{filter:invert(.92) hue-rotate(180deg) contrast(.92) brightness(.95)}
+/* بندانگشتی کاروسل — همان فیلترهای تم */
+.rm-pcard canvas{display:block;width:100%;height:100%;object-fit:cover;transition:filter .3s ease}
+
+/* ---------- حالت‌های بارگذاری/خطا (موبایل) ---------- */
+.rm-loading{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:var(--sec);font-size:14px;padding:24px;text-align:center}
+
+/* عنوان نوار بالایی — موقت فاز ۱ */
+.rm-t1-title{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;line-height:1.3}
+.rm-t1-title .rm-t1-work{font-size:14px;font-weight:700;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.rm-t1-title .rm-t1-doc{font-size:11px;color:var(--sec)}
+
+/* نوار پایین موقت — تا رسیدن فاز ۴/۸ */
+.rm-bottom-min{height:52px;display:flex;align-items:center;justify-content:space-between;padding:0 10px;background:var(--chrome-card);border-top:1px solid var(--chrome-border);flex:none}
+.rm-page-label{font-size:13px;color:var(--sec);font-variant-numeric:tabular-nums}
+
+/* فاز ۲ — حالت غیرفعال دکمه‌های گرد */
+.rm-root .ib:disabled{opacity:.35;pointer-events:none}
+
+/* فاز ۳ — بخش‌های حالت اسکرول */
+.rm-sec{display:block}
+.rm-sec-msg{padding:14px 6px;color:var(--sec);font-size:13px;text-align:center}
+
+/* Opaque selection controls, independent of the generic button reset. */
+.rm-root{--selection-handle:var(--page-text);--selection-outline:var(--page-bg);--sel:color-mix(in srgb,var(--page-text) 25%,var(--page-bg))}
+.rm-root button.rm-selHandle{background:var(--selection-handle);border:2px solid var(--selection-outline);box-shadow:0 1px 4px #0008;isolation:isolate}
+.rm-root button.rm-selHandle::after{content:"";position:absolute;inset:-13px}
+#rm-lockRing{background:transparent;border:0;box-shadow:none}
+.rm-scroll-view{-webkit-overflow-scrolling:touch;overflow-anchor:auto}
+
+/* Show the reading surface while adjusting the touch rectangle; keep its slider opaque. */
+#rm-settings.tap-previewing{background:color-mix(in srgb,var(--chrome-surface) 55%,transparent);box-shadow:none}
+#rm-settings .rm-tap-area-control{border-radius:12px;transition:background-color .2s}
+#rm-settings.tap-previewing .rm-tap-area-control{background:var(--chrome-surface);box-shadow:0 0 0 8px var(--chrome-surface)}
+#rm-settings.tap-previewing .rm-sh-head,#rm-settings.tap-previewing .rm-sh-foot,#rm-settings.tap-previewing .rm-pane.on > :not(.rm-tap-area-control){opacity:.2}
+.rm-root:has(#rm-settings.tap-previewing) #rm-toolbar{opacity:0}
+.rm-root:has(#rm-settings.tap-previewing) #rm-barrier{opacity:0}
+
+.rm-shared-status{position:absolute;top:90px;inset-inline:8px;z-index:30;max-height:30vh;overflow:auto}

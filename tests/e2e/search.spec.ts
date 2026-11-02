@@ -11,7 +11,7 @@ async function login(page: import("@playwright/test").Page) {
   await page.goto("/#/login");
   await page.waitForLoadState("networkidle");
   await page.locator('#username').first().fill("admin");
-  await page.locator('#password').first().fill("zaB3v-XPngB-fXcYw");
+  await page.locator('#password').first().fill("NoorDev-2026-Temp");
   await page.getByRole("button", { name: /ورود/ }).first().click();
   await page.waitForLoadState("networkidle");
 }

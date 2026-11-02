@@ -6,19 +6,21 @@
  * - نقش‌های span: sanad/G/K/maasoom/ayah_text/B/sharh/unknown — تگ ناشناخته هرگز تفسیر نمی‌شود.
  * - آفست‌ها code point است (تبدیل به UTF-16 با Array.from).
  * - ارجاع حل‌نشده: پیام فارسی + نشانی اصلی، بدون هدایت حدسی (REL-10) — در والد مدیریت می‌شود.
- * - انتخاب متن → دکمهٔ شناور «ثبت فیش» با آفست code point داخل بلوک.
+ * - انتخاب متن → نوار شناور «یادداشت» (یا «ثبت فیش» در نماهای بدون یادداشت) با آفست code point.
  * - هایلایت شخصی کاربر (§۷-الف-۳): رندر چندرنگ لنگردار (block_id + بازهٔ cp) و
  *   دکمه‌های رنگ در نوار شناور — هردو اختیاری؛ بدون propهای جدید رفتار قبلی دست‌نخورده است.
  */
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bookmark, Landmark, Quote, ScrollText, Trash2, UserRound } from "lucide-react";
+import { BookMarked, Bookmark, Copy, Quote, ScrollText, StickyNote, Trash2, UserRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { faNum } from "@/lib/format";
+import { displayBookText } from "@/lib/reader/display-text";
 import { isLatinBlock } from "@/lib/script";
 import { highlightClass, HIGHLIGHT_COLORS } from "@/lib/highlight-color";
 import { useTooltipTempo } from "@/lib/tooltip-tempo";
 import { cn } from "@/lib/utils";
+import { selectionFromRange, type ReaderSelection } from "./selection-offset";
 import {
   QURAN_FONT_SIZE_DEFAULT,
   QURAN_LINE_HEIGHT_DEFAULT,
@@ -32,6 +34,8 @@ import type {
   PagePayload,
   ReaderPrefs,
 } from "@/lib/types";
+
+export type { ReaderSelection } from "./selection-offset";
 
 /* ---------- ابزار code point ---------- */
 
@@ -47,6 +51,16 @@ interface Mark {
   isUserHl?: boolean;
   hlUid?: string;
   hlColor?: string;
+  /** بازهٔ نتیجهٔ جست‌وجوی درون‌کتابی — ord = شمارهٔ نتیجه در فهرست سروری */
+  isSearchHit?: boolean;
+  hitOrd?: number;
+}
+
+/** بازهٔ یک نتیجهٔ جست‌وجو درون یک بلوک (code point) */
+export interface SearchHitRange {
+  start: number;
+  end: number;
+  ord: number;
 }
 
 interface Segment {
@@ -101,7 +115,7 @@ function blockIsPersian(block: PageBlock): boolean {
 interface BlockTextStyle {
   fontFamily: string;
   fontSize: string;
-  lineHeight: number;
+  lineHeight: number | string;
   lang: "ar" | "fa" | "en";
   dir: "rtl" | "ltr";
 }
@@ -121,8 +135,8 @@ function blockTextStyle(block: PageBlock, prefs: ReaderPrefs): BlockTextStyle {
   if (isLatinBlock(block.text)) {
     return {
       fontFamily: "var(--font-latin)",
-      fontSize: `${prefs.font_size}px`,
-      lineHeight: prefs.line_height,
+      fontSize: `var(--fs, ${prefs.font_size}px)`,
+      lineHeight: `var(--lh, ${prefs.line_height})`,
       lang: "en",
       dir: "ltr",
     };
@@ -130,8 +144,8 @@ function blockTextStyle(block: PageBlock, prefs: ReaderPrefs): BlockTextStyle {
   const persian = blockIsPersian(block);
   return {
     fontFamily: persian ? "var(--font-ui)" : "var(--font-arabic)",
-    fontSize: `${prefs.font_size}px`,
-    lineHeight: prefs.line_height,
+    fontSize: `var(--fs, ${prefs.font_size}px)`,
+    lineHeight: `var(--lh, ${prefs.line_height})`,
     lang: persian ? "fa" : "ar",
     dir: "rtl",
   };
@@ -179,6 +193,8 @@ function BlockText({
   footnoteLabelFor,
   highlight,
   userHls,
+  searchHits,
+  curHitOrd,
   onFootnoteClick,
   onFootnoteEnter,
   onFootnoteLeave,
@@ -191,6 +207,10 @@ function BlockText({
   highlight: { start: number; end: number; blockId?: string | null } | null;
   /** هایلایت‌های شخصی همین بلوک — لنگر: بازهٔ code point (§۷-الف-۳) */
   userHls?: ReadonlyArray<Pick<Highlight, "uid" | "start" | "end" | "color">>;
+  /** نتایج جست‌وجوی درون‌کتابی همین بلوک — ord شمارهٔ نتیجه در فهرست سروری */
+  searchHits?: ReadonlyArray<SearchHitRange>;
+  /** شمارهٔ نتیجهٔ جاری (capsule) — همان بازه با .cur برجسته می‌شود */
+  curHitOrd?: number | null;
   onFootnoteClick: (refUid: string, anchorId: string) => void;
   /** هاور روی شمارهٔ پاورقی → پاپ‌آپ متن پاورقی (با ریتم هوشمند) */
   onFootnoteEnter: (refUid: string, label: string, el: HTMLElement) => void;
@@ -200,15 +220,25 @@ function BlockText({
   onLinkClick: (link: BlockLink) => void;
   semantic: boolean;
 }) {
-  const cps = useMemo(() => Array.from(block.text), [block.text]);
+  const cps = useMemo(() => Array.from(displayBookText(block.text)), [block.text]);
   const cpLen = cps.length;
   /* ریتم تولتیپ: اولین هاور با تأخیر، هاورهای بعدی بی‌درنگ (درخواست کاربر) */
   const { delay: tempoDelay, onHoverEnter, onOpened } = useTooltipTempo();
 
   const marks = useMemo<Mark[]>(() => {
     const out: Mark[] = [];
-    for (const s of block.spans ?? []) {
+    /* نتایج جست‌وجو اول از همه — با هم‌پوشانی، از هایلایت‌های دیگر مقدم‌اند */
+    for (const h of searchHits ?? []) {
+      if (h.end <= h.start) continue;
       out.push({
+        start: Math.max(0, Math.min(h.start, cpLen)),
+        end: Math.max(0, Math.min(h.end, cpLen)),
+        priority: 0,
+        isSearchHit: true,
+        hitOrd: h.ord,
+      });
+    }
+    for (const s of block.spans ?? []) {      out.push({
         start: Math.max(0, Math.min(s.start, cpLen)),
         end: Math.max(0, Math.min(s.end, cpLen)),
         priority: 1,
@@ -251,7 +281,7 @@ function BlockText({
       });
     }
     return out;
-  }, [block, cpLen, highlight, userHls]);
+  }, [block, cpLen, highlight, userHls, searchHits]);
 
   const segs = useMemo(() => buildSegments(cpLen, marks), [cpLen, marks]);
 
@@ -288,6 +318,19 @@ function BlockText({
                   onHighlightClick?.(mark.hlUid, mark.hlColor ?? "yellow", e.currentTarget);
                 }
               }}
+            >
+              {text}
+            </mark>
+          );
+        }
+        if (mark.isSearchHit) {
+          return (
+            <mark
+              key={i}
+              data-cp-start={seg.start}
+              data-cp-end={seg.end}
+              data-hit-ord={mark.hitOrd}
+              className={"rm-hit" + (curHitOrd != null && mark.hitOrd === curHitOrd ? " cur" : "")}
             >
               {text}
             </mark>
@@ -568,41 +611,6 @@ function SanadBlock({
   );
 }
 
-/* ---------- انتخاب متن → فیش ---------- */
-
-export interface ReaderSelection {
-  blockId: string;
-  start: number;
-  end: number;
-  text: string;
-  hadithUid?: string | null;
-}
-
-function cpOffsetFromNode(node: Node | null, offset: number): {
-  blockId: string | null;
-  cp: number;
-} {
-  if (!node) return { blockId: null, cp: 0 };
-  let textNode: Text | null = null;
-  let utf16Offset = offset;
-  if (node.nodeType === Node.TEXT_NODE) {
-    textNode = node as Text;
-  } else {
-    const child = node.childNodes[offset] ?? node.firstChild;
-    if (child && child.nodeType === Node.TEXT_NODE) {
-      textNode = child as Text;
-      utf16Offset = 0;
-    }
-  }
-  if (!textNode) return { blockId: null, cp: 0 };
-  const spanEl = textNode.parentElement?.closest<HTMLElement>("span[data-cp-start], mark[data-cp-start]");
-  const blockEl = textNode.parentElement?.closest<HTMLElement>("[data-block-id]");
-  if (!blockEl) return { blockId: null, cp: 0 };
-  const base = spanEl ? Number(spanEl.dataset.cpStart ?? 0) : 0;
-  const rel = Array.from((textNode.textContent ?? "").slice(0, utf16Offset)).length;
-  return { blockId: blockEl.dataset.blockId ?? null, cp: base + rel };
-}
-
 /* ---------- رندر یک بلوک ---------- */
 
 interface BlockViewProps {
@@ -611,6 +619,9 @@ interface BlockViewProps {
   highlight: { start: number; end: number; blockId?: string | null } | null;
   /** هایلایت‌های شخصی همین بلوک (§۷-الف-۳) — از PageRenderer بر اساس block_id فیلتر شده */
   userHls?: ReadonlyArray<Pick<Highlight, "uid" | "start" | "end" | "color">>;
+  /** نتایج جست‌وجوی درون‌کتابی همین بلوک */
+  searchHits?: ReadonlyArray<SearchHitRange>;
+  curHitOrd?: number | null;
   collapsed: boolean;
   footnoteLabelFor: (refUid: string) => string | null;
   onFootnoteClick: (refUid: string, anchorId: string) => void;
@@ -639,6 +650,8 @@ const BlockView = memo(function BlockView({
   prefs,
   highlight,
   userHls,
+  searchHits,
+  curHitOrd,
   collapsed,
   footnoteLabelFor,
   onFootnoteClick,
@@ -654,8 +667,12 @@ const BlockView = memo(function BlockView({
   isFirstOnPage,
   prevBlockType,
 }: BlockViewProps) {
-  const ts = blockTextStyle(block, prefs);
+  const ts = { ...blockTextStyle(block, prefs) };
+  if (prefs.text_dir && prefs.text_dir !== "auto") ts.dir = prefs.text_dir;
   const style: React.CSSProperties = {
+    textAlign: prefs.text_align && prefs.text_align !== "auto" ? prefs.text_align : "start",
+    direction: ts.dir,
+    marginBlockEnd: `${prefs.para_spacing ?? 0.6}em`,
     fontSize: ts.fontSize,
     lineHeight: ts.lineHeight,
     fontFamily: ts.fontFamily,
@@ -666,6 +683,8 @@ const BlockView = memo(function BlockView({
       semantic={semantic}
       highlight={highlight}
       userHls={userHls}
+      searchHits={searchHits}
+      curHitOrd={curHitOrd}
       footnoteLabelFor={footnoteLabelFor}
       onFootnoteClick={onFootnoteClick}
       onFootnoteEnter={onFootnoteEnter}
@@ -806,7 +825,7 @@ const BlockView = memo(function BlockView({
                 aria-label="نمایش جزئیات آیه در پنل زمینه"
                 title="نمایش جزئیات آیه در پنل زمینه"
               >
-                <Landmark className="size-3.5 text-primary" aria-hidden="true" />
+                <BookMarked className="size-3.5 text-foreground" aria-hidden="true" />
                 {addr || "استناد قرآنی"}
               </button>
             ) : addr ? (
@@ -856,7 +875,7 @@ const BlockView = memo(function BlockView({
       // تگ ناشناخته: فقط متن، بدون هیچ تفسیر و نقش‌دهی (§۱۹)
       return (
         <p lang={ts.lang} dir={ts.dir} style={style}>
-          {block.text}
+          {displayBookText(block.text)}
         </p>
       );
     default: {
@@ -869,11 +888,11 @@ const BlockView = memo(function BlockView({
             <button
               type="button"
               onClick={() => onVerseClick?.(block)}
-              className="inline-flex min-h-11 translate-y-0.5 items-center gap-1 rounded-full border border-ayah/40 bg-ayah-soft px-2.5 align-middle text-xs font-medium text-foreground transition-colors hover:bg-accent md:min-h-7"
+              className="inline-flex min-h-11 translate-y-0.5 items-center gap-1 rounded-full border border-ayah/60 bg-ayah/15 px-2.5 align-middle text-xs font-semibold text-ayah transition-colors hover:border-ayah hover:bg-ayah/25 md:min-h-7"
               aria-label="نمایش جزئیات نشانی آیه در پنل زمینه"
               title="نمایش جزئیات نشانی آیه در پنل زمینه"
             >
-              <Landmark className="size-3.5 text-primary" aria-hidden="true" />
+              <BookMarked className="size-3.5 text-ayah" aria-hidden="true" />
               {citationAddress(block) || "استناد قرآنی"}
             </button>
           </p>
@@ -903,12 +922,20 @@ export interface PageRendererProps {
   highlight?: { start: number; end: number; blockId?: string | null } | null;
   /** هایلایت‌های شخصی کاربر برای همین صفحه — لنگر: blockId + بازهٔ cp (§۷-الف-۳) */
   userHighlights?: ReadonlyArray<Pick<Highlight, "uid" | "block_id" | "start" | "end" | "color">>;
+  /** نتایج جست‌وجوی درون‌کتابی این صفحه — blockId → بازه‌ها (موبایل) */
+  searchHits?: Record<string, ReadonlyArray<SearchHitRange>>;
+  /** شمارهٔ نتیجهٔ جاری — همان mark با .cur برجسته می‌شود */
+  currentSearchHitOrd?: number | null;
   /** انتخاب متن → هایلایت با رنگ (اگر داده نشود دکمهٔ هایلایت نشان داده نمی‌شود) */
   onHighlightSelection?: (sel: ReaderSelection, color: HighlightColor) => void;
   /** تغییر رنگ هایلایت موجود (کلیک روی هایلایت در متن) */
   onHighlightUpdate?: (uid: string, color: HighlightColor) => void;
   /** حذف هایلایت موجود (کلیک روی هایلایت در متن) */
   onHighlightDelete?: (uid: string) => void;
+  onHighlightOpen?: (uid: string) => void;
+  onNoteSelection?: (sel: ReaderSelection) => void;
+  /** کپی متن انتخاب‌شده — ok=false یعنی کلیپ‌بورد در دسترس نبود */
+  onCopySelection?: (ok: boolean) => void;
   collapsedSanads: ReadonlySet<string>;
   onToggleSanad: (blockId: string) => void;
   onFootnoteClick: (refUid: string, anchorId: string) => void;
@@ -920,6 +947,8 @@ export interface PageRendererProps {
   onHadithClick?: (block: PageBlock) => void;
   /** حالت بدون قاب برای جریان پیوسته و یکپارچه متن */
   frameless?: boolean;
+  /** موبایل: حباب انتخاب خودش را دارد — نوار شناور دسکتاپ رندر نشود */
+  hideSelectionToolbar?: boolean;
 }
 
 export function PageRenderer({
@@ -930,9 +959,14 @@ export function PageRenderer({
   flashBlockId,
   highlight,
   userHighlights,
+  searchHits,
+  currentSearchHitOrd,
   onHighlightSelection,
   onHighlightUpdate,
   onHighlightDelete,
+  onHighlightOpen,
+  onNoteSelection,
+  onCopySelection,
   collapsedSanads,
   onToggleSanad,
   onFootnoteClick,
@@ -941,6 +975,7 @@ export function PageRenderer({
   onVerseClick,
   onHadithClick,
   frameless,
+  hideSelectionToolbar,
 }: PageRendererProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [selRect, setSelRect] = useState<{ top: number; left: number } | null>(null);
@@ -1026,7 +1061,11 @@ export function PageRenderer({
 
   const onHighlightClick = useCallback(
     (uid: string, color: string, el: HTMLElement) => {
-      if (uid.startsWith("temp-")) return; // هنوز در حال ذخیره — هنوز کنترلی ندارد
+      if (uid.startsWith("shared-") || uid.startsWith("temp-")) return; // هنوز در حال ذخیره — هنوز کنترلی ندارد
+      if (onHighlightOpen) {
+        onHighlightOpen(uid);
+        return;
+      }
       const wrap = wrapRef.current;
       if (!wrap) return;
       const r = el.getBoundingClientRect();
@@ -1035,7 +1074,7 @@ export function PageRenderer({
       const left = Math.max(6, Math.min(r.left - w.left, w.width - 268));
       setHlMenu({ uid, color, top, left });
     },
-    [],
+    [onHighlightOpen],
   );
 
   useEffect(() => {
@@ -1075,6 +1114,30 @@ export function PageRenderer({
     setSelRect(null);
   }, []);
 
+  /** کپی متن انتخاب‌شده — با افت‌بک execCommand برای بسترهای غیر امن */
+  const copySelected = useCallback(async (text: string) => {
+    let ok = false;
+    try {
+      await navigator.clipboard.writeText(text);
+      ok = true;
+    } catch {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        ok = document.execCommand("copy");
+        ta.remove();
+      } catch {
+        ok = false;
+      }
+    }
+    onCopySelection?.(ok);
+  }, [onCopySelection]);
+
   /* هایلایت‌های شخصی به تفکیک بلوک — identity پایدار برای memoizedهای BlockText (§۷-الف-۳) */
   const userHlByBlock = useMemo(() => {
     const map = new Map<string, Array<Pick<Highlight, "uid" | "start" | "end" | "color">>>();
@@ -1087,6 +1150,7 @@ export function PageRenderer({
   }, [userHighlights]);
 
   const computeSelection = useCallback(() => {
+    if (hideSelectionToolbar) return;
     const wrapper = wrapRef.current;
     if (!wrapper) return;
     const s = window.getSelection();
@@ -1095,49 +1159,16 @@ export function PageRenderer({
       return;
     }
     const range = s.getRangeAt(0);
-    if (!wrapper.contains(range.commonAncestorContainer)) {
+    const next = selectionFromRange(range, wrapper, (id) => page.blocks.find((bl) => bl.id === id));
+    if (!next) {
       clearSelection();
       return;
     }
-    const a = cpOffsetFromNode(range.startContainer, range.startOffset);
-    const b = cpOffsetFromNode(range.endContainer, range.endOffset);
-    const blockId = a.blockId ?? b.blockId;
-    if (!blockId) {
-      clearSelection();
-      return;
-    }
-    const block = page.blocks.find((bl) => bl.id === blockId);
-    if (!block) {
-      clearSelection();
-      return;
-    }
-    const blockLen = Array.from(block.text).length;
-    let start: number;
-    let end: number;
-    if (a.blockId === b.blockId) {
-      start = Math.min(a.cp, b.cp);
-      end = Math.max(a.cp, b.cp);
-    } else {
-      // انتخاب چندبلوکی: به بلوک لنگر محدود می‌شود (snapshot فیش یک بازهٔ پیوسته است)
-      if (a.blockId === blockId) {
-        start = a.cp;
-        end = blockLen;
-      } else {
-        start = 0;
-        end = Math.min(b.cp, blockLen);
-      }
-      if (end < start) [start, end] = [end, start];
-    }
-    if (end - start < 1) {
-      clearSelection();
-      return;
-    }
-    const text = Array.from(block.text).slice(start, end).join("");
     const rect = range.getBoundingClientRect();
     const wrapRect = wrapper.getBoundingClientRect();
     setSelRect({ top: rect.top - wrapRect.top, left: rect.left - wrapRect.left });
-    setSel({ blockId, start, end, text, hadithUid: block.hadith_uid ?? null });
-  }, [clearSelection, page.blocks]);
+    setSel(next);
+  }, [clearSelection, hideSelectionToolbar, page.blocks]);
 
   // با اسکرول، دکمهٔ شناور پاک می‌شود تا جای آن از متن جدا نماند
   useEffect(() => {
@@ -1171,6 +1202,7 @@ export function PageRenderer({
         if (e.shiftKey || e.key.startsWith("Arrow")) computeSelection();
       }}
     >
+      {page.overlay_applied && <p role="status" className="mb-2 rounded-lg border border-border bg-muted px-3 py-2 font-sans text-xs text-foreground">این صفحه شامل اصلاح سامانه است. <span dir="ltr">{page.overlay_revision_uid}</span></p>}
       {page.blocks.length === 0 ? (
         <p className="py-10 text-center text-sm text-muted-foreground">
           این صفحه متنی برای نمایش ندارد.
@@ -1207,6 +1239,8 @@ export function PageRenderer({
                   prevBlockType={prevBlockType}
                   highlight={hlHere && highlight ? highlight : null}
                   userHls={userHlByBlock.get(block.id)}
+                  searchHits={searchHits?.[block.id]}
+                  curHitOrd={currentSearchHitOrd}
                   collapsed={collapsedSanads.has(block.id)}
                   footnoteLabelFor={footnoteLabelFor}
                   onFootnoteClick={onFootnoteClick}
@@ -1225,24 +1259,56 @@ export function PageRenderer({
         })
       )}
 
-      {/* نوار شناور روی انتخاب متن: ثبت فیش + (در صورت فعال بودن) هایلایت چندرنگ */}
-      {sel && selRect ? (
+      {/* نوار شناور روی انتخاب متن: یادداشت (یا فیش در نماهایی بدون یادداشت) + هایلایت چندرنگ */}
+      {!hideSelectionToolbar && sel && selRect ? (
         <div
-          className="absolute z-20 flex items-center gap-1 rounded-xl border border-border bg-surface p-1 shadow-md"
-          style={{ top: Math.max(selRect.top - 48, 4), left: selRect.left }}
+          role="toolbar"
+          aria-label="ابزار متن انتخاب‌شده"
+          className="absolute inset-x-1 z-20 mx-auto flex w-fit max-w-full flex-wrap items-center gap-1 rounded-xl border border-border bg-surface p-1 shadow-md"
+          style={{ top: Math.max(selRect.top - 48, 4) }}
         >
+          {onNoteSelection ? (
+            <Button
+              size="sm"
+              className="h-9 min-h-9 gap-1.5 px-2.5 text-xs"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                onNoteSelection(sel);
+                clearSelection();
+                window.getSelection()?.removeAllRanges();
+              }}
+            >
+              <StickyNote className="size-4" aria-hidden="true" />
+              یادداشت
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              className="h-9 min-h-9 gap-1.5 px-2.5 text-xs"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                onSelection(sel);
+                clearSelection();
+                window.getSelection()?.removeAllRanges();
+              }}
+            >
+              <Quote className="size-4" aria-hidden="true" />
+              ثبت فیش
+            </Button>
+          )}
           <Button
+            variant="outline"
             size="sm"
-            className="min-h-11 gap-1.5 md:min-h-9"
+            className="h-9 min-h-9 gap-1.5 px-2.5 text-xs"
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => {
-              onSelection(sel);
+              void copySelected(sel.text);
               clearSelection();
               window.getSelection()?.removeAllRanges();
             }}
           >
-            <Quote className="size-4" aria-hidden="true" />
-            ثبت فیش
+            <Copy className="size-4" aria-hidden="true" />
+            کپی
           </Button>
           {onHighlightSelection ? (
             <>

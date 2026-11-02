@@ -41,6 +41,25 @@ type DocumentMeta struct {
 	Checksum string `json:"checksum"`
 	Size     int64  `json:"size_bytes"`
 	Language string `json:"language"`
+	// Format در زمان بارگذاری از پسوند فایل مشتق می‌شود (text/pdf/image/audio/other)
+	// و در JSON کاتالوگ نمی‌آید — قرارداد فرمت در جایی غیر از پسوند منبع زندگی نمی‌کند.
+	Format string `json:"-"`
+}
+
+// FormatOf قرارداد فرمت سند را از پسوند فایل استخراج می‌کند.
+func FormatOf(path string) string {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".db":
+		return "text"
+	case ".pdf":
+		return "pdf"
+	case ".jpg", ".jpeg", ".png":
+		return "image"
+	case ".mp3", ".wav", ".ogg", ".oga", ".m4a", ".aac", ".flac", ".wma", ".ra", ".rm":
+		return "audio"
+	default:
+		return "other"
+	}
 }
 
 type RelatedRecord struct {
@@ -58,10 +77,15 @@ type Service struct {
 	docWork    map[string]string // docUID ← workUID (رفع N+1 کاتالوگ)
 	sourcesDir string
 	knownFeats map[string]map[string]bool // از زمان نمایه‌سازی (internal/features)
-	modelCache map[string]*cacheEntry
-	featCache  map[string]*Features // کش پوشش اثر — کاتالوگ در زمان اجرا تغییرنکردنی است
-	modelOrder []string
-	modelSem   chan struct{} // §۳۸ decode تعاملی هم‌زمان ≤۲
+	// مشتقات رسانه‌ای (در LoadFile یک‌بار ساخته و فقط کل نقشه جابه‌جا می‌شود؛
+	// پس از انتشار هرگز درجای نوشته نمی‌شود — هم‌روانی با خوانندهٔ بدون قفل امن است):
+	workFormats map[string][]string // workUID ← فرمت‌های موجود به ترتیب ثابت
+	workCover   map[string]string   // workUID ← نخستین سند image (کاور)
+	workMedia   map[string]bool     // workUID ← ≥۱ سند pdf/audio
+	modelCache  map[string]*cacheEntry
+	featCache   map[string]*Features // کش پوشش اثر — کاتالوگ در زمان اجرا تغییرنکردنی است
+	modelOrder  []string
+	modelSem    chan struct{} // §۳۸ decode تعاملی هم‌زمان ≤۲
 }
 
 type cacheEntry struct {
@@ -97,13 +121,52 @@ func LoadFile(sourcesDir, filename string) (*Service, error) {
 	for i := range works {
 		w := &works[i]
 		s.byUID[w.UID] = w
-		for _, d := range w.Documents {
-			s.docByUID[d.UID] = d
+		for di := range w.Documents {
+			d := &w.Documents[di]
+			d.Format = FormatOf(d.File)
+			s.docByUID[d.UID] = *d
 			s.docWork[d.UID] = w.UID
 		}
 	}
 	s.works = works
+	s.buildMediaMaps()
 	return s, nil
+}
+
+// buildMediaMaps مشتقات رسانه‌ای اثرها را یک‌بار از works می‌سازد (فقط LoadFile).
+func (s *Service) buildMediaMaps() {
+	formats := map[string][]string{}
+	cover := map[string]string{}
+	media := map[string]bool{}
+	order := []string{"text", "pdf", "image", "audio"}
+	for i := range s.works {
+		w := &s.works[i]
+		seen := map[string]bool{}
+		for _, d := range w.Documents {
+			if d.Format == "other" {
+				continue
+			}
+			seen[d.Format] = true
+			if d.Format == "image" {
+				if _, ok := cover[w.UID]; !ok {
+					cover[w.UID] = d.UID
+				}
+			}
+			if d.Format == "pdf" || d.Format == "audio" {
+				media[w.UID] = true
+			}
+		}
+		var fs []string
+		for _, f := range order {
+			if seen[f] {
+				fs = append(fs, f)
+			}
+		}
+		formats[w.UID] = fs
+	}
+	s.workFormats = formats
+	s.workCover = cover
+	s.workMedia = media
 }
 
 func (s *Service) Works() []Work { return s.works }
@@ -132,6 +195,50 @@ func (s *Service) WorkUIDOfDocument(docUID string) (string, bool) {
 	wu, ok := s.docWork[docUID]
 	return wu, ok
 }
+
+// FilePath مسیر فایل سندِ ثبت‌شده در کاتالوگ را برمی‌گرداند — فقط برای اسنادِ
+// واقعاً موجود (uid → مسیر؛ هیچ ورودی کاربر به مسیر نمی‌رسد). برای ورودیِ
+// نسبیِ کاتالوگ دفاع اضافه: مسیر نهایی باید زیر sourcesDir بماند.
+func (s *Service) FilePath(docUID string) (string, bool) {
+	d, ok := s.docByUID[docUID]
+	if !ok {
+		return "", false
+	}
+	if filepath.IsAbs(d.File) {
+		// مسیر مطلقِ ثبت‌شده در کاتالوگ (همان‌طور که هست، فقط Clean)
+		return filepath.Clean(d.File), true
+	}
+	p := filepath.Clean(filepath.Join(s.sourcesDir, d.File))
+	if p != s.sourcesDir && !strings.HasPrefix(p, s.sourcesDir+string(filepath.Separator)) {
+		return "", false // ورودی نسبی گریز از sourcesDir (مانند ../x.db)
+	}
+	return p, true
+}
+
+// WorkFormats فرمت‌های موجود اثر به ترتیب ثابت text/pdf/image/audio.
+func (s *Service) WorkFormats(w *Work) []string {
+	fs := s.workFormats[w.UID]
+	if fs == nil {
+		return []string{}
+	}
+	return fs
+}
+
+// WorkHasFormat آیا اثر حداقل یک سند با این فرمت دارد؟
+func (s *Service) WorkHasFormat(w *Work, format string) bool {
+	for _, f := range s.workFormats[w.UID] {
+		if f == format {
+			return true
+		}
+	}
+	return false
+}
+
+// CoverUID شناسهٔ نخستین سند تصویری (کاور) اثر؛ تهی یعنی کاور ندارد.
+func (s *Service) CoverUID(w *Work) string { return s.workCover[w.UID] }
+
+// HasMedia آیا اثر حداقل یک سند pdf یا audio دارد؟ (مشتقِ کاتالوگ، بدون decode)
+func (s *Service) HasMedia(w *Work) bool { return s.workMedia[w.UID] }
 
 func (s *Service) docPath(docUID string) (string, error) {
 	d, ok := s.docByUID[docUID]
@@ -541,6 +648,9 @@ func (s *Service) Reload() error {
 	s.byUID = loaded.byUID
 	s.docByUID = loaded.docByUID
 	s.docWork = loaded.docWork
+	s.workFormats = loaded.workFormats
+	s.workCover = loaded.workCover
+	s.workMedia = loaded.workMedia
 	s.modelCache = map[string]*cacheEntry{}
 	s.modelOrder = nil
 	s.featCache = map[string]*Features{}
@@ -587,7 +697,7 @@ func featuresFromKnown(k map[string]bool) Features {
 		Links:          get("links"),
 		Pages:          get("pages"),
 		TOC:            get("toc"),
-		Media:          "absent",
+		Media:          get("media"), // اگر worker کلید نداد، WorkFeatures از کاتالوگ مشتق می‌کند
 		Topics:         "unknown",
 	}
 }
@@ -625,6 +735,14 @@ func (s *Service) WorkFeatures(w *Work) Features {
 		} else {
 			f.Topics = "absent"
 		}
+		if _, ok := kf["media"]; !ok {
+			// worker هنوز کلید media را نمی‌دهد — مشتقِ کاتالوگ (رسانه decode نمی‌خواهد)
+			if s.HasMedia(w) {
+				f.Media = "supported"
+			} else {
+				f.Media = "absent"
+			}
+		}
 		return f
 	}
 	// بدون دادهٔ واقعیِ نمایه‌سازی، پوشش نامعلوم است — «supported» جعلی نمی‌سازیم.
@@ -632,6 +750,9 @@ func (s *Service) WorkFeatures(w *Work) Features {
 		SearchableText: "unknown", Hadith: "unknown", Quran: "unknown",
 		Footnotes: "unknown", Links: "unknown", Pages: "unknown", TOC: "unknown",
 		Media: "absent", Topics: "unknown",
+	}
+	if s.HasMedia(w) {
+		f.Media = "supported"
 	}
 	if len(w.Topics) > 0 {
 		f.Topics = "supported"
@@ -650,6 +771,9 @@ func (s *Service) computeWorkFeatures(w *Work) Features {
 		Links:          "supported",
 		Media:          "absent",
 		Topics:         "absent",
+	}
+	if s.HasMedia(w) {
+		f.Media = "supported"
 	}
 	if len(w.Topics) > 0 {
 		f.Topics = "supported"

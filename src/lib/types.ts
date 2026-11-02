@@ -72,13 +72,13 @@ export interface MfaVerifyResponse {
 /* ---------- کتابخانه ---------- */
 
 export interface WorkFeatures {
-  hadith: boolean;
-  quran: boolean;
-  footnotes: boolean;
-  links: boolean;
-  topics: boolean;
-  media: boolean;
-  searchable_text: boolean;
+  hadith: CoverageState;
+  quran: CoverageState;
+  footnotes: CoverageState;
+  links: CoverageState;
+  topics: CoverageState;
+  media: CoverageState;
+  searchable_text: CoverageState;
 }
 
 export interface Work {
@@ -93,6 +93,8 @@ export interface Work {
   volumes_count: number | null;
   documents_count: number | null;
   cover_uid: string | null;
+  /** فرمت‌های محتوای اسناد این اثر (فاز رسانه): text/pdf/image/audio */
+  formats?: string[];
   topics: string[];
   features: WorkFeatures;
   published: boolean;
@@ -125,6 +127,8 @@ export interface DocumentInfo {
   pages_count: number | null;
   language: string | null;
   coverage: DocumentCoverage;
+  /** فرمت محتوای سند: text | pdf | image | audio (فاز رسانه؛ از پسوند منبع) */
+  format?: string;
 }
 
 export interface WorkDetail extends Work {
@@ -360,6 +364,7 @@ export interface SearchNear {
 }
 
 export interface SearchRequest {
+  ignore_spacing?: boolean;
   query: string;
   mode: SearchMode;
   scope: SearchScope;
@@ -710,6 +715,40 @@ export interface ReaderPrefs {
   text_width?: ReaderTextWidth;
   /** READ-13: رنگ‌بندی و نشانه‌گذاری نقش‌های معنایی (اختیاری؛ پیش‌فرض خاموش) */
   semantic_colors?: boolean;
+  /** فاصلهٔ پاراگراف (em) — بازهٔ ۰ تا ۱٫۶ (مشترک دسکتاپ/موبایل) */
+  para_spacing?: number;
+  /** تراز متن مطالعه (مشترک دسکتاپ/موبایل) */
+  text_align?: MobileTextAlign;
+  /** جهت متن مطالعه (مشترک دسکتاپ/موبایل) */
+  text_dir?: MobileTextDir;
+  /** تنظیمات صفحه/لمس ریدر موبایل */
+  mobile_reader?: Partial<MobileReaderPrefs>;
+}
+
+/** تراز متن ریدر موبایل — ۵ حالت پروتوتایپ */
+export type MobileTextAlign = "auto" | "right" | "center" | "left" | "justify";
+/** جهت متن ریدر موبایل */
+export type MobileTextDir = "auto" | "rtl" | "ltr";
+
+/** ترجیحات ریدر موبایل — مقادیر بازه‌ای عین پروتوتایپ epub_reader_prototype.html */
+export interface MobileReaderPrefs {
+  mode: "pages" | "scroll";
+  font: string;
+  /** ۱۲ تا ۳۶ — پیش‌فرض ۲۰ */
+  font_size: number;
+  /** ۱٫۲ تا ۲٫۴ — پیش‌فرض ۱٫۸ */
+  line_height: number;
+  /** فاصلهٔ پاراگراف ۰ تا ۱٫۶ — پیش‌فرض ۰٫۶ */
+  para: number;
+  align: MobileTextAlign;
+  dir: MobileTextDir;
+  /** حاشیه ۰ تا ۴۸ — پیش‌فرض ۲۰ */
+  margin: number;
+  progression: MobileTextDir;
+  tap_mode: "center" | "bottom";
+  /** ناحیهٔ لمسی ۰٫۱ تا ۱ — پیش‌فرض ۰٫۳۵ */
+  tap_area: number;
+  show_pill: boolean;
 }
 
 export interface WorkspacePrefs {
@@ -819,6 +858,8 @@ export interface Highlight {
   text: string;
   color: HighlightColor;
   note?: string | null;
+  /** قطعه‌های یک انتخاب چندپاراگرافی یک گروه مشترک دارند؛ حذف/ویرایش کل گروه است. */
+  group_uid?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
 }

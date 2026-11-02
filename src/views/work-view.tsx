@@ -5,18 +5,22 @@
  * دادهٔ null همیشه «ثبت نشده» نمایش داده می‌شود (حدس ممنوع — LIB-09).
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 import { ArrowRight, BookOpen, Eye, EyeOff, Loader2, ShieldAlert } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { AudioPlayer } from "@/components/media/audio-player";
 import { ErrorState } from "@/components/feedback";
-import { api, errorMessage } from "@/lib/api";
+import { api, errorMessage, mediaFileUrl } from "@/lib/api";
 import { HashLink, useRoute } from "@/lib/hash-router";
 import { faNum } from "@/lib/format";
+import { decoratePathWithSlug, readHref } from "@/lib/href";
 import {
   coverageKeys,
   coverageLabels,
+  documentFormatLabel,
   documentKindLabel,
   languageLabel,
 } from "@/lib/labels";
@@ -51,6 +55,30 @@ function SpecRow({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
+/** جلدِ سند (jpg) با جایگزین متنی در صورت خطا — <img> ساده است چون کوکی نشست لازم است */
+function DocumentCover({ uid, label }: { uid: string; label: string }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) {
+    return (
+      <div
+        className="flex h-28 w-20 items-center justify-center rounded-md border border-border bg-muted text-center text-[10px] leading-4 text-muted-foreground"
+        aria-hidden="true"
+      >
+        {label}
+      </div>
+    );
+  }
+  return (
+    <img
+      src={mediaFileUrl(uid)}
+      alt={`جلد ${label}`}
+      loading="lazy"
+      className="h-28 w-auto rounded-md border border-border object-cover shadow-xs"
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
 function DocumentCard({
   doc,
   onOpen,
@@ -58,6 +86,9 @@ function DocumentCard({
   doc: WorkDetail["documents"][number];
   onOpen: (uid: string) => void;
 }) {
+  const format = doc.format ?? "text";
+  const openable = format === "text" || format === "pdf";
+
   return (
     <Card>
       <CardContent className="p-4">
@@ -68,6 +99,9 @@ function DocumentCard({
               <Badge variant="secondary" className="font-normal">
                 {documentKindLabel(doc.kind)}
               </Badge>
+              <Badge variant="outline" className="font-normal">
+                {documentFormatLabel(format)}
+              </Badge>
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
               {doc.pages_count !== null && doc.pages_count !== undefined ? (
@@ -77,46 +111,59 @@ function DocumentCard({
                 </>
               ) : doc.language ? (
                 languageLabel(doc.language)
+              ) : format === "image" ? (
+                "تصویر جلد"
               ) : (
                 "شمار صفحه‌ها: ثبت نشده"
               )}
             </p>
+            {format === "audio" ? (
+              <AudioPlayer documentUid={doc.uid} className="mt-3" />
+            ) : null}
           </div>
-          <Button className="min-h-11 gap-2" onClick={() => onOpen(doc.uid)}>
-            <BookOpen className="size-4" aria-hidden="true" />
-            بازکردن مطالعه
-          </Button>
+          {format === "image" ? (
+            <DocumentCover uid={doc.uid} label={doc.label} />
+          ) : openable ? (
+            <Button className="min-h-11 gap-2" onClick={() => onOpen(doc.uid)}>
+              <BookOpen className="size-4" aria-hidden="true" />
+              {format === "pdf" ? "بازکردن نسخهٔ اسکن‌شده" : "بازکردن مطالعه"}
+            </Button>
+          ) : null}
         </div>
 
-        <p className="mt-4 text-xs font-medium text-muted-foreground">
-          پوشش ثبت‌شده برای این سند
-        </p>
-        <div
-          className="mt-1.5 flex flex-wrap gap-1.5"
-          aria-label={`پوشش سند ${doc.label}`}
-        >
-          {coverageKeys.map(({ key, label }) => {
-            const state = doc.coverage?.[key] ?? "absent";
-            return (
+        {format === "text" ? (
+          <>
+            <p className="mt-4 text-xs font-medium text-muted-foreground">
+              پوشش ثبت‌شده برای این سند
+            </p>
+            <div
+              className="mt-1.5 flex flex-wrap gap-1.5"
+              aria-label={`پوشش سند ${doc.label}`}
+            >
+              {coverageKeys.map(({ key, label }) => {
+                const state = doc.coverage?.[key] ?? "absent";
+                return (
+                  <Badge
+                    key={key}
+                    variant="outline"
+                    className={`font-normal ${coverageBadgeClass(state)}`}
+                    title={`${label}: ${coverageLabels[state]}`}
+                  >
+                    <span aria-hidden="true">{label}: </span>
+                    {coverageLabels[state]}
+                  </Badge>
+                );
+              })}
               <Badge
-                key={key}
                 variant="outline"
-                className={`font-normal ${coverageBadgeClass(state)}`}
-                title={`${label}: ${coverageLabels[state]}`}
+                className="border-border bg-muted font-normal text-muted-foreground"
               >
-                <span aria-hidden="true">{label}: </span>
-                {coverageLabels[state]}
+                <span aria-hidden="true">فهرست: </span>
+                {coverageLabels[doc.coverage?.toc ?? "absent"]}
               </Badge>
-            );
-          })}
-          <Badge
-            variant="outline"
-            className="border-border bg-muted font-normal text-muted-foreground"
-          >
-            <span aria-hidden="true">فهرست: </span>
-            {coverageLabels[doc.coverage?.toc ?? "absent"]}
-          </Badge>
-        </div>
+            </div>
+          </>
+        ) : null}
       </CardContent>
     </Card>
   );
@@ -158,17 +205,43 @@ export function WorkView({ uid }: { uid: string }) {
 
   const work = workQuery.data;
 
+  /* فاز ۲ (دور ۱۸-فیکس ۱۲): نشانی معنایی — نام اثر در path (کدگشا در نوار)،
+     uid در query (w). اثرِ هویت مسیر pathname را نام‌دار می‌کند (بدون رویداد). */
+  useEffect(() => {
+    if (!work?.title) return;
+    decoratePathWithSlug(work.title, "book");
+  }, [work?.title, uid]);
+
+  /* گروه‌بندی بر اساس فرمت محتوا (فاز رسانه) — یک اثر می‌تواند هم‌زمان متن، اسکن،
+     صدا و جلد داشته باشد؛ ترتیب: متن، اسکن، صوت، جلد، بقیه. */
   const grouped = (() => {
-    const volumes: WorkDetail["documents"] = [];
-    const intros: WorkDetail["documents"] = [];
-    const others: WorkDetail["documents"] = [];
+    const text: WorkDetail["documents"] = [];
+    const pdf: WorkDetail["documents"] = [];
+    const audio: WorkDetail["documents"] = [];
+    const image: WorkDetail["documents"] = [];
+    const other: WorkDetail["documents"] = [];
     for (const doc of work?.documents ?? []) {
-      if (doc.kind === "volume") volumes.push(doc);
-      else if (doc.kind === "intro" || doc.kind === "introduction") intros.push(doc);
-      else others.push(doc);
+      switch (doc.format ?? "text") {
+        case "text":
+          text.push(doc);
+          break;
+        case "pdf":
+          pdf.push(doc);
+          break;
+        case "audio":
+          audio.push(doc);
+          break;
+        case "image":
+          image.push(doc);
+          break;
+        default:
+          other.push(doc);
+      }
     }
-    return { volumes, intros, others };
+    return { text, pdf, audio, image, other };
   })();
+  const readableCount =
+    grouped.text.length + grouped.pdf.length + grouped.audio.length;
 
   return (
     <div className="mx-auto w-full max-w-4xl px-4 py-8">
@@ -300,47 +373,38 @@ export function WorkView({ uid }: { uid: string }) {
             </Card>
           ) : (
             <>
-              {grouped.volumes.length > 0 ? (
-                <section aria-labelledby="volumes-title" className="space-y-3">
-                  <h2 id="volumes-title" className="text-base font-semibold">
-                    جلدها
-                  </h2>
-                  {grouped.volumes.map((doc) => (
-                    <DocumentCard
-                      key={doc.uid}
-                      doc={doc}
-                      onOpen={(documentUid) => navigate(`/read/${documentUid}`)}
-                    />
-                  ))}
-                </section>
-              ) : null}
-              {grouped.intros.length > 0 ? (
-                <section aria-labelledby="intros-title" className="space-y-3">
-                  <h2 id="intros-title" className="text-base font-semibold">
-                    مدخل‌ها
-                  </h2>
-                  {grouped.intros.map((doc) => (
-                    <DocumentCard
-                      key={doc.uid}
-                      doc={doc}
-                      onOpen={(documentUid) => navigate(`/read/${documentUid}`)}
-                    />
-                  ))}
-                </section>
-              ) : null}
-              {grouped.others.length > 0 ? (
-                <section aria-labelledby="others-title" className="space-y-3">
-                  <h2 id="others-title" className="text-base font-semibold">
-                    اسناد دیگر
-                  </h2>
-                  {grouped.others.map((doc) => (
-                    <DocumentCard
-                      key={doc.uid}
-                      doc={doc}
-                      onOpen={(documentUid) => navigate(`/read/${documentUid}`)}
-                    />
-                  ))}
-                </section>
+              {(
+                [
+                  ["text", "نسخه‌های متنی"],
+                  ["pdf", "نسخه‌های اسکن‌شده"],
+                  ["audio", "نسخه‌های صوتی"],
+                  ["image", "جلدها"],
+                  ["other", "اسناد دیگر"],
+                ] as const
+              ).map(([key, title]) =>
+                grouped[key].length > 0 ? (
+                  <section key={key} aria-labelledby={`${key}-title`} className="space-y-3">
+                    <h2 id={`${key}-title`} className="text-base font-semibold">
+                      {title}
+                    </h2>
+                    {grouped[key].map((doc) => (
+                      <DocumentCard
+                        key={doc.uid}
+                        doc={doc}
+                        onOpen={(documentUid) =>
+                          navigate(readHref(documentUid), undefined, { slug: work?.title })
+                        }
+                      />
+                    ))}
+                  </section>
+                ) : null,
+              )}
+              {readableCount === 0 ? (
+                <Card className="border-dashed">
+                  <CardContent className="p-6 text-center text-sm text-muted-foreground">
+                    نسخهٔ قابل مطالعه‌ای برای این اثر ثبت نشده است؛ فقط تصویر جلد در دسترس است.
+                  </CardContent>
+                </Card>
               ) : null}
             </>
           )}

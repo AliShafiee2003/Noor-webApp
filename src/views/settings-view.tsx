@@ -48,6 +48,7 @@ import { Slider } from "@/components/ui/slider";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ErrorState } from "@/components/feedback";
 import { api, errorMessage } from "@/lib/api";
+import { useRoute } from "@/lib/hash-router";
 import {
   LATIN_FONT_OPTIONS,
   PROSE_FONT_OPTIONS,
@@ -61,7 +62,6 @@ import {
   usePalette,
   type PaletteMode,
 } from "@/lib/palette";
-import { useRoute } from "@/lib/hash-router";
 import { faDateTime, faNum } from "@/lib/format";
 import type { PdfJob, SessionInfo, ShareLinkInfo } from "@/lib/types";
 import { useAuthStore } from "@/store/auth";
@@ -876,6 +876,9 @@ function PdfJobsCard() {
 function SharesCard() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  // فاز ۲: «بازکردن» از روتر مسیر واقعی می‌گذرد — قالب‌های قدیمی (#/…) هم در
+  // روتر یک‌بار نرمال می‌شوند (uid در query سفر می‌کند).
+  const { navigate } = useRoute();
   const sharesQuery = useQuery({
     queryKey: ["shares"],
     queryFn: () => api.get<{ items: ShareLinkInfo[] }>("/shares"),
@@ -957,9 +960,7 @@ function SharesCard() {
                       variant="outline"
                       size="sm"
                       className="min-h-9 gap-1"
-                      onClick={() => {
-                        window.location.hash = s.url_path.startsWith("#") ? s.url_path.slice(1) : s.url_path;
-                      }}
+                      onClick={() => { navigate(s.url_path); }}
                     >
                       <ExternalLink className="size-3.5" aria-hidden="true" />
                       بازکردن

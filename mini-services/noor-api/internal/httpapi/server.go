@@ -74,7 +74,10 @@ func (s *Server) Router() http.Handler {
 			r.Use(s.requireAuth)
 			r.Post("/auth/logout", s.mutation(s.handleLogout))
 			r.Post("/auth/change-password", s.mutation(s.handleChangePassword))
-			r.Get("/auth/session", s.handleSession)
+			/* GET /auth/session فقط با ثبت عمومی بالا سرو می‌شود (publicSession):
+			   ثبت تکراری در گروه نشست‌دار مسیر عمومی را می‌پوشاند و برای مهمان
+			   401 می‌دهد — منبع نویز کنسول پیش از ورود و نقض «وضعیت بدون الزام
+			   نشست» (رفع دور ۱۸: پروب نشست مهمان 200 {user:null} می‌دهد). */
 			r.Get("/auth/sessions", s.handleListSessions)
 			r.Delete("/auth/sessions/{uid}", s.mutation(s.handleRevokeSession))
 			r.Post("/auth/mfa/setup", s.mutation(s.requireAdmin(s.handleMFASetup)))
@@ -89,6 +92,9 @@ func (s *Server) Router() http.Handler {
 			r.Get("/documents/{uid}/toc", s.handleTOC)
 			r.Get("/documents/{uid}/pages", s.handlePagesByLabel)
 			r.Get("/documents/{uid}/pages/{pageUID}", s.handlePage)
+			// فایل رسانه‌ای (pdf/image/audio) — استریم با Range (media.go)
+			r.Get("/documents/{uid}/media", s.handleDocumentMedia)
+			r.Get("/documents/{uid}/file", s.handleDocumentFile)
 			r.Get("/documents/{uid}/hadiths/{localUID}/locations", s.handleHadithLocations)
 			r.Get("/anchors/{uid}", s.handleAnchor)
 
@@ -536,16 +542,6 @@ func (s *Server) publicSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.ok(w, map[string]any{"user": u, "csrf": s.csrfToken(c.Value)})
-}
-
-func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
-	u := userOf(r)
-	c, _ := r.Cookie(sessionCookieName)
-	csrf := newCSRF()
-	if c != nil {
-		csrf = s.csrfToken(c.Value)
-	}
-	s.ok(w, map[string]any{"user": u, "csrf": csrf})
 }
 
 func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {

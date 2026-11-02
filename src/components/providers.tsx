@@ -22,23 +22,23 @@ export function Providers({ children }: { children: React.ReactNode }) {
         defaultOptions: {
           queries: {
             staleTime: 30_000,
-            /* تلاش مجدد فقط برای خطای گذرا (retryable) و حداکثر ۲ بار؛
-               خطاهای منطقی/اعتبارسنجی فوری تمام می‌شوند تا پیام درست نمایش یابد. */
+            /* آفلاین/قطع شبکه: پیش‌فرض «online» کوئری را پیش از نخستین تلاش مکث
+               می‌کند و UI در اسکلتون بی‌پایان می‌ماند (یافتهٔ دور ۱۸). با
+               «offlineFirst» نخستین تلاش انجام می‌شود و خطا دیده می‌شود.
+               خطاهای شبکه‌ای (status=0: قطع اتصال/تایم‌اوت) بدون انتظارِ
+               retry-در-انتظارِ اتصال، فوراً به وضعیت خطا می‌رسند؛ خطاهای گذرای
+               سمت سرور طبق policy قبلی حداکثر ۲ بار دوباره تلاش می‌شوند. */
+            networkMode: "offlineFirst",
             retry: (failureCount, error) =>
-              (error instanceof ApiError ? error.retryable : false) &&
+              error instanceof ApiError &&
+              error.status !== 0 &&
+              error.retryable &&
               failureCount < 2,
             refetchOnWindowFocus: false,
           },
         },
       }),
   );
-
-  /* ترجیحات قلم: همگام با اولین رندر (بدون جرقهٔ قلم) + پس از هر تغییر */
-  const prefs = useWorkspaceStore((s) => s.prefs);
-  applyFontPrefs(prefs);
-  useEffect(() => {
-    applyFontPrefs(prefs);
-  }, [prefs]);
 
   /* نشست باطل‌شده (منقضی/ revoked): بازگشت لطیف به صفحهٔ ورود — یک‌بار در هر رویداد */
   useEffect(() => {
@@ -61,12 +61,22 @@ export function Providers({ children }: { children: React.ReactNode }) {
         >
           {/* با تغییر روشن/تیره (حتی همگام با سامانه)، قالب ذخیره‌شدهٔ همان حالت اعمال می‌شود */}
           <PaletteModeSync />
+          <FontPrefsSync />
           {children}
           <Toaster />
         </ThemeProvider>
       </QueryClientProvider>
     </DirectionProvider>
   );
+}
+
+/** همگام‌سازی قلم‌ها در کامپوننت برگ تا تغییر prefs کل درخت اپ را ری‌رندر نکند */
+function FontPrefsSync() {
+  const prefs = useWorkspaceStore((s) => s.prefs);
+  useEffect(() => {
+    applyFontPrefs(prefs);
+  }, [prefs]);
+  return null;
 }
 
 /** همگام‌سازی قالب رنگی با حالت فعال — پس از هر تغییر روشن/تیره */

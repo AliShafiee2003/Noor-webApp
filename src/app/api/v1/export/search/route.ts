@@ -82,13 +82,36 @@ function badRequest(message: string): Response {
 
 /* ---------- ساخت سطرها ---------- */
 
-/** نشانی عمیق گشودنی موضع در کتاب‌خوان (نشانک hash — مستقل از مسیر استقرار) */
+/** پیوند مطالعه — فاز ۲: مسیر واقعی معنایی (بدون hash)؛ pg عددی؛ uid در query d */
 function deepLink(origin: string, r: SearchResultItem): string {
-  let url = `${origin}/#/read/${r.document.uid}?pg=${r.page.uid}`;
+  const q = new URLSearchParams({ d: r.document.uid });
+  if (r.page?.uid) q.set("pg", pageTerm(r.page.uid));
   if (r.match_offsets) {
-    url += `&hl=${r.match_offsets[0]}:${r.match_offsets[1]}`;
+    q.set("hl", `${r.match_offsets[0]}:${r.match_offsets[1]}`);
   }
-  return url;
+  const slug = nameSafe(r.work?.title) ?? "book";
+  return `${origin}/library/${encodeURIComponent(slug)}/read?${q.toString()}`;
+}
+
+/** slug امن برای مسیر از عنوان فارسی — همان قواعد slugifyFa سمت کلاینت */
+function nameSafe(title: string | null | undefined): string | null {
+  if (!title) return null;
+  const s = title
+    .replace(/[\u064B-\u065F\u0670\u06D6-\u06ED]/g, "")
+    .replace(/[\u200c\u200d\u200e\u200f]/g, "-")
+    .replace(/[\[\]{}()（）«»"'’‘“”"…،؛:.,\/\\|?!؟&$%+=~<>@^*#_-]+/g, "-")
+    .replace(/\s+/g, "-")
+    .replace(/-{2,}/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48)
+    .replace(/-+$/g, "");
+  return s || null;
+}
+
+/** شمارهٔ صفحه در نشانی: p-016 → 16 (خارج از این قالب، عیناً) */
+function pageTerm(pageUid: string): string {
+  const m = /^p-(\d+)$/.exec(pageUid);
+  return m ? String(Number.parseInt(pageUid.slice(2), 10)) : pageUid;
 }
 
 /** ترکیب نام کتاب و نشانی دقیق (جلد، صفحه، سرفصل، شماره روایت) */

@@ -60,6 +60,10 @@ func (s *Server) handleWorks(w http.ResponseWriter, r *http.Request) {
 	lang := strings.TrimSpace(r.URL.Query().Get("language"))
 	author := strings.TrimSpace(r.URL.Query().Get("author"))
 	sortParam := strings.TrimSpace(r.URL.Query().Get("sort"))
+	content := strings.TrimSpace(r.URL.Query().Get("content"))
+	if content != "" && content != "text" && content != "pdf" && content != "audio" {
+		content = "" // مقدار نامعتبر نادیده گرفته می‌شود — UI پایدار بماند
+	}
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 	if page < 1 {
 		page = 1
@@ -89,6 +93,9 @@ func (s *Server) handleWorks(w http.ResponseWriter, r *http.Request) {
 			if !strings.Contains(aFold, authorFold) {
 				continue
 			}
+		}
+		if content != "" && !s.Catalog.WorkHasFormat(&wk, content) {
+			continue
 		}
 		filtered = append(filtered, wk)
 	}
@@ -135,7 +142,9 @@ func (s *Server) handleWorks(w http.ResponseWriter, r *http.Request) {
 			"uid": wk.UID, "title": wk.Title, "short_title": wk.ShortTitle, "author": wk.Author,
 			"publisher": wk.Publisher, "year": wk.Year, "language": wk.Language,
 			"documents_count": len(wk.Documents), "topics": wk.Topics, "features": feats,
-			"published": isPublished,
+			"formats":    s.Catalog.WorkFormats(&wk),
+			"cover_uid":  nilIfEmpty(s.Catalog.CoverUID(&wk)),
+			"published":  isPublished,
 		})
 	}
 	if out == nil {
@@ -165,15 +174,18 @@ func (s *Server) serveWork(w http.ResponseWriter, wk *catalog.Work, isPublished 
 			"links":           feats.Links,
 		}
 		docs = append(docs, map[string]any{
-			"uid": d.UID, "label": d.Label, "kind": d.Kind, "language": d.Language, "coverage": cov,
+			"uid": d.UID, "label": d.Label, "kind": d.Kind, "language": d.Language,
+			"format": d.Format, "coverage": cov,
 		})
 	}
 	s.ok(w, map[string]any{
 		"uid": wk.UID, "title": wk.Title, "short_title": wk.ShortTitle, "author": wk.Author,
 		"publisher": wk.Publisher, "year": wk.Year, "language": wk.Language, "topics": wk.Topics,
 		"documents": docs, "features": feats,
-		"volumes_count":   countVolumes(docs),
+		"volumes_count":   countVolumes(wk.Documents),
 		"documents_count": len(docs),
+		"formats":         s.Catalog.WorkFormats(wk),
+		"cover_uid":       nilIfEmpty(s.Catalog.CoverUID(wk)),
 		"published":       isPublished,
 	})
 }
@@ -224,14 +236,23 @@ func (s *Server) checkDocAccess(docUID string, r *http.Request) bool {
 	return s.DB.IsWorkPublished(wk.UID)
 }
 
-func countVolumes(docs []map[string]any) int {
+func countVolumes(docs []catalog.DocumentMeta) int {
 	n := 0
 	for _, d := range docs {
-		if d["kind"] == "volume" {
+		// سند تصویریِ فقط-کاور (۲۹۸ اثر) جلدِ قابل مطالعه نیست
+		if d.Kind == "volume" && d.Format != "image" {
 			n++
 		}
 	}
 	return n
+}
+
+// nilIfEmpty رشتهٔ تهی را null برمی‌گرداند — قرارداد cover_uid در JSON.
+func nilIfEmpty(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 func statusOf(b bool) string {

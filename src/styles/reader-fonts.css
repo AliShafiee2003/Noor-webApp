@@ -1,0 +1,18 @@
+/* Local reading fonts, loaded for both desktop and mobile readers. */
+@font-face{font-family:'RM BYekan';src:url('/fonts/reader/BYekan.ttf') format('truetype');font-weight:400;font-display:swap}
+@font-face{font-family:'RM BYekan';src:url('/fonts/reader/BYekan-Bold.ttf') format('truetype');font-weight:700;font-display:swap}
+@font-face{font-family:'RM FarBadr';src:url('/fonts/reader/Far_Badr.ttf') format('truetype');font-weight:400;font-display:swap}
+@font-face{font-family:'RM Greta';src:url('/fonts/reader/Greta-Light.ttf') format('truetype');font-weight:300;font-display:swap}
+@font-face{font-family:'RM Greta';src:url('/fonts/reader/Greta-Regular.ttf') format('truetype');font-weight:400;font-display:swap}
+@font-face{font-family:'RM Greta';src:url('/fonts/reader/Greta-Medium.ttf') format('truetype');font-weight:500;font-display:swap}
+@font-face{font-family:'RM Greta';src:url('/fonts/reader/Greta-Bold.ttf') format('truetype');font-weight:700;font-display:swap}
+@font-face{font-family:'RM Vazir';src:url('/fonts/reader/Vazir-Light.ttf') format('truetype');font-weight:300;font-display:swap}
+@font-face{font-family:'RM Vazir';src:url('/fonts/reader/Vazir-Regular.ttf') format('truetype');font-weight:400;font-display:swap}
+@font-face{font-family:'RM Vazir';src:url('/fonts/reader/Vazir-Medium.ttf') format('truetype');font-weight:500;font-display:swap}
+@font-face{font-family:'RM Vazir';src:url('/fonts/reader/Vazir-Bold.ttf') format('truetype');font-weight:700;font-display:swap}
+@font-face{font-family:'RM BTraffic';src:url('/fonts/reader/BTraffic.ttf') format('truetype');font-weight:400;font-display:swap}
+@font-face{font-family:'RM BTraffic';src:url('/fonts/reader/BTraffic-Bold.ttf') format('truetype');font-weight:700;font-display:swap}
+@font-face{font-family:'RM BYagut';src:url('/fonts/reader/BYagut.ttf') format('truetype');font-weight:400;font-display:swap}
+@font-face{font-family:'RM BYagut';src:url('/fonts/reader/BYagut-Bold.ttf') format('truetype');font-weight:700;font-display:swap}
+@font-face{font-family:'RM AdobeNaskh';src:url('/fonts/reader/AdobeNaskh-Medium.otf') format('opentype');font-weight:400;font-display:swap}
+@font-face{font-family:'RM AdobeNaskh';src:url('/fonts/reader/AdobeNaskh-Medium.otf') format('opentype');font-weight:500;font-display:swap}

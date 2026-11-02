@@ -44,7 +44,9 @@ const eslintConfig = [...nextCoreWebVitals, ...nextTypescript, {
     "no-useless-escape": "off",
   },
 }, {
-  ignores: ["node_modules/**", ".next/**", "out/**", "build/**", "next-env.d.ts", "examples/**", "skills"]
+  // public/** دارایی‌های آماده (از جمله worker مینیفای‌شدهٔ pdf.js) است، نه کد پروژه
+  // .next-*/** خروجی بیلدهای موقت بازبینی است و app_development/** نسخهٔ کهنهٔ تودرتو.
+  ignores: ["node_modules/**", ".next/**", ".next-*/**", "out/**", "build/**", "public/**", "next-env.d.ts", "examples/**", "skills", "test-results/**", "playwright-report/**", "app_development/**"]
 }];
 
 export default eslintConfig;

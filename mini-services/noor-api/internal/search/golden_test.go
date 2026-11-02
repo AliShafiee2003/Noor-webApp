@@ -86,6 +86,9 @@ func loadFixtureEngine(t *testing.T) (*LocalEngine, *catalog.Service) {
 	seen := map[string]bool{}
 	for _, wk := range cat.Works() {
 		for _, d := range wk.Documents {
+			if d.Format != "text" {
+				continue // مجموعهٔ طلایی فقط متن است؛ pdf/تصویر/صوت decode متنی ندارند
+			}
 			m, err := cat.Model(d.UID)
 			if err != nil {
 				t.Fatalf("مدل سند %s: %v", d.UID, err)

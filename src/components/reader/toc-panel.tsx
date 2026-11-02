@@ -7,13 +7,12 @@
  */
 import { useState } from "react";
 import { LayoutGroup, motion } from "framer-motion";
-import { Bookmark as BookmarkIcon, ChevronDown, ChevronLeft, ListTree } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { ChevronDown, List } from "lucide-react";
 import { ErrorState } from "@/components/feedback";
 import { Skeleton } from "@/components/ui/skeleton";
-import { faNum, faDateTime, normalizePersian } from "@/lib/format";
+import { faNum, normalizePersian } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import type { Bookmark, TocSection } from "@/lib/types";
+import type { TocSection } from "@/lib/types";
 
 function SectionNode({
   section,
@@ -131,10 +130,6 @@ export interface TocPanelProps {
   onRetry: () => void;
   activeSectionUid: string | null;
   onJumpSection: (s: TocSection) => void;
-  bookmarks: Bookmark[];
-  bookmarksLoading: boolean;
-  onJumpBookmark: (b: Bookmark) => void;
-  onDeleteBookmark: (b: Bookmark) => void;
 }
 
 export function TocPanel({
@@ -144,15 +139,11 @@ export function TocPanel({
   onRetry,
   activeSectionUid,
   onJumpSection,
-  bookmarks,
-  bookmarksLoading,
-  onJumpBookmark,
-  onDeleteBookmark,
 }: TocPanelProps) {
   return (
     <div className="flex h-full min-h-0 flex-col font-sans" style={{ fontFamily: "var(--font-ui)" }}>
         <div className="flex items-center gap-2 border-b border-border px-3 py-2.5">
-          <ListTree className="size-4 text-primary" aria-hidden="true" />
+          <List className="size-4 text-primary" aria-hidden="true" />
           <h2 className="text-sm font-semibold">فهرست</h2>
         </div>
 
@@ -186,67 +177,6 @@ export function TocPanel({
             </LayoutGroup>
           )}
         </div>
-
-      {/* نشانک‌ها — در همین پنل فهرست (READ-12) */}
-      <div className="border-t border-border">
-        <div className="flex items-center gap-2 px-3 py-2.5">
-          <BookmarkIcon className="size-4 text-primary" aria-hidden="true" />
-          <h2 className="text-sm font-semibold">نشانک‌ها</h2>
-          {bookmarks.length > 0 ? (
-            <span className="rounded-full bg-muted px-1.5 text-[10px] text-muted-foreground">
-              {faNum(bookmarks.length)}
-            </span>
-          ) : null}
-        </div>
-        <div className="max-h-44 overflow-y-auto px-2 pb-2">
-          {bookmarksLoading ? (
-            <div className="space-y-2 px-1">
-              <Skeleton className="h-7 w-full" />
-              <Skeleton className="h-7 w-2/3" />
-            </div>
-          ) : bookmarks.length === 0 ? (
-            <p className="px-3 py-3 text-center text-[11px] leading-5 text-muted-foreground">
-              هنوز نشانکی ثبت نکرده‌اید؛ با دکمهٔ نشانک در نوار بالا، صفحهٔ فعلی را نگه دارید.
-            </p>
-          ) : (
-            <ul aria-label="فهرست نشانک‌ها">
-              {bookmarks.map((b) => (
-                <li
-                  key={b.uid}
-                  className="group flex items-center gap-1 rounded-lg px-1 hover:bg-accent"
-                >
-                  <button
-                    type="button"
-                    onClick={() => onJumpBookmark(b)}
-                    className="min-h-11 flex-1 truncate py-1.5 text-start text-[13px] md:min-h-0"
-                    title={b.label ?? undefined}
-                  >
-                    <ChevronLeft
-                      className="me-1 inline size-3 text-muted-foreground"
-                      aria-hidden="true"
-                    />
-                    <span>{b.label || "نشانک"}</span>{" "}
-                    {b.created_at ? (
-                      <span className="ms-1.5 inline-block text-[10px] text-muted-foreground">
-                        {faDateTime(b.created_at)}
-                      </span>
-                    ) : null}
-                  </button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="min-h-11 px-2 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:text-destructive md:min-h-8"
-                    onClick={() => onDeleteBookmark(b)}
-                    aria-label={`حذف نشانک ${b.label ?? ""}`}
-                  >
-                    حذف
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </div>
     </div>
   );
 }

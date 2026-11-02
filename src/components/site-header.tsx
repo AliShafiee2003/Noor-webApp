@@ -6,12 +6,12 @@ import {
   Compass,
   FolderOpen,
   Home,
+  LayoutDashboard,
   Library,
   LogOut,
   Menu,
   Search,
   Settings,
-  ShieldCheck,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -66,20 +66,20 @@ export const NAV_ITEMS: NavItem[] = [
 export const ADMIN_ITEM: NavItem = {
   path: "/admin",
   label: "مدیریت",
-  icon: ShieldCheck,
+  icon: LayoutDashboard,
   match: (p) => p === "/admin",
 };
 
 /* ---------- نوار بالای جست‌وجو و کاربر ---------- */
 
-export function QuickSearch() {
+export function QuickSearch({ className }: { className?: string }) {
   const { navigate } = useRoute();
   const [q, setQ] = useState("");
 
   return (
     <form
       role="search"
-      className="relative hidden w-full max-w-md items-center sm:flex"
+      className={cn("relative hidden w-full max-w-md items-center sm:flex", className)}
       onSubmit={(e) => {
         e.preventDefault();
         const query = q.trim();
@@ -116,7 +116,9 @@ export function UserMenu() {
         <Button
           variant="ghost"
           className="min-h-11 gap-2 px-2"
-          aria-label={`منوی کاربر: ${user.display_name}`}
+          /* نام دسترس‌پذیر باید متن دیده‌شده (حرف آواتار + نام) را دربرداشته باشد
+             وگرنه axe/Lighthouse «label-content-name-mismatch» می‌دهد. */
+          aria-label={`${initial}${user.display_name} — منوی کاربر`}
         >
           <span
             className="flex size-8 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground"
@@ -143,6 +145,12 @@ export function UserMenu() {
           <Settings className="size-4" aria-hidden="true" />
           تنظیمات
         </DropdownMenuItem>
+        {user.role === "admin" ? (
+          <DropdownMenuItem onSelect={() => navigate("/admin")}>
+            <LayoutDashboard className="size-4" aria-hidden="true" />
+            مدیریت
+          </DropdownMenuItem>
+        ) : null}
         <DropdownMenuSeparator />
         <DropdownMenuItem
           variant="destructive"
@@ -244,6 +252,19 @@ export function MobileNavMenu({ items }: { items: NavItem[] }) {
               </div>
             </div>
             <Separator className="my-3" />
+            {user.role === "admin" ? (
+              <Button
+                variant="outline"
+                className="mb-2 min-h-11 w-full gap-2"
+                onClick={() => {
+                  close();
+                  navigate("/admin");
+                }}
+              >
+                <LayoutDashboard className="size-4" aria-hidden="true" />
+                مدیریت سامانه
+              </Button>
+            ) : null}
             <div className="flex gap-2">
               <Button
                 variant="outline"
@@ -327,22 +348,82 @@ export function NavLinks({ items }: { items: NavItem[] }) {
   );
 }
 
+/* ---------- نوار فشردهٔ تک‌ردیفی مخصوص صفحهٔ مطالعه (کتاب‌خوان) ---------- */
+
+function ReaderTopBar({ items }: { items: NavItem[] }) {
+  const { route } = useRoute();
+  return (
+    <header className="sticky top-0 z-40 border-b border-border bg-chrome/95 backdrop-blur supports-[backdrop-filter]:bg-chrome/85">
+      <div className="flex h-14 w-full items-center gap-2 px-3 md:px-4">
+        <HashLink
+          to="/home"
+          className="flex min-h-11 items-center gap-2 text-start"
+          aria-label="خانهٔ میزکار پژوهشی نور"
+        >
+          <BookOpenText className="size-6 shrink-0 text-primary" aria-hidden="true" />
+          <span className="hidden text-sm font-bold leading-6 lg:inline">
+            میزکار پژوهشی نور
+          </span>
+        </HashLink>
+        <nav aria-label="ناوبری اصلی" className="hidden min-w-0 items-center gap-1 md:flex">
+          {items.map((item) => {
+            const active = item.match(route.path);
+            return (
+              <HashLink
+                key={item.path}
+                to={item.path}
+                aria-current={active ? "page" : undefined}
+                title={item.label}
+                className={`flex h-9 items-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 text-sm font-medium transition-colors ${
+                  active
+                    ? "bg-primary/10 text-primary"
+                    : "text-muted-foreground hover:bg-accent hover:text-foreground"
+                }`}
+              >
+                <item.icon className="size-4 shrink-0" aria-hidden="true" />
+                <span className="hidden lg:inline">{item.label}</span>
+              </HashLink>
+            );
+          })}
+        </nav>
+        <div className="flex-1" />
+        <QuickSearch className="min-w-0 w-auto max-w-xs flex-1" />
+        <UserMenu />
+        <MobileNavMenu items={items} />
+      </div>
+    </header>
+  );
+}
+
 export interface SiteHeaderProps {
   navItems?: NavItem[];
   className?: string;
+  /** «reader»: نسخهٔ فشردهٔ تک‌ردیفی مخصوص صفحهٔ مطالعه؛ پیش‌فرض دو ردیفی برای بقیهٔ صفحات */
+  variant?: "default" | "reader";
 }
 
 /**
  * هدر اصلی سایت شامل نوار جست‌وجو، منوی کاربر، آیکون‌ها و لینک‌های ناوبری
  */
-export function SiteHeader({ navItems, className }: SiteHeaderProps) {
+export function SiteHeader({ navItems, className, variant = "default" }: SiteHeaderProps) {
   const user = useAuthStore((s) => s.user);
   const items = navItems ?? (user?.role === "admin" ? [...NAV_ITEMS, ADMIN_ITEM] : NAV_ITEMS);
+  /* تنظیمات و مدیریت در نوار ناوبری نیستند؛ از منوی پروفایل (و بخش پروفایلِ
+     منوی موبایل) باز می‌شوند. */
+  const barItems = items.filter((item) => item.path !== "/settings" && item.path !== "/admin");
+
+  if (variant === "reader") {
+    return (
+      <div className={cn("w-full bg-chrome shrink-0", className)}>
+        <ReaderTopBar items={barItems} />
+      </div>
+    );
+  }
 
   return (
     <div className={cn("w-full bg-chrome shrink-0", className)}>
-      <TopBar navItems={items} />
-      <NavLinks items={items} />
+      <TopBar navItems={barItems} />
+      <NavLinks items={barItems} />
     </div>
   );
 }

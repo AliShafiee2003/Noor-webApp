@@ -1,12 +1,14 @@
 import { defineConfig, devices } from "@playwright/test";
 
 /**
- * suite E2E میزکار پژوهشی نور (ه-۱۲) — روی dev server :3000 و Go :8080.
- * کرومِ موجود سندباکس (بدون دانلود مجدد) به‌عنوان executablePath.
+ * suite E2E میزکار پژوهشی نور (ه-۱۲) — روی dev server :3200 و Go :8080.
+ * کرومِ نصب‌شدهٔ سیستم به‌عنوان executablePath (بدون دانلود مجدد مرورگر).
  */
 const CHROME =
   process.env.E2E_CHROME_PATH ??
-  "/home/z/.agent-browser/browsers/chrome-153.0.8010.52/chrome";
+  (process.platform === "win32"
+    ? "C:/Program Files/Google/Chrome/Application/chrome.exe"
+    : "/home/z/.agent-browser/browsers/chrome-153.0.8010.52/chrome");
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -16,7 +18,7 @@ export default defineConfig({
   workers: 1,
   reporter: [["list"]],
   use: {
-    baseURL: process.env.E2E_BASE_URL ?? "http://127.0.0.1:3000",
+    baseURL: process.env.E2E_BASE_URL ?? "http://127.0.0.1:3200",
     headless: true,
     ignoreHTTPSErrors: true,
     launchOptions: { executablePath: CHROME, args: ["--no-sandbox"] },

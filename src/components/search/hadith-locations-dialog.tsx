@@ -34,6 +34,7 @@ import {
 import { HashLink } from "@/lib/hash-router";
 import { api, errorMessage } from "@/lib/api";
 import { faNum } from "@/lib/format";
+import { readHref as readerHref } from "@/lib/href";
 import { HighlightedSnippet } from "@/components/search/result-card";
 import type { HadithLocationsResponse } from "@/lib/types";
 
@@ -56,8 +57,9 @@ export function HadithLocationsDialog({
   const query = useQuery({
     queryKey: ["hadith-locations", documentUid, localHadithUid],
     queryFn: ({ signal }) =>
+      // UIDها ممکن است «#» یا کاراکترهای URL-ناساز داشته باشند (دور ۱۸).
       api.get<HadithLocationsResponse>(
-        `/documents/${documentUid}/hadiths/${localHadithUid}/locations`,
+        `/documents/${encodeURIComponent(documentUid)}/hadiths/${encodeURIComponent(localHadithUid)}/locations`,
         undefined,
         signal,
       ),
@@ -250,7 +252,7 @@ export function HadithLocationsDialog({
                                 </p>
                                 {docUid ? (
                                   <HashLink
-                                    to={`/read/${docUid}`}
+                                    to={readerHref(docUid)}
                                     query={pg ? { pg } : undefined}
                                     className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-border px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-accent"
                                   >

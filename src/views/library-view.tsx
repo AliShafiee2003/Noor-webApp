@@ -11,7 +11,7 @@ import { keepPreviousData, useQueries, useQueryClient } from "@tanstack/react-qu
 import { ChevronDown, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -22,13 +22,25 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { EmptyState, ErrorState, ListSkeleton } from "@/components/feedback";
-import { api, errorMessage } from "@/lib/api";
+import { api, errorMessage, mediaFileUrl } from "@/lib/api";
 import { HashLink } from "@/lib/hash-router";
 import { faNum } from "@/lib/format";
+import { workHref } from "@/lib/href";
 import { featureLabels, languageLabel } from "@/lib/labels";
+import { cn } from "@/lib/utils";
 import type { Work, WorkFeatures, WorkListResponse } from "@/lib/types";
 
 const PAGE_SIZE = 20;
+
+/** فیلتر نوع محتوا — همان واژگان پارامتر content در GET /works */
+export type ContentFilter = "" | "text" | "pdf" | "audio";
+
+const CONTENT_CHIPS: Array<{ value: ContentFilter; label: string }> = [
+  { value: "", label: "همه" },
+  { value: "text", label: "متن" },
+  { value: "pdf", label: "اسکن" },
+  { value: "audio", label: "صوت" },
+];
 
 const FEATURE_BADGES: Array<{ key: keyof WorkFeatures; label: string }> = [
   { key: "hadith", label: featureLabels.hadith },
@@ -37,6 +49,11 @@ const FEATURE_BADGES: Array<{ key: keyof WorkFeatures; label: string }> = [
   { key: "topics", label: featureLabels.topics },
   { key: "media", label: featureLabels.media },
 ];
+
+/** فقط پوشش واقعی نشان داده می‌شود؛ «ندارد/نامشخص» چیپ نمی‌گیرد. */
+function hasCoverage(state: string | undefined): boolean {
+  return state === "supported" || state === "partial";
+}
 
 function useDebounced<T>(value: T, delay: number): T {
   const [debounced, setDebounced] = useState(value);
@@ -47,46 +64,87 @@ function useDebounced<T>(value: T, delay: number): T {
   return debounced;
 }
 
+/** جلد کوچک فهرست — <img> ساده است چون مسیر API کوکی نشست لازم دارد */
+function WorkCover({ work }: { work: Work }) {
+  const [failed, setFailed] = useState(false);
+  const letter = work.title.trim().charAt(0) || "ن";
+  if (!work.cover_uid || failed) {
+    return (
+      <div
+        className="flex aspect-[45/64] w-12 shrink-0 items-center justify-center rounded-md border border-border bg-muted text-base font-semibold text-muted-foreground"
+        aria-hidden="true"
+      >
+        {letter}
+      </div>
+    );
+  }
+  return (
+    <img
+      src={mediaFileUrl(work.cover_uid)}
+      alt={`جلد ${work.title}`}
+      loading="lazy"
+      className="aspect-[45/64] w-12 shrink-0 rounded-md border border-border object-cover shadow-xs"
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
 function WorkRow({ work }: { work: Work }) {
+  const hasScan = work.formats?.includes("pdf") ?? false;
+  const hasAudio = work.formats?.includes("audio") ?? false;
   return (
     <HashLink
-      to={`/book/${work.uid}`}
+      to={workHref(work.uid)}
+      slug={work.title}
       className="block rounded-xl border border-border bg-surface transition-colors hover:bg-accent focus-visible:bg-accent"
     >
       <CardContent className="p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h3 className="truncate font-semibold text-foreground">{work.title}</h3>
-            <p className="mt-1 truncate text-sm text-muted-foreground">
-              {[work.author, work.publisher, work.year].filter(Boolean).join(" · ") ||
-                "مشخصات نویسنده و ناشر ثبت نشده"}
-            </p>
-          </div>
-          <div className="flex shrink-0 flex-col items-end gap-1">
-            {work.published === false ? (
-              <Badge variant="destructive" className="font-normal text-xs">
-                از دسترس خارج شده
-              </Badge>
-            ) : null}
-            {work.language ? (
-              <Badge variant="outline">{languageLabel(work.language)}</Badge>
-            ) : null}
-            {work.documents_count !== null && work.documents_count !== undefined ? (
-              <span className="text-xs text-muted-foreground">
-                {faNum(work.documents_count)} سند
-              </span>
-            ) : (
-              <span className="text-xs text-muted-foreground">تعداد اسناد: ثبت نشده</span>
-            )}
+        <div className="flex items-start gap-3">
+          <WorkCover work={work} />
+          <div className="flex min-w-0 flex-1 items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h3 className="truncate font-semibold text-foreground">{work.title}</h3>
+              <p className="mt-1 truncate text-sm text-muted-foreground">
+                {[work.author, work.publisher, work.year].filter(Boolean).join(" · ") ||
+                  "مشخصات نویسنده و ناشر ثبت نشده"}
+              </p>
+            </div>
+            <div className="flex shrink-0 flex-col items-end gap-1">
+              {work.published === false ? (
+                <Badge variant="destructive" className="font-normal text-xs">
+                  از دسترس خارج شده
+                </Badge>
+              ) : null}
+              {work.language ? (
+                <Badge variant="outline">{languageLabel(work.language)}</Badge>
+              ) : null}
+              {work.documents_count !== null && work.documents_count !== undefined ? (
+                <span className="text-xs text-muted-foreground">
+                  {faNum(work.documents_count)} سند
+                </span>
+              ) : (
+                <span className="text-xs text-muted-foreground">تعداد اسناد: ثبت نشده</span>
+              )}
+            </div>
           </div>
         </div>
         <div className="mt-3 flex flex-wrap gap-1.5">
-          {work.features?.searchable_text === false ? (
+          {hasScan ? (
+            <Badge variant="outline" className="border-primary/40 bg-primary/10 font-normal">
+              اسکن‌شده
+            </Badge>
+          ) : null}
+          {hasAudio ? (
+            <Badge variant="outline" className="border-primary/40 bg-primary/10 font-normal">
+              صوتی
+            </Badge>
+          ) : null}
+          {work.features?.searchable_text === "absent" ? (
             <Badge variant="outline" className="border-match bg-match/30 text-foreground">
               متن جست‌وجوپذیر ندارد
             </Badge>
           ) : null}
-          {FEATURE_BADGES.filter((f) => work.features?.[f.key]).map((f) => (
+          {FEATURE_BADGES.filter((f) => hasCoverage(work.features?.[f.key])).map((f) => (
             <Badge key={f.key} variant="secondary" className="font-normal">
               {f.label}
             </Badge>
@@ -101,12 +159,13 @@ interface ResultsProps {
   q: string;
   author: string;
   language: string;
+  content: ContentFilter;
   sort: "title" | "volumes";
   filtersActive: boolean;
   onClearFilters: () => void;
 }
 
-function LibraryResults({ q, author, language, sort, filtersActive, onClearFilters }: ResultsProps) {
+function LibraryResults({ q, author, language, content, sort, filtersActive, onClearFilters }: ResultsProps) {
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
 
@@ -116,12 +175,13 @@ function LibraryResults({ q, author, language, sort, filtersActive, onClearFilte
         Array.from({ length: page }, (_, i) => {
           const pageNumber = i + 1;
           return {
-            queryKey: ["works", { q, author, language, sort, page: pageNumber }],
+            queryKey: ["works", { q, author, language, content, sort, page: pageNumber }],
             queryFn: () =>
               api.get<WorkListResponse>("/works", {
                 q: q || undefined,
                 author: author || undefined,
                 language: language || undefined,
+                content: content || undefined,
                 sort,
                 page: pageNumber,
                 page_size: PAGE_SIZE,
@@ -130,7 +190,7 @@ function LibraryResults({ q, author, language, sort, filtersActive, onClearFilte
             staleTime: 30_000,
           };
         }),
-      [q, author, language, sort, page],
+      [q, author, language, content, sort, page],
     ),
   });
 
@@ -221,19 +281,21 @@ export function LibraryView() {
   const [q, setQ] = useState("");
   const [author, setAuthor] = useState("");
   const [language, setLanguage] = useState("");
+  const [content, setContent] = useState<ContentFilter>("");
   const [sort, setSort] = useState<"title" | "volumes">("title");
 
   const debouncedQ = useDebounced(q, 250);
   const debouncedAuthor = useDebounced(author, 250);
 
   // کلید فیلترها؛ تغییر آن باعث remount نتایج و بازگشت به صفحهٔ نخست می‌شود.
-  const filterKey = `${debouncedQ}\u241f${debouncedAuthor}\u241f${language}\u241f${sort}`;
-  const filtersActive = Boolean(debouncedQ || debouncedAuthor || language);
+  const filterKey = `${debouncedQ}\u241f${debouncedAuthor}\u241f${language}\u241f${content}\u241f${sort}`;
+  const filtersActive = Boolean(debouncedQ || debouncedAuthor || language || content);
 
   const clearFilters = () => {
     setQ("");
     setAuthor("");
     setLanguage("");
+    setContent("");
   };
 
   return (
@@ -299,6 +361,24 @@ export function LibraryView() {
         </div>
       </div>
 
+      <div className="mb-4 flex flex-wrap items-center gap-1.5" role="group" aria-label="نوع محتوا">
+        <span className="me-1 text-sm text-muted-foreground">نوع محتوا:</span>
+        {CONTENT_CHIPS.map((chip) => {
+          const active = content === chip.value;
+          return (
+            <Button
+              key={chip.value || "all"}
+              variant={active ? "default" : "outline"}
+              className="min-h-9 rounded-full px-3.5 text-sm"
+              aria-pressed={active}
+              onClick={() => setContent(chip.value)}
+            >
+              {chip.label}
+            </Button>
+          );
+        })}
+      </div>
+
       <p className="mb-4 text-xs text-muted-foreground">
         نشان‌ها نوع محتوای اثر را نشان می‌دهند؛ وضعیت پوشش هر جلد در صفحهٔ اثر آمده است.
       </p>
@@ -308,6 +388,7 @@ export function LibraryView() {
         q={debouncedQ}
         author={debouncedAuthor}
         language={language}
+        content={content}
         sort={sort}
         filtersActive={filtersActive}
         onClearFilters={clearFilters}

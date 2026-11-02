@@ -62,12 +62,13 @@ type QuranRef struct {
 
 // Request درخواست جست‌وجو.
 type Request struct {
-	Query    string    `json:"query"`
-	Mode     string    `json:"mode"`
-	Scope    Scope     `json:"scope"`
-	Near     *NearOpts `json:"near,omitempty"`
-	Sort     string    `json:"sort"` // relevance|source
-	PageSize int       `json:"page_size"`
+	IgnoreSpacing bool      `json:"ignore_spacing,omitempty"`
+	Query         string    `json:"query"`
+	Mode          string    `json:"mode"`
+	Scope         Scope     `json:"scope"`
+	Near          *NearOpts `json:"near,omitempty"`
+	Sort          string    `json:"sort"` // relevance|source
+	PageSize      int       `json:"page_size"`
 	// گزینه‌های موتور FTS5 (§۱۵/§۲۰/§۲۳) — موتورهای دیگر نادیده می‌گیرند.
 	// Diacritics: "" یا "ignore" = اعراب نادیده؛ "respect" = هر علامتی که کاربر نوشته باید
 	// روی همان حرف در متن باشد (متن می‌تواند اعراب بیشتری داشته باشد؛ حرف بی‌حرکت متن سازگار
@@ -432,6 +433,18 @@ func validateRequest(req *Request) error {
 	if err := canonicalize(req); err != nil {
 		return err
 	}
+	if req.IgnoreSpacing {
+		if req.Mode != NormalizedPhrase || (req.Scope.Target != "document" && req.Scope.Target != "work") {
+			return errors.New("ignore_spacing فقط برای عبارت نرمال‌شده در دامنه جلد یا اثر معتبر است")
+		}
+		if req.Scope.Target == "work" && (req.Scope.WorkUID == nil || *req.Scope.WorkUID == "") {
+			return errors.New("شناسه اثر لازم است")
+		}
+		if req.Scope.Target == "document" && len(req.Scope.DocumentUIDs) == 0 {
+			return errors.New("شناسه جلد لازم است")
+		}
+	}
+
 	n := utf8.RuneCountInString(req.Query)
 	// جست‌وجوی صرفاً استنادی (بدون عبارت) مجاز است — QUR-03
 	if n == 0 && req.Scope.Quran == nil {
@@ -517,9 +530,9 @@ func (e *LocalEngine) Search(ctx context.Context, req *Request, releaseUID strin
 			}
 			resp.Results = append(resp.Results, Result{
 				PassageUID: "title-" + h.WorkUID, MatchType: "exact",
-				Work: Ref{UID: h.WorkUID, Title: h.Title, Label: h.ShortTitle},
+				Work:    Ref{UID: h.WorkUID, Title: h.Title, Label: h.ShortTitle},
 				Section: &Ref{Title: h.Author},
-				Page: Ref{Label: pageLabel},
+				Page:    Ref{Label: pageLabel},
 			})
 		}
 		resp.VerifiedBooks = len(hits)
@@ -1069,7 +1082,20 @@ func (e *LocalEngine) run(ctx context.Context, db *sql.DB, req *Request, release
 	if ov {
 		sCols += ",COALESCE(s.overlap_runes,0)"
 	}
-	if citationOnly {
+	if req.IgnoreSpacing {
+		query := `SELECT ` + cols + ` FROM passages WHERE release_uid=?`
+		args := []any{releaseUID}
+		if req.Scope.Target == "work" {
+			query += ` AND work_uid=?`
+			args = append(args, *req.Scope.WorkUID)
+		} else {
+			query += ` AND document_uid IN (` + placeholders(len(req.Scope.DocumentUIDs)) + `)`
+			for _, uid := range req.Scope.DocumentUIDs {
+				args = append(args, uid)
+			}
+		}
+		rows, err = db.QueryContext(ctx, query+` ORDER BY work_uid,document_uid,block_start`, args...)
+	} else if citationOnly {
 		// جست‌وجوی استناد قرآنی (QUR-03): همهٔ passages دامنه، فیلتر در verifier
 		rows, err = db.Query(`SELECT `+cols+` FROM passages WHERE release_uid=? ORDER BY work_uid, document_uid, block_start`, releaseUID)
 	} else if req.Mode == StrictPhrase {
@@ -1226,6 +1252,9 @@ type hit struct {
 // verifyInTextRaw بدنهٔ تطبیق هر mode (بدون آگاهی از overlap).
 // vs سقف‌های مواضعِ هر قطعه را می‌شمارد تا پاسخ صادقانه lower_bound اعلام شود.
 func verifyInTextRaw(req *Request, r *candRow, vs *verifyStats) ([]hit, string) {
+	if req.IgnoreSpacing {
+		return spacingHits(req, r, vs), "normalized"
+	}
 	orig := []rune(r.TextOriginal)
 	switch req.Mode {
 	case StrictPhrase:

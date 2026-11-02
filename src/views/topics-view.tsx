@@ -20,6 +20,7 @@ import { EmptyState, ErrorState, ListSkeleton } from "@/components/feedback";
 import { api } from "@/lib/api";
 import { HashLink, useRoute } from "@/lib/hash-router";
 import { faNum } from "@/lib/format";
+import { workHref } from "@/lib/href";
 import type { Topic } from "@/lib/types";
 
 /* ---------- پوشش پاسخ‌های ممکن (قرارداد/پیاده‌سازی) ---------- */
@@ -188,7 +189,8 @@ function TopicOccurrences({ topic }: { topic: Topic }) {
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                   {workUid ? (
                     <HashLink
-                      to={`/book/${workUid}`}
+                      to={workHref(workUid)}
+                      slug={workTitle}
                       className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
                     >
                       <BookOpenText className="size-4" aria-hidden="true" />

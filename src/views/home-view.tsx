@@ -30,6 +30,7 @@ import { api, errorMessage } from "@/lib/api";
 import { fetchProjects } from "@/lib/projects";
 import { HashLink, useRoute } from "@/lib/hash-router";
 import { faDate, faNum } from "@/lib/format";
+import { readHref } from "@/lib/href";
 import type { Project } from "@/lib/types";
 import { useWorkspaceStore } from "@/store/workspace";
 
@@ -169,8 +170,10 @@ function ContinueReading() {
         </Card>
       ) : (
         <div className="space-y-2">
+          {/* فاز ۲: نشانی معنایی — نام اثر بلافاصله در path */}
           <HashLink
-            to={`/read/${primary.document_uid}`}
+            to={readHref(primary.document_uid)}
+            slug={primary.work_title}
             query={primary.page_uid ? { pg: primary.page_uid } : undefined}
             className="block rounded-xl border border-border bg-surface p-4 transition-colors hover:bg-accent"
           >
@@ -206,7 +209,8 @@ function ContinueReading() {
               {rest.map((item) => (
                 <li key={`${item.document_uid}-${item.page_uid}`}>
                   <HashLink
-                    to={`/read/${item.document_uid}`}
+                    to={readHref(item.document_uid)}
+                    slug={item.work_title}
                     query={item.page_uid ? { pg: item.page_uid } : undefined}
                     className="flex min-h-11 items-center justify-between gap-3 px-4 py-2.5 text-sm transition-colors hover:bg-accent"
                   >

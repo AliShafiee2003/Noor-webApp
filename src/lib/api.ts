@@ -12,6 +12,16 @@ import type { ApiErrorCode } from "@/lib/types";
 export const API_BASE = "/api/v1";
 const CSRF_HEADER = "X-Noor-CSRF";
 
+/**
+ * نشانی فایل رسانه‌ای سند (pdf/image/audio) — برای src تگ‌های <img>/<audio> و
+ * pdf.js. دانلود باینری از api.get عبور نمی‌کند (JSON-parse اجباری دارد)؛
+ * کوکی نشست هم‌مبدأ همراه درخواست می‌رود و مسیر اختصاصی استریم Next (بدون بافر)
+ * هدر Range را به سرویس Go می‌رساند.
+ */
+export function mediaFileUrl(docUid: string): string {
+  return `${API_BASE}/documents/${encodeURIComponent(docUid)}/file`;
+}
+
 export type QueryParams = Record<
   string,
   string | number | boolean | null | undefined
@@ -236,8 +246,8 @@ export const api = {
   get<T>(path: string, params?: QueryParams, signal?: AbortSignal): Promise<T> {
     return request<T>({ path, params, method: "GET", signal });
   },
-  post<T>(path: string, body?: unknown, params?: QueryParams): Promise<T> {
-    return request<T>({ path, body, params, method: "POST" });
+  post<T>(path: string, body?: unknown, params?: QueryParams, signal?: AbortSignal): Promise<T> {
+    return request<T>({ path, body, params, signal, method: "POST" });
   },
   put<T>(path: string, body?: unknown, params?: QueryParams): Promise<T> {
     return request<T>({ path, body, params, method: "PUT" });

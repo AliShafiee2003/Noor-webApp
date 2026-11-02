@@ -16,7 +16,10 @@
   --canvas: #10191c;
   --chrome: #162328;
   --surface: #203239;
-  --reader: #203239;
+  --reader: #0E3A22;
+  --reader-text: #D9EBDD;
+  --reader-muted: #8FB89F;
+  --reader-ctrl: #154C2F;
   --elevated: #2a4149;
   --input-surface: #132126;
   --text: #edf4f2;

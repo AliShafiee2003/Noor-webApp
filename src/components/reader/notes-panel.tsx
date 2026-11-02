@@ -17,6 +17,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
+  BookMarked,
   Check,
   Highlighter,
   Loader2,
@@ -48,8 +49,14 @@ import { faDateTime, faNum } from "@/lib/format";
 import { HIGHLIGHT_COLORS } from "@/lib/highlight-color";
 import { useToast } from "@/hooks/use-toast";
 import type { Highlight, HighlightColor, Note, ShareCreateResponse } from "@/lib/types";
+import { groupHighlights, type PageMark } from "@/lib/reader/marks";
+
+import { useReaderAnnotations, highlightDeleteMessage } from "@/lib/reader/use-reader-annotations";
+import { HighlightSheet } from "@/components/reader-mobile/highlight-sheet";
+import { MarksList } from "@/components/reader/marks-list";
 
 interface NotesPanelProps {
+  onHighlightOpen?: (uid: string) => void;
   documentUid: string;
   /** صفحهٔ فعلی — برای فیلتر «این صفحه» و مقصد یادداشت تازه */
   currentPageUid: string | null;
@@ -65,9 +72,20 @@ interface NotesPanelProps {
   workTitle?: string | null;
   /** اعتبار لنگر هر هایلایت روی صفحهٔ خودش — ناموجود در نقشه = نامعلوم (نمایش هشدار نمی‌دهیم) */
   anchorStatus?: Record<string, "ok" | "missing">;
+  /** نشانه‌های یکپارچه: نشانک صریح ∪ یادداشت صفحه ∪ هایلایتِ یادداشت‌دار */
+  pageMarks?: PageMark[];
+  documentNotes?: Note[];
+  marksPending?: boolean;
+  onRequestDeletePageMark?: (pageUid: string) => void | Promise<void>;
+  /** پرش با برجسته‌سازی لنگر متن؛ false یعنی لنگر پیدا نشد */
+  onJumpMark?: (mark: PageMark) => boolean;
+  /** PDF: فقط نشانک صفحه — بدون یادداشت متنی */
+  marksOnly?: boolean;
+  /** پس از ساخت موفق یادداشت — والد می‌تواند شیت موبایل/مطالعهٔ متمرکز را ببندد */
+  onNoteCreated?: () => void;
 }
 
-type Tab = "page" | "document" | "hadith" | "highlights";
+type Tab = "marks" | "hadith" | "highlights";
 
 /** کپی مطمئن متن در کلیپ‌بورد (حتی در بسترهای غیر امن) */
 async function copyToClipboard(text: string): Promise<boolean> {
@@ -101,12 +119,24 @@ export function NotesPanel({
   onJumpToPage,
   workTitle = null,
   anchorStatus,
+  onHighlightOpen,
+  pageMarks = [],
+  documentNotes = [],
+  marksPending = false,
+  onRequestDeletePageMark,
+  onJumpMark,
+  marksOnly = false,
+  onNoteCreated,
 }: NotesPanelProps) {
   const queryClient = useQueryClient();
+  const annotations = useReaderAnnotations(documentUid);
+  const [editingHighlight, setEditingHighlight] = useState<string | null>(null);
   const { toast } = useToast();
-  const [tab, setTab] = useState<Tab>("page");
+  const [tab, setTab] = useState<Tab>("marks");
   const [draft, setDraft] = useState("");
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  /** با ذخیرهٔ موفق بسته می‌شود تا کاربر بداند کار تمام شده (بازگشایی با دکمه). */
+  const [composerOpen, setComposerOpen] = useState(true);
   const [actionError, setActionError] = useState<string | null>(null);
   /** پیش‌نویس ناتمام هر صفحه — جابه‌جایی صفحه دست‌نوشته را گم نمی‌کند (§۴۱) */
   const draftsByPage = useRef<Map<string, string>>(new Map());
@@ -118,16 +148,20 @@ export function NotesPanel({
     setActionError(null);
   }, [currentPageUid]);
 
-  /* با ورود به دامنهٔ روایت، تب «این روایت» فعال می‌شود؛ با پایان آن به صفحه برمی‌گردیم */
+  /* با ورود به دامنهٔ روایت، تب «روایت» فعال می‌شود؛ با پایان آن به نشانه‌ها برمی‌گردیم */
   useEffect(() => {
+    const timer = setTimeout(() => {
     if (hadithScope) {
       setTab("hadith");
+      setComposerOpen(true);
       setDraft("");
       setSaveState("idle");
       setActionError(null);
     } else {
-      setTab((t) => (t === "hadith" ? "page" : t));
+      setTab((t) => (t === "hadith" ? "marks" : t));
     }
+    }, 0);
+    return () => clearTimeout(timer);
   }, [hadithScope]);
   const [editing, setEditing] = useState<{ uid: string; body: string; version: number } | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
@@ -162,12 +196,15 @@ export function NotesPanel({
   }, [queryClient, documentUid]);
 
   const notes = notesQuery.data?.items ?? [];
-  const pageNotes = notes.filter((n) => n.page_uid === currentPageUid);
   const hadithNotes = hadithScope
     ? notes.filter((n) => n.local_hadith_uid === hadithScope.localUid)
     : [];
-  const shown = tab === "page" ? pageNotes : tab === "hadith" ? hadithNotes : notes;
-  const shownSorted = [...shown].sort((a, b) => (b.updated_at ?? "").localeCompare(a.updated_at ?? ""));
+  const hadithNotesSorted = [...hadithNotes].sort((a, b) =>
+    (b.updated_at ?? "").localeCompare(a.updated_at ?? ""),
+  );
+  /* PDF فقط نشانک صریح دارد؛ یادداشت متنی در PDF ساخته نمی‌شود */
+  const visibleMarks = marksOnly ? pageMarks.filter((m) => m.bookmark) : pageMarks;
+  const marksCount = visibleMarks.length;
 
   /* ---------- پیش‌نویس صفحه ---------- */
   const switchTab = (t: Tab) => {
@@ -190,9 +227,12 @@ export function NotesPanel({
       });
       setDraft("");
       draftsByPage.current.delete(hadithTarget ? `h:${hadithTarget.localUid}` : (currentPageUid ?? "__doc"));
+      /* ذخیره شد → کادر بسته می‌شود؛ شیت موبایل/مطالعهٔ متمرکز هم به والد اطلاع می‌دهد. */
       setSaveState("saved");
+      setComposerOpen(false);
       window.setTimeout(() => setSaveState((s) => (s === "saved" ? "idle" : s)), 2200);
       refresh();
+      onNoteCreated?.();
     } catch (err) {
       setSaveState("error");
       setActionError(errorMessage(err, "ذخیرهٔ یادداشت ناموفق بود؛ دوباره تلاش کنید."));
@@ -259,6 +299,9 @@ export function NotesPanel({
 
   /* ---------- هایلایت‌ها (§۷-الف-۳) ---------- */
   const highlights = highlightsQuery.data?.items ?? [];
+  /* هایلایتِ دارای یادداشت در «نشانه‌ها» می‌آید؛ این تب فقط هایلایت خالی را نشان می‌دهد.
+     انتخاب چندپاراگرافی یک گروه است، نه چند ردیف جدا. */
+  const plainHighlights = groupHighlights(highlights).filter((g) => !g.note);
   const [deletingHl, setDeletingHl] = useState<Highlight | null>(null);
   const [hlPendingUid, setHlPendingUid] = useState<string | null>(null);
   /** هایلایتی که همین حالا در حال ساخت لینک اشتراکش هستیم */
@@ -268,7 +311,7 @@ export function NotesPanel({
     if (h.color === color) return;
     setHlPendingUid(h.uid);
     try {
-      await api.patch<Highlight>(`/annotations/${h.uid}`, { color });
+      await annotations.update(h.uid, { color });
       refreshAnnotations();
     } catch (err) {
       toast({
@@ -283,7 +326,7 @@ export function NotesPanel({
   const removeHighlight = async (h: Highlight) => {
     setHlPendingUid(h.uid);
     try {
-      await api.del(`/annotations/${h.uid}`);
+      await annotations.remove(h.uid);
       setDeletingHl(null);
       refreshAnnotations();
     } catch (err) {
@@ -319,7 +362,10 @@ export function NotesPanel({
         payload: args.payload,
         meta: args.meta,
       });
-      const url = `${window.location.origin}/${resp.url_path}`;
+      // فاز ۲: قالب جدید با «/» آغاز می‌شود (path)؛ قالب‌های قدیمی (#/…) هم
+      // در ورود توسط روتر ترجمه می‌شوند — هر دو به نشانی کامل می‌سازند.
+      const path = resp.url_path.startsWith("/") ? resp.url_path : `/${resp.url_path}`;
+      const url = `${window.location.origin}${path}`;
       const copied = await copyToClipboard(url);
       toast({
         title: copied
@@ -358,27 +404,48 @@ export function NotesPanel({
       meta: { revayat_index: n.local_hadith_uid ?? null },
     });
 
+  const handleDeletePageMark = (pageUid: string) => {
+    if (!onRequestDeletePageMark) return;
+    void Promise.resolve(onRequestDeletePageMark(pageUid)).catch((err) => {
+      toast({
+        title: errorMessage(err, "حذف نشانک صفحه ناموفق بود؛ دوباره تلاش کنید."),
+        variant: "destructive",
+      });
+    });
+  };
+
+  const handleJumpMark = (mark: PageMark) => {
+    const anchored = onJumpMark ? onJumpMark(mark) : (onJumpToPage?.(mark.pageUid), true);
+    if (!anchored) {
+      toast({
+        title: "متن اصلی این یادداشت روی صفحه پیدا نشد؛ صفحه باز شد.",
+        variant: "destructive",
+      });
+    }
+  };
+
   return (
     <div className="flex h-full min-h-0 flex-col" aria-label="یادداشت‌های شخصی این سند">
       {/* سرفصل + تب‌ها */}
       <div className="border-b border-border px-3 pt-2.5 pb-0">
         <div className="flex items-center gap-2">
-          <StickyNote className="size-4 text-primary" aria-hidden="true" />
-          <h2 className="text-sm font-semibold">یادداشت‌ها</h2>
+          <BookMarked className="size-4 text-primary" aria-hidden="true" />
+          <h2 className="text-sm font-semibold">{marksOnly ? "نشانک‌ها" : "نشانه‌ها"}</h2>
           <span className="ms-auto text-[11px] text-muted-foreground">فقط برای شما</span>
         </div>
-        <div role="tablist" aria-label="دامنهٔ یادداشت‌ها" className="mt-2 flex gap-1">
+        {!marksOnly ? (
+        <div role="tablist" aria-label="نشانک‌ها و یادداشت‌ها" className="mt-2 flex gap-1">
           <button
             role="tab"
-            aria-selected={tab === "page"}
-            onClick={() => switchTab("page")}
+            aria-selected={tab === "marks"}
+            onClick={() => switchTab("marks")}
             className={`min-h-11 flex-1 rounded-t-lg border-b-2 px-2 text-xs font-medium transition-colors md:min-h-8 ${
-              tab === "page"
+              tab === "marks"
                 ? "border-primary bg-primary/5 text-foreground"
                 : "border-transparent text-muted-foreground hover:bg-accent/60"
             }`}
           >
-            این صفحه {pageNotes.length > 0 ? `(${faNum(pageNotes.length)})` : ""}
+            نشانه‌ها {marksCount > 0 ? `(${faNum(marksCount)})` : ""}
           </button>
           {hadithScope ? (
             <button
@@ -404,26 +471,15 @@ export function NotesPanel({
                 : "border-transparent text-muted-foreground hover:bg-accent/60"
             }`}
           >
-            هایلایت‌ها {highlights.length > 0 ? `(${faNum(highlights.length)})` : ""}
-          </button>
-          <button
-            role="tab"
-            aria-selected={tab === "document"}
-            onClick={() => switchTab("document")}
-            className={`min-h-11 flex-1 rounded-t-lg border-b-2 px-2 text-xs font-medium transition-colors md:min-h-8 ${
-              tab === "document"
-                ? "border-primary bg-primary/5 text-foreground"
-                : "border-transparent text-muted-foreground hover:bg-accent/60"
-            }`}
-          >
-            کل سند {notes.length > 0 ? `(${faNum(notes.length)})` : ""}
+            هایلایت‌ها {plainHighlights.length > 0 ? `(${faNum(plainHighlights.length)})` : ""}
           </button>
         </div>
+        ) : null}
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
-        {/* سرنوشت صفحهٔ فعلی */}
-        {tab === "page" ? (
+        {/* مقصد یادداشت تازه */}
+        {tab === "marks" && !marksOnly ? (
           <p className="mb-2 text-[11px] leading-5 text-muted-foreground">
             یادداشت تازه به{" "}
             {currentPageUid
@@ -431,7 +487,7 @@ export function NotesPanel({
                 ? `صفحهٔ ${faNum(pageLabel)}`
                 : "صفحهٔ فعلی"
               : "سند (بدون صفحه)"}{" "}
-            ثبت می‌شود.
+            ثبت می‌شود و صفحه را نشانک می‌کند.
           </p>
         ) : null}
         {tab === "hadith" && hadithScope ? (
@@ -458,7 +514,8 @@ export function NotesPanel({
         ) : null}
 
         {/* سرهم‌بندی یادداشت تازه — در تب هایلایت‌ها نمایش داده نمی‌شود */}
-        {tab !== "highlights" ? (
+        {tab !== "highlights" && !marksOnly ? (
+          composerOpen ? (
         <div className="rounded-xl border border-border bg-surface p-2.5">
           <Textarea
             aria-label="متن یادداشت تازه"
@@ -481,10 +538,6 @@ export function NotesPanel({
                 <span className="flex items-center gap-1">
                   <Loader2 className="size-3 animate-spin" aria-hidden="true" /> در حال ذخیره…
                 </span>
-              ) : saveState === "saved" ? (
-                <span className="flex items-center gap-1 text-primary">
-                  <Check className="size-3" aria-hidden="true" /> ذخیره شد
-                </span>
               ) : saveState === "error" ? (
                 <span className="flex items-center gap-1 text-destructive">
                   <TriangleAlert className="size-3" aria-hidden="true" /> ذخیرهٔ ناموفق
@@ -496,7 +549,7 @@ export function NotesPanel({
             <Button
               size="sm"
               className="min-h-9 gap-1.5"
-              disabled={!draft.trim() || saveState === "saving" || (!currentPageUid && tab !== "document")}
+              disabled={!draft.trim() || saveState === "saving" || (tab === "marks" && !currentPageUid)}
               onClick={() => void saveNew()}
             >
               <Check className="size-3.5" aria-hidden="true" />
@@ -510,10 +563,30 @@ export function NotesPanel({
             </p>
           ) : null}
         </div>
+          ) : (
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="min-h-11 flex-1 justify-center gap-1.5 md:min-h-9"
+            onClick={() => setComposerOpen(true)}
+          >
+            <Pencil className="size-3.5" aria-hidden="true" />
+            {tab === "hadith" ? "یادداشت تازه برای این روایت" : "یادداشت تازه"}
+          </Button>
+          <span aria-live="polite" className="text-[11px] text-primary">
+            {saveState === "saved" ? (
+              <span className="flex items-center gap-1">
+                <Check className="size-3" aria-hidden="true" /> ذخیره شد
+              </span>
+            ) : null}
+          </span>
+        </div>
+          )
         ) : null}
 
         {/* فهرست هایلایت‌ها (تب هایلایت‌ها) */}
-        {tab === "highlights" ? (
+        {tab === "highlights" && !marksOnly ? (
           <div className="mt-3 space-y-2.5">
             {highlightsQuery.isPending ? (
               <div className="space-y-2" aria-busy="true">
@@ -536,31 +609,42 @@ export function NotesPanel({
                   <RotateCcw className="size-3.5" aria-hidden="true" /> تلاش دوباره
                 </Button>
               </div>
-            ) : highlights.length === 0 ? (
+            ) : plainHighlights.length === 0 ? (
               <div className="rounded-xl border border-dashed border-border p-4 text-center">
                 <Highlighter className="mx-auto size-5 text-muted-foreground/60" aria-hidden="true" />
-                <p className="mt-1.5 text-xs font-medium">برای این سند هایلایتی ندارید</p>
+                <p className="mt-1.5 text-xs font-medium">هایلایت بدون یادداشتی ندارید</p>
                 <p className="mt-1 text-[11px] leading-5 text-muted-foreground">
-                  در متن کتاب‌خوان بخشی را انتخاب کنید و از نوار شناور یکی از رنگ‌ها را بزنید تا اینجا بیاید.
+                  در متن کتاب‌خوان بخشی را انتخاب کنید و یکی از رنگ‌ها را بزنید. هایلایت‌های دارای
+                  یادداشت در تب «نشانه‌ها» دیده می‌شوند.
                 </p>
               </div>
             ) : (
-              highlights.map((h) => {
-                const dot = HIGHLIGHT_COLORS.find((c) => c.value === h.color);
+              plainHighlights.map((group) => {
+                const dot = HIGHLIGHT_COLORS.find((c) => c.value === group.color);
                 return (
                   <article
-                    key={h.uid}
+                    key={group.uid}
                     className="anim-rise quiet-card rounded-xl border border-border bg-surface p-3"
                   >
-                    {anchorStatus?.[h.uid] === "missing" ? (
+                    {anchorStatus?.[group.uid] === "missing" ? (
                       <p className="mb-2 flex items-start gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-[11px] leading-5 text-amber-700 dark:text-amber-400">
                         <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
                         لنگر یافت نشد — متن نسخه تغییر کرده است
                       </p>
                     ) : null}
-                    <p className="line-clamp-2 text-[13px] leading-7 text-foreground" title={h.text}>
-                      {h.text}
+                    <p
+                      title={group.text}
+                      data-hl-quote={group.uid}
+                      className="max-h-28 overflow-y-auto whitespace-pre-wrap rounded-lg bg-muted/40 px-2 py-1.5 text-[12px] leading-6 text-muted-foreground"
+                    >
+                      {group.text}
                     </p>
+                    {group.segments.length > 1 ? (
+                      <span className="mt-1.5 inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] text-primary">
+                        {faNum(group.segments.length)} پاراگراف
+                      </span>
+                    ) : null}
+                    <Button variant="ghost" size="sm" onClick={() => onHighlightOpen ? onHighlightOpen(group.uid) : setEditingHighlight(group.uid)}>ویرایش هایلایت و یادداشت</Button>
                     <div className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-border/60 pt-2">
                       <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
                         <span
@@ -569,15 +653,15 @@ export function NotesPanel({
                         />
                         <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5">
                           <Highlighter className="size-3" aria-hidden="true" />
-                          {h.page_uid === currentPageUid ? "همین صفحه" : "صفحهٔ دیگر"}
+                          {group.pageUid === currentPageUid ? "همین صفحه" : "صفحهٔ دیگر"}
                         </span>
-                        {h.created_at ? <span>{faDateTime(h.created_at)}</span> : null}
+                        {group.anchor.created_at ? <span>{faDateTime(group.anchor.created_at)}</span> : null}
                         {/* نشانی عمیق: پرش به صفحهٔ مقصد هایلایت */}
-                        {h.page_uid && h.page_uid !== currentPageUid && onJumpToPage ? (
+                        {group.pageUid && group.pageUid !== currentPageUid && onJumpToPage ? (
                           <button
                             type="button"
                             className="inline-flex min-h-6 items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary transition-colors hover:bg-primary/15 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-primary"
-                            onClick={() => onJumpToPage(h.page_uid as string)}
+                            onClick={() => onJumpToPage(group.pageUid)}
                             title="رفتن به صفحهٔ این هایلایت"
                           >
                             پرش به این صفحه
@@ -594,14 +678,14 @@ export function NotesPanel({
                               type="button"
                               title={`رنگ ${c.label}`}
                               aria-label={`تغییر رنگ این هایلایت به ${c.label}`}
-                              aria-pressed={h.color === c.value}
-                              disabled={hlPendingUid === h.uid}
+                              aria-pressed={group.color === c.value}
+                              disabled={hlPendingUid === group.uid}
                               className={`size-4 min-h-0 w-4 rounded-full p-0 transition-transform hover:scale-110 disabled:opacity-50 ${c.dotClass} ${
-                                h.color === c.value
+                                group.color === c.value
                                   ? "ring-2 ring-primary ring-offset-1 ring-offset-surface"
                                   : ""
                               }`}
-                              onClick={() => void changeColor(h, c.value)}
+                              onClick={() => void changeColor(group.anchor, c.value)}
                             />
                           ))}
                         </div>
@@ -611,10 +695,10 @@ export function NotesPanel({
                           aria-label="اشتراک‌گذاری هایلایت"
                           title="اشتراک‌گذاری هایلایت (کپی لینک)"
                           className="size-8"
-                          disabled={sharingUid === h.uid}
-                          onClick={() => void shareHighlight(h)}
+                          disabled={sharingUid === group.uid}
+                          onClick={() => void shareHighlight(group.anchor)}
                         >
-                          {sharingUid === h.uid ? (
+                          {sharingUid === group.uid ? (
                             <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
                           ) : (
                             <Share2 className="size-3.5" />
@@ -626,7 +710,7 @@ export function NotesPanel({
                           aria-label="حذف هایلایت"
                           title="حذف هایلایت"
                           className="size-8 text-destructive hover:text-destructive"
-                          onClick={() => setDeletingHl(h)}
+                          onClick={() => setDeletingHl(group.anchor)}
                         >
                           <Trash2 className="size-3.5" />
                         </Button>
@@ -637,6 +721,39 @@ export function NotesPanel({
               })
             )}
           </div>
+        ) : tab === "marks" || marksOnly ? (
+          marksPending ? (
+            <div className="mt-3 space-y-2" aria-busy="true">
+              <Skeleton className="h-20 w-full" />
+              <Skeleton className="h-20 w-full" />
+              <span className="sr-only">در حال بارگیری نشانه‌ها…</span>
+            </div>
+          ) : (
+            <div className="mt-3">
+              <MarksList
+                marks={visibleMarks}
+                documentNotes={marksOnly ? [] : documentNotes}
+                currentPageUid={currentPageUid}
+                anchorStatus={anchorStatus}
+                editing={editing}
+                editError={editError}
+                onBeginEdit={beginEdit}
+                onEditChange={(body) => setEditing((e) => (e ? { ...e, body } : e))}
+                onCancelEdit={() => {
+                  setEditing(null);
+                  setEditError(null);
+                }}
+                onSaveEdit={(uid, version, body) => void saveEdit(uid, version, body)}
+                onDeleteNote={setDeleting}
+                onShareNote={(note) => void shareNote(note)}
+                sharingUid={sharingUid}
+                onDeleteHighlight={setDeletingHl}
+                onOpenHighlight={(uid) => (onHighlightOpen ? onHighlightOpen(uid) : setEditingHighlight(uid))}
+                onDeletePageMark={handleDeletePageMark}
+                onJumpMark={handleJumpMark}
+              />
+            </div>
+          )
         ) : (
         <div className="mt-3 space-y-2.5">
           {notesQuery.isPending ? (
@@ -655,26 +772,16 @@ export function NotesPanel({
                 <RotateCcw className="size-3.5" aria-hidden="true" /> تلاش دوباره
               </Button>
             </div>
-          ) : shownSorted.length === 0 ? (
+          ) : hadithNotesSorted.length === 0 ? (
             <div className="rounded-xl border border-dashed border-border p-4 text-center">
               <StickyNote className="mx-auto size-5 text-muted-foreground/60" aria-hidden="true" />
-              <p className="mt-1.5 text-xs font-medium">
-                {tab === "page"
-                  ? "برای این صفحه یادداشتی ندارید"
-                  : tab === "hadith"
-                    ? "برای این روایت یادداشتی ندارید"
-                    : "برای این سند یادداشتی ندارید"}
-              </p>
+              <p className="mt-1.5 text-xs font-medium">برای این روایت یادداشتی ندارید</p>
               <p className="mt-1 text-[11px] leading-5 text-muted-foreground">
-                {tab === "page"
-                  ? "یادداشت شما فقط در همین مرورگرِ حساب شما دیده می‌شود؛ برای شروع، در کادر بالا بنویسید."
-                  : tab === "hadith"
-                    ? "در پنل زمینهٔ همین روایت، دکمهٔ «ثبت یادداشت روی این روایت» را بزنید."
-                    : "به صفحه‌های دیگر بروید یا از تب «این صفحه» یادداشت تازه بسازید."}
+                در پنل زمینهٔ همین روایت، دکمهٔ «ثبت یادداشت روی این روایت» را بزنید.
               </p>
             </div>
           ) : (
-            shownSorted.map((n) => (
+            hadithNotesSorted.map((n) => (
               <article
                 key={n.uid}
                 className={`anim-rise quiet-card rounded-xl border bg-surface p-3 ${
@@ -810,6 +917,7 @@ export function NotesPanel({
         )}
       </div>
 
+      {editingHighlight && <HighlightSheet key={editingHighlight} highlightUid={editingHighlight} documentUid={documentUid} onClose={() => setEditingHighlight(null)} />}
       {/* تعارض ویرایش (RES-14) */}
       <Dialog open={conflict !== null} onOpenChange={(o) => !o && setConflict(null)}>
         <DialogContent className="sm:max-w-md">
@@ -895,7 +1003,7 @@ export function NotesPanel({
       <AlertDialog open={deletingHl !== null} onOpenChange={(o) => !o && setDeletingHl(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>حذف این هایلایت؟</AlertDialogTitle>
+            <AlertDialogTitle>{deletingHl ? highlightDeleteMessage(deletingHl) : "حذف هایلایت"}</AlertDialogTitle>
             <AlertDialogDescription>
               حذف هایلایت بازگشت‌پذیر نیست و متن برجسته‌شده از کتاب‌خوان پاک می‌شود.
             </AlertDialogDescription>

@@ -49,6 +49,7 @@ import { api, ApiError, apiUrl, errorMessage } from "@/lib/api";
 import { fetchProjects } from "@/lib/projects";
 import { HashLink } from "@/lib/hash-router";
 import { faDate, faNum } from "@/lib/format";
+import { readHref as readerHref } from "@/lib/href";
 import { useToast } from "@/hooks/use-toast";
 import type { Clip, ClipKind, Work } from "@/lib/types";
 
@@ -151,7 +152,8 @@ function ClipCard({
             {!trashed && source?.document_uid ? (
               <Button variant="outline" size="sm" className="min-h-11 gap-2" asChild>
                 <HashLink
-                  to={`/read/${source.document_uid}`}
+                  to={readerHref(source.document_uid)}
+                  slug={workTitle ?? undefined}
                   query={source.page_uid ? { pg: source.page_uid } : undefined}
                 >
                   <BookOpenText className="size-4" aria-hidden="true" />

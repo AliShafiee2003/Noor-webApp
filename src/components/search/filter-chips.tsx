@@ -31,7 +31,8 @@ function useWorkLabel(uid: string): string | null {
 function useDocumentLabel(workUid: string, docUid: string): string | null {
   const query = useQuery({
     queryKey: ["work", workUid, "doc-label"],
-    queryFn: ({ signal }) => api.get<WorkDetail>(`/works/${workUid}`, undefined, signal),
+    queryFn: ({ signal }) =>
+      api.get<WorkDetail>(`/works/${encodeURIComponent(workUid)}`, undefined, signal),
     enabled: workUid !== "" && docUid !== "",
     staleTime: 5 * 60_000,
   });

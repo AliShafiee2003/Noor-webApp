@@ -3,7 +3,7 @@
 /**
  * P2E/Component/Text Field + Password Field با برچسب شناور (M3).
  * تبدیل گره‌های 18562:5888 (Text Field) و 18675:14622 (Password Field) از
- * «P2E Platform — Design System»: کادر دوحاشیه شعاع ۱۶، ارتفاع ۶۰؛ برچسب در حالت
+ * «P2E Platform — Design System»: کادر دوحاشیه شعاع ۱۶، ارتفاع ۶۸؛ برچسب در حالت
  * آرام وسط کادر است و با فوکوس/مقدار به بالا می‌پرد و کوچک می‌شود؛ حباب متن
  * پشتیبان/خطا با آیکون ۱۸؛ آیکون چشم ۲۴ در جایش ۴۴. استایل فقط با توکن‌های معنایی نور.
  */
@@ -19,13 +19,13 @@ type P2EFieldProps = {
 };
 
 const framelessInput =
-  "h-7 py-0 text-base leading-7 border-0 bg-transparent px-0 shadow-none placeholder:text-transparent group-focus-within:placeholder:text-placeholder focus-visible:border-transparent focus-visible:ring-0 focus-visible:ring-offset-0";
+  "h-7 py-0 text-base leading-7 border-0 bg-transparent px-0 shadow-none placeholder:text-transparent group-focus-within:placeholder:text-placeholder group-focus-within:translate-y-3 group-data-[floated=true]:translate-y-3 transition-transform duration-200 ease-out motion-reduce:transition-none focus-visible:border-transparent focus-visible:ring-0 focus-visible:ring-offset-0";
 
 const fieldContainer =
-  "group relative min-h-[60px] rounded-2xl border-2 bg-surface px-4 transition-[border-color,box-shadow] duration-200 ease-out focus-within:border-primary focus-within:ring-[3px] focus-within:ring-primary/15";
+  "group relative min-h-[68px] rounded-2xl border-2 bg-surface px-4 transition-[border-color,box-shadow] duration-200 ease-out focus-within:border-primary focus-within:ring-[3px] focus-within:ring-primary/15";
 
 const floatingLabel =
-  "absolute top-1/2 start-4 origin-top-right -translate-y-1/2 scale-100 whitespace-nowrap text-base font-medium leading-5 text-muted-foreground transition-all duration-200 ease-out group-focus-within:top-1 group-focus-within:translate-y-0 group-focus-within:scale-[0.78] group-focus-within:text-foreground group-data-[floated=true]:top-1 group-data-[floated=true]:translate-y-0 group-data-[floated=true]:scale-[0.78] motion-reduce:transition-none";
+  "absolute top-1/2 start-4 origin-top-right -translate-y-1/2 scale-100 whitespace-nowrap text-base font-medium leading-5 text-muted-foreground transition-all duration-200 ease-out group-focus-within:top-2 group-focus-within:translate-y-0 group-focus-within:scale-[0.78] group-focus-within:text-foreground group-data-[floated=true]:top-2 group-data-[floated=true]:translate-y-0 group-data-[floated=true]:scale-[0.78] motion-reduce:transition-none";
 
 function SupportingText({
   id,

@@ -66,8 +66,17 @@ function CurrentView({ route }: { route: RouteInfo }) {
       return <LibraryView />;
     case "book":
       return seg[1] ? <WorkView uid={seg[1]} /> : <NotFoundView />;
-    case "read":
-      return seg[1] ? <ReaderView documentUid={seg[1]} /> : <NotFoundView />;
+    case "read": {
+      /* دور ۱۸-فیکس ۷: قالب تازه #/read/{نام-کتاب}/{d-uid} و قالب قدیمی
+         #/read/{d-uid} — uid همیشه سگمنتی است که با «d-» آغاز می‌شود؛
+         سگمنت فارسی (slug) صرفاً نمایشی است و نباید اعتبارسنجی شود. */
+      const uidArg = seg[1]?.startsWith("d-")
+        ? seg[1]
+        : seg[2]?.startsWith("d-")
+          ? seg[2]
+          : null;
+      return uidArg ? <ReaderView documentUid={uidArg} /> : <NotFoundView />;
+    }
     case "topics":
       return <TopicsView />;
     case "research":
@@ -181,9 +190,10 @@ export function AppShell() {
   }, [status, fetchWorkspace]);
 
   // مقصدِ پس از ورود: هر مسیر غیر-login/invite که مهمان روی آن است حفظ می‌شود (فقط حافظه)
+  // فاز ۲: fullHash = نشانی کامل (path+query) — عیناً قابل فراخوانی navigate است.
   useEffect(() => {
     if (status === "guest" && route.path !== "/login" && route.path !== "/invite" && route.path !== "/recovery") {
-      setPendingDestination(route.fullHash.slice(1));
+      setPendingDestination(route.fullHash);
     }
   }, [status, route.path, route.fullHash]);
 

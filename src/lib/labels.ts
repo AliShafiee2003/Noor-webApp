@@ -49,6 +49,22 @@ export function documentKindLabel(kind: string | null | undefined): string {
   }
 }
 
+/** برچسب فرمت محتوا (فاز رسانه) — text/pdf/image/audio از پسوند منبع مشتق می‌شوند. */
+export function documentFormatLabel(format: string | null | undefined): string {
+  switch (format) {
+    case "text":
+      return "نسخهٔ متنی";
+    case "pdf":
+      return "نسخهٔ اسکن‌شده";
+    case "image":
+      return "جلد";
+    case "audio":
+      return "نسخهٔ صوتی";
+    default:
+      return "سند";
+  }
+}
+
 export const languageLabels: Record<string, string> = {
   ar: "عربی",
   fa: "فارسی",

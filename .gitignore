@@ -12,9 +12,12 @@ node_modules
 
 # testing
 /coverage
+test-results/
+test-results-*/
 
 # next.js
 /.next/
+/.next-reader-*/
 /out/
 
 # production

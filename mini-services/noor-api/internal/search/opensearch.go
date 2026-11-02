@@ -142,6 +142,18 @@ func (e *OpenSearchEngine) BooksGrouped(ctx context.Context, sessionUID string) 
 
 // runVerified کاندید از OpenSearch → ترتیب قطعی → تأیید روی متن نمایه.
 func (e *OpenSearchEngine) runVerified(ctx context.Context, req *Request, releaseUID string) ([]Result, runState, error) {
+	if req.IgnoreSpacing {
+		// Token candidates can omit joined/separated matches. Use the scoped scan.
+		db, err := e.base.dbHandle()
+		if err != nil {
+			return nil, runState{}, err
+		}
+		db, err = e.base.ensureRelease(db, releaseUID)
+		if err != nil {
+			return nil, runState{}, err
+		}
+		return e.base.run(ctx, db, req, releaseUID)
+	}
 	qN, _ := norm.Normalize(req.Query)
 	toks := norm.Tokenize(qN)
 	citationOnly := req.Scope.Quran != nil && len(toks) == 0

@@ -26,6 +26,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { HashLink } from "@/lib/hash-router";
 import { api, errorMessage } from "@/lib/api";
 import { faDate, faNum } from "@/lib/format";
+import { displayBookText } from "@/lib/reader/display-text";
 import type { AyahCitation, HadithClipSummary } from "@/lib/types";
 
 export interface FootnotePanelData {
@@ -245,8 +246,11 @@ export function FootnotePanel({
 
   if (data.kind === "verse" && data.verse) {
     const cit = data.verse.citation;
+    const hasAddress = !!(cit.address?.trim() || cit.sure || cit.aya || cit.aya_from || cit.aya_to);
+    const hasMetadata = hasAddress || !!data.verse.inHadith;
+    const quotedText = displayBookText(data.verse.quotedText ?? "").trim();
     return (
-      <div className="flex h-full min-h-0 flex-col">
+      <div dir="rtl" className="reader-verse-panel flex h-full min-h-0 flex-col text-right text-foreground">
         <div className="flex items-center gap-2 border-b border-border px-3 py-2.5">
           <Button
             variant="ghost"
@@ -254,22 +258,23 @@ export function FootnotePanel({
             className="min-h-11 gap-1.5 px-2 md:min-h-8"
             onClick={onBack}
             aria-label="بازگشت به متن"
+            style={{ color: "var(--text)" }}
           >
             <ArrowRight className="size-4" aria-hidden="true" />
             بازگشت
           </Button>
           <h2 className="flex items-center gap-1.5 text-sm font-semibold">
-            <Landmark className="size-4 text-primary" aria-hidden="true" />
+            <Landmark className="size-4 text-foreground" aria-hidden="true" />
             پنل آیه
           </h2>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
           <div className="space-y-3">
-            <dl className="space-y-2 rounded-xl border border-border bg-surface p-3 text-[13px]">
-              <div className="flex items-center justify-between gap-2">
+            {hasMetadata ? <dl aria-label="اطلاعات استناد قرآنی" className="space-y-2 rounded-xl border border-border bg-surface p-3 text-[13px]">
+              {hasAddress ? <div className="flex items-center justify-between gap-2">
                 <dt className="shrink-0 text-muted-foreground">نشانی:</dt>
-                <dd className="font-medium">{citationTitle(cit)}</dd>
-              </div>
+                <dd className="font-medium text-right">{citationTitle(cit)}</dd>
+              </div> : null}
               {cit.sure ? (
                 <div className="flex items-center justify-between gap-2">
                   <dt className="shrink-0 text-muted-foreground">شمارهٔ سوره:</dt>
@@ -288,20 +293,20 @@ export function FootnotePanel({
                   <dd className="bidi-ltr">{data.verse.inHadith}</dd>
                 </div>
               ) : null}
-            </dl>
+            </dl> : null}
 
-            {data.verse.quotedText ? (
+            {quotedText ? (
               <figure className="rounded-xl border border-ayah/30 bg-ayah-soft px-4 py-3">
-                <figcaption className="mb-1.5 text-xs font-medium text-muted-foreground">
+                <figcaption className="mb-1.5 text-xs font-medium text-foreground">
                   متن نقل‌شده در این کتاب:
                 </figcaption>
-                <blockquote lang="ar" dir="rtl" className="text-[15px] leading-9">
-                  {data.verse.quotedText}
+                <blockquote lang="ar" dir="rtl" className="whitespace-pre-wrap text-right text-[15px] leading-9 text-foreground">
+                  {quotedText}
                 </blockquote>
               </figure>
             ) : null}
 
-            <p className="flex items-start gap-2 rounded-xl border border-border bg-muted px-3 py-2.5 text-xs leading-6 text-muted-foreground">
+            <p className="flex items-start gap-2 rounded-xl border border-border bg-muted px-3 py-2.5 text-xs leading-6 text-foreground">
               <BookOpen className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
               این نقلِ کتاب است و با متن معیار قرآن یکسان فرض نمی‌شود؛ مطالعهٔ متن معیار از
               مصدر آن انجام شود.

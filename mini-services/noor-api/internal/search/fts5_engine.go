@@ -13,6 +13,7 @@ package search
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -553,6 +554,9 @@ func (e *FTS5Engine) execute(ctx context.Context, rel *ftsRelease, req *Request)
 	}
 	switch req.Mode {
 	case NormalizedPhrase:
+		if req.IgnoreSpacing {
+			break
+		}
 		// عبارت نرمال‌شده: فقط تفاوت‌های نوشتاری (پیوستگی و یای اضافه)، نه گسترش دعایی/صرفی
 		if err := q.buildVariants(ctx, rel, map[string]bool{norm.KindSpacing: true, norm.KindEzafe: true}, false); err != nil {
 			return nil, err
@@ -723,6 +727,17 @@ func (e *FTS5Engine) exactShard(ctx context.Context, rel *ftsRelease, si int, ex
 	pruned := false // آیا بخشی از نتایج برای سقف رها شد؟ (شمارش دیگر دقیق نیست)
 	scanned := 0    // کل وقوع‌های تأییدشدهٔ دیده‌شده در این شارد
 	verify := func(r *ftsRow, tr *bool) []rawHit {
+		if req.IgnoreSpacing {
+			stats := &verifyStats{}
+			hs := spacingHits(req, &r.candRow, stats)
+			*tr = *tr || stats.truncatedPassages > 0
+			var out []rawHit
+			for _, h := range hs {
+				out = append(out, rawHit{rng: h.Range, layer: "L2", label: "normalized"})
+			}
+			return out
+		}
+
 		switch req.Mode {
 		case StrictPhrase:
 			vs := &verifyStats{}
@@ -762,8 +777,19 @@ func (e *FTS5Engine) exactShard(ctx context.Context, rel *ftsRelease, si int, ex
 		workers = 1
 	}
 	const batch = 256
-	for _, rg := range allow.ranges(rel, si) {
-		rows, err := db.QueryContext(ctx, `SELECT rowid FROM fts_phrase WHERE fts_phrase MATCH ? AND rowid BETWEEN ? AND ? ORDER BY rowid`, expr, rg[0], rg[1])
+	ranges := allow.ranges(rel, si)
+	if req.IgnoreSpacing {
+		// Scan only this shard's scoped documents, even when there are many volumes.
+		ranges = allow.byShard[si]
+	}
+	for _, rg := range ranges {
+		var rows *sql.Rows
+		var err error
+		if req.IgnoreSpacing {
+			rows, err = rel.main.QueryContext(ctx, `SELECT seq FROM passages WHERE seq BETWEEN ? AND ? ORDER BY seq`, rg[0], rg[1])
+		} else {
+			rows, err = db.QueryContext(ctx, `SELECT rowid FROM fts_phrase WHERE fts_phrase MATCH ? AND rowid BETWEEN ? AND ? ORDER BY rowid`, expr, rg[0], rg[1])
+		}
 		if err != nil {
 			return nil, false, false, fmt.Errorf("MATCH %q: %w", expr, err)
 		}

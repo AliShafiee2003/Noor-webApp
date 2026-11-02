@@ -30,6 +30,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { api, errorMessage } from "@/lib/api";
 import { HashLink } from "@/lib/hash-router";
 import { faNum } from "@/lib/format";
+import { readHref as readerHref, readShareHref } from "@/lib/href";
 import type {
   BlockLink,
   Note,
@@ -72,7 +73,7 @@ export function SplitReaderPanel({ locator, onClose, onNavigate }: PanelProps) {
   /* ---------- اثر (عنوان/برچسب جلد) و فهرست صفحه‌ها ---------- */
   const workQuery = useQuery({
     queryKey: ["split-work", locator.workUid],
-    queryFn: () => api.get<WorkDetail>(`/works/${locator.workUid}`),
+    queryFn: () => api.get<WorkDetail>(`/works/${encodeURIComponent(locator.workUid)}`),
     enabled: !!locator.workUid,
     staleTime: 60_000,
     retry: false,
@@ -80,7 +81,8 @@ export function SplitReaderPanel({ locator, onClose, onNavigate }: PanelProps) {
 
   const pagesQuery = useQuery({
     queryKey: ["reader-pages", documentUid],
-    queryFn: () => api.get<{ items: PageRef[] }>(`/documents/${documentUid}/pages`),
+    queryFn: () =>
+      api.get<{ items: PageRef[] }>(`/documents/${encodeURIComponent(documentUid)}/pages`),
     retry: false,
   });
   const pageRefs: PageRef[] = pagesQuery.data?.items ?? [];
@@ -97,7 +99,10 @@ export function SplitReaderPanel({ locator, onClose, onNavigate }: PanelProps) {
   const pageQuery = useQuery({
     queryKey: ["reader-page", documentUid, resolvedPageUid],
     enabled: !!resolvedPageUid,
-    queryFn: () => api.get<PagePayload>(`/documents/${documentUid}/pages/${resolvedPageUid}`),
+    queryFn: () =>
+      api.get<PagePayload>(
+        `/documents/${encodeURIComponent(documentUid)}/pages/${encodeURIComponent(resolvedPageUid)}`,
+      ),
     retry: false,
   });
 
@@ -271,16 +276,12 @@ export function SplitReaderPanel({ locator, onClose, onNavigate }: PanelProps) {
     ]
       .filter(Boolean)
       .join("، ");
-    const address = `#/read/${locator.documentUid}${
-      resolvedPageUid || locator.hl
-        ? `?${[
-            resolvedPageUid ? `pg=${resolvedPageUid}` : "",
-            locator.hl ? `hl=${locator.hl[0]}:${locator.hl[1]}` : "",
-          ]
-            .filter(Boolean)
-            .join("&")}`
-        : ""
-    }`;
+    // فاز ۲: نشانی معنایی کامل برای کپی (path نام‌دار + pg عددی)
+    const address = readShareHref(locator.documentUid, {
+      title: locator.workTitle,
+      pgUid: resolvedPageUid,
+      hl: locator.hl ? `${locator.hl[0]}:${locator.hl[1]}` : null,
+    });
     try {
       await navigator.clipboard.writeText([citation, address].filter(Boolean).join("\n"));
       setCitationCopied(true);
@@ -365,7 +366,8 @@ export function SplitReaderPanel({ locator, onClose, onNavigate }: PanelProps) {
             <Copy className="size-3.5" />
           </Button>
           <HashLink
-            to={`/read/${documentUid}`}
+            to={readerHref(locator.documentUid)}
+            slug={locator.workTitle}
             query={{
               ...(resolvedPageUid ? { pg: resolvedPageUid } : {}),
               ...(hl ? { hl: `${hl[0]}:${hl[1]}` } : {}),

@@ -490,7 +490,8 @@ export function WorkPicker({
 
   const currentWorkQuery = useQuery({
     queryKey: ["work-info", value],
-    queryFn: ({ signal }) => api.get<WorkDetail>(`/works/${value}`, undefined, signal),
+    queryFn: ({ signal }) =>
+      api.get<WorkDetail>(`/works/${encodeURIComponent(value)}`, undefined, signal),
     enabled: Boolean(value),
     staleTime: 5 * 60_000,
   });
@@ -847,7 +848,8 @@ export function SearchForm({
 
   const workDetailQuery = useQuery({
     queryKey: ["work-docs", value.work],
-    queryFn: ({ signal }) => api.get<WorkDetail>(`/works/${value.work}`, undefined, signal),
+    queryFn: ({ signal }) =>
+      api.get<WorkDetail>(`/works/${encodeURIComponent(value.work)}`, undefined, signal),
     enabled: Boolean(value.work),
     staleTime: 60_000,
   });

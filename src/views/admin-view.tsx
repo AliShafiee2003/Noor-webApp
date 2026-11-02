@@ -669,7 +669,7 @@ function AdminOverlaysTab() {
   const [formWork, setFormWork] = useState<string | null>(null);
   const workDetailQuery = useQuery({
     queryKey: ["admin-work-docs", formWork],
-    queryFn: () => api.get<WorkDetail>(`/works/${formWork}`),
+    queryFn: () => api.get<WorkDetail>(`/works/${encodeURIComponent(formWork!)}`),
     enabled: !!formWork,
     staleTime: 5 * 60_000,
   });
@@ -685,7 +685,10 @@ function AdminOverlaysTab() {
   // واکشی و خودکار پر می‌شود؛ دکمهٔ به‌روزرسانی هم در کنار فیلد هست.
   const revisionInfoQuery = useQuery({
     queryKey: ["admin-doc-revision-info", formDoc],
-    queryFn: () => api.get<{ document_uid: string; base_hash: string }>(`/admin/documents/${formDoc}/revision-info`),
+    queryFn: () =>
+      api.get<{ document_uid: string; base_hash: string }>(
+        `/admin/documents/${encodeURIComponent(formDoc!)}/revision-info`,
+      ),
     enabled: !!formDoc,
     staleTime: 30_000,
   });
@@ -1301,7 +1304,9 @@ function AdminUsersTab() {
   const [disableTarget, setDisableTarget] = useState<AdminUserRow | null>(null);
   const toggleMutation = useMutation({
     mutationFn: ({ uid, disable }: { uid: string; disable: boolean }) =>
-      api.post<{ ok: boolean }>(`/admin/users/${uid}/${disable ? "disable" : "enable"}`),
+      api.post<{ ok: boolean }>(
+        `/admin/users/${encodeURIComponent(uid)}/${disable ? "disable" : "enable"}`,
+      ),
     onSuccess: (_data, vars) => {
       setDisableTarget(null);
       refresh();
@@ -1339,7 +1344,7 @@ function AdminUsersTab() {
     setRoleMfaError(null);
     try {
       await postWithMfa<{ ok: boolean }>(
-        `/admin/users/${roleTarget.uid}/role`,
+        `/admin/users/${encodeURIComponent(roleTarget.uid)}/role`,
         { role: roleChoice },
         roleCode,
       );

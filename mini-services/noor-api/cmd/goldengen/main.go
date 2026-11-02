@@ -106,6 +106,9 @@ func main() {
 	seen := map[string]bool{}
 	for _, wk := range cat.Works() {
 		for _, d := range wk.Documents {
+			if d.Format != "text" {
+				continue // پیکرهٔ طلایی فقط متن است؛ pdf/تصویر/صوت decode متنی ندارند
+			}
 			m, err := cat.Model(d.UID)
 			if err != nil {
 				log.Fatal("مدل سند ", d.UID, ":", err)

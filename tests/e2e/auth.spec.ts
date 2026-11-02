@@ -50,7 +50,7 @@ export async function logout(page: Page) {
 
 test.describe("ورود و خروج", () => {
   test("ورود موفق admin و مشاهدهٔ نام کاربر", async ({ page }) => {
-    await login(page, "admin", "zaB3v-XPngB-fXcYw");
+    await login(page, "admin", "NoorDev-2026-Temp");
     await page.goto("/");
     // نام کاربر در برچسب دسترس‌پذیری دکمهٔ منوی کاربر است — در دسکتاپ و موبایل
     await expect(
@@ -77,7 +77,7 @@ test.describe("ورود و خروج", () => {
   });
 
   test("خروج از حساب", async ({ page }) => {
-    await login(page, "admin", "zaB3v-XPngB-fXcYw");
+    await login(page, "admin", "NoorDev-2026-Temp");
     await logout(page);
     await page.goto("/");
     // پس از خروج، فرم ورود یا نبود نام کاربر
@@ -87,7 +87,7 @@ test.describe("ورود و خروج", () => {
 
 test.describe("RBAC دو نقش", () => {
   test("admin به پنل مدیریت دسترسی دارد", async ({ page }) => {
-    await login(page, "admin", "zaB3v-XPngB-fXcYw");
+    await login(page, "admin", "NoorDev-2026-Temp");
     await page.goto("/#/admin");
     await page.waitForLoadState("networkidle");
     // پنل مدیریت رندر می‌شود (نه فرم ورود، نه پیام منع دسترسی)

@@ -7,7 +7,7 @@
  * - پرش مستقیم به صفحه و موضع همراه با هایلایت و اسکرول نرم
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   ChevronDown,
   ChevronUp,
@@ -97,6 +97,8 @@ export interface BookSearchPanelProps {
   query: string;
   onExecuteSearch?: (q: string) => void;
   scope: "work" | "document";
+  ignoreSpacing?: boolean;
+  onIgnoreSpacingChange?: (value: boolean) => void;
   onScopeChange: (scope: "work" | "document") => void;
   hasMultipleDocs: boolean;
   currentDocLabel?: string;
@@ -115,6 +117,8 @@ export function BookSearchPanel({
   query,
   onExecuteSearch,
   scope,
+  ignoreSpacing = false,
+  onIgnoreSpacingChange,
   onScopeChange,
   hasMultipleDocs,
   currentDocLabel,
@@ -128,11 +132,9 @@ export function BookSearchPanel({
   currentDocUid,
   currentPageUid,
 }: BookSearchPanelProps) {
-  const [draftQuery, setDraftQuery] = useState(query);
-
-  useEffect(() => {
-    setDraftQuery(query);
-  }, [query]);
+  /* draft: مشتق از پراپ با override محلی — همگام‌سازی در افکت جایز نیست */
+  const [draftOverride, setDraftOverride] = useState<string | null>(null);
+  const draftQuery = draftOverride ?? query;
 
   // یافتن ایندکس نتیجهٔ فعال برای ناوبری بعدی/قبلی
   const activeIndex = useMemo(() => {
@@ -210,13 +212,16 @@ export function BookSearchPanel({
             onSubmit={(e) => {
               e.preventDefault();
               const q = draftQuery.trim();
-              if (q) onExecuteSearch(q);
+              if (q) {
+                onExecuteSearch(q);
+                setDraftOverride(null);
+              }
             }}
             className="relative flex items-center pt-0.5"
           >
             <Input
               value={draftQuery}
-              onChange={(e) => setDraftQuery(e.target.value)}
+              onChange={(e) => setDraftOverride(e.target.value)}
               placeholder="جست‌وجو در این کتاب…"
               className="h-8 ps-7 pe-7 text-xs rounded-md border-input/80 bg-background/90"
             />
@@ -236,7 +241,7 @@ export function BookSearchPanel({
               <button
                 type="button"
                 onClick={() => {
-                  setDraftQuery("");
+                  setDraftOverride(null);
                   onExecuteSearch("");
                 }}
                 className="absolute end-2 text-muted-foreground hover:text-foreground transition-colors"
@@ -266,6 +271,7 @@ export function BookSearchPanel({
           )}
         </div>
 
+        {onIgnoreSpacingChange && <label className="flex items-center gap-2 py-2 text-xs"><input type="checkbox" checked={ignoreSpacing} onChange={(e) => onIgnoreSpacingChange(e.target.checked)} />نادیده گرفتن فاصله و نیم‌فاصله</label>}
         {/* فیلتر دامنه: کل کتاب / فقط این جلد (در صورت چندجلدی بودن) */}
         {hasMultipleDocs ? (
           <div className="flex items-center gap-1 rounded-lg border border-border/80 bg-muted/40 p-0.5 text-xs">

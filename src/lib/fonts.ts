@@ -23,7 +23,7 @@ export interface FontOption {
   note: string;
 }
 
-/** قلم نثر عربی — «Amiri یا هم‌ارز نسخ مناسب اعراب» */
+/** قلم نثر عربی و مطالعه — مشترک میان دسکتاپ و موبایل */
 export const PROSE_FONT_OPTIONS: readonly FontOption[] = [
   { id: "amiri", label: "امیری", note: "نسخ کلاسیک، مناسب اعراب‌گذاری متن حدیث" },
   { id: "scheherazade", label: "شهرزاد جدید", note: "نسخ باز و روشن با اعراب بلند" },
@@ -31,7 +31,26 @@ export const PROSE_FONT_OPTIONS: readonly FontOption[] = [
   { id: "b-zar", label: "B Zar", note: "قلم سنتی و آشنای مطبوعاتی و کتابی" },
   { id: "bahij-greta", label: "گرتا", note: "طراحی مدرن و شیوا برای متون و عناوین عربی" },
   { id: "portada", label: "پورتادا", note: "طراحی مدرن، خوانا و متناسب کتب عربی (Portada ARA)" },
+  { id: "adobe-naskh", label: "نسخ (Adobe Naskh)", note: "نسخ خوانا و تمیز برای مطالعهٔ طولانی" },
+  { id: "far-badr", label: "بدر (Far Badr)", note: "قلم کتابی سنتی" },
+  { id: "b-yagut", label: "یاقوت (B Yagut)", note: "قلم سنتی یاقوت" },
+  { id: "b-yekan", label: "یکان (B Yekan)", note: "قلم یکان کلاسیک" },
+  { id: "vazir", label: "وزیر کلاسیک (Vazir)", note: "نسخهٔ کلاسیک قلم وزیر" },
+  { id: "b-traffic", label: "ترافیک (B Traffic)", note: "قلم ساده و باز ترافیک" },
 ] as const;
+
+/** نگاشت شناسه‌های قدیمی فونت موبایل به شناسه‌های استاندارد `PROSE_FONT_OPTIONS` */
+const LEGACY_FONT_MAP: Record<string, string> = {
+  Vazirmatn: "vazirmatn",
+  BYekan: "b-yekan",
+  Far_Badr: "far-badr",
+  Greta: "bahij-greta",
+  Vazir: "vazir",
+  BTraffic: "b-traffic",
+  BYagut: "b-yagut",
+  AdobeNaskh: "adobe-naskh",
+  Inter: "vazirmatn",
+};
 
 /** قلم قرآنی — انتخاب نهایی بین Amiri Quran و Scheherazade New روی آیات واقعی مجموعه انجام شد */
 export const QURAN_FONT_OPTIONS: readonly FontOption[] = [
@@ -77,7 +96,8 @@ function latinPrimaryFor(pref?: string): string {
 /** استک نثر عربی — قلم لاتین انتخابی اول است تا ران‌های لاتینِ متن آمیخته با قلم لاتین رندر شوند */
 export function arabicStackFor(prose?: string, latin?: string): string {
   const latinPart = latinPrimaryFor(latin);
-  switch (prose) {
+  const normalized = prose && LEGACY_FONT_MAP[prose] ? LEGACY_FONT_MAP[prose] : prose;
+  switch (normalized) {
     case "vazirmatn":
       return `${latinPart}, "Vazirmatn", "Amiri", Tahoma, sans-serif`;
     case "scheherazade":
@@ -85,9 +105,21 @@ export function arabicStackFor(prose?: string, latin?: string): string {
     case "b-zar":
       return `${latinPart}, "B Zar", "Amiri", "Vazirmatn", serif`;
     case "bahij-greta":
-      return `${latinPart}, "گرتا", "Amiri", "Vazirmatn", serif`;
+      return `${latinPart}, "گرتا", "RM Greta", "Amiri", "Vazirmatn", serif`;
     case "portada":
       return `${latinPart}, "Portada ARA", "Amiri", "Vazirmatn", serif`;
+    case "adobe-naskh":
+      return `${latinPart}, "RM AdobeNaskh", "Amiri", "Vazirmatn", serif`;
+    case "far-badr":
+      return `${latinPart}, "RM FarBadr", "Amiri", "Vazirmatn", serif`;
+    case "b-yagut":
+      return `${latinPart}, "RM BYagut", "Amiri", "Vazirmatn", serif`;
+    case "b-yekan":
+      return `${latinPart}, "RM BYekan", "Vazirmatn", sans-serif`;
+    case "vazir":
+      return `${latinPart}, "RM Vazir", "Vazirmatn", sans-serif`;
+    case "b-traffic":
+      return `${latinPart}, "RM BTraffic", "Vazirmatn", sans-serif`;
     default:
       return `${latinPart}, "Amiri", "Scheherazade New", "Vazirmatn", serif`;
   }
@@ -151,8 +183,9 @@ export function initFontPrefs(): void {
   applyFontPrefs(cached);
 }
 
-/** مقدار معتبر قلم نثر — برای پالایش ورودی prefs قدیمی */
+/** مقدار معتبر قلم نثر — برای پالایش ورودی prefs قدیمی (شامل شناسه‌های قدیمی موبایل) */
 export function normalizeProseFont(v: unknown): string {
+  if (typeof v === "string" && LEGACY_FONT_MAP[v]) return LEGACY_FONT_MAP[v];
   return PROSE_FONT_OPTIONS.some((o) => o.id === v) ? (v as string) : "amiri";
 }
 export function normalizeQuranFont(v: unknown): string {

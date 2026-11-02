@@ -1,6 +1,7 @@
-@import "tailwindcss";
+@import "tailwindcss" source("../../src");
 @import "tw-animate-css";
 @import "../design-system/tokens.css";
+@import "../styles/reader-fonts.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -145,10 +146,13 @@
   --font-quran: "Amiri Quran", "Scheherazade New", "Amiri", "Vazirmatn", serif;
   --font-latin: "Source Serif 4", Georgia, "Times New Roman", serif;
 
-  /* توکن‌های دقیق DESIGN.md — حالت روشن */
+  /* توکن‌های دقیق DESIGN.md — حالت روشن (زمرد روز) + بوم مطالعه سفید */
   --canvas: #f7f5ef;
   --surface: #ffffff;
-  --reader: #fffcf5;
+  --reader: #FDFDFB;
+  --reader-text: #1F2521;
+  --reader-muted: #5D6A62;
+  --reader-ctrl: #E9ECE6;
   --text: #182a32;
   --muted: #55646b;
   --primary: #17665b;
@@ -178,23 +182,27 @@
 }
 
 .dark {
-  /* توکن‌های دقیق DESIGN.md — حالت تیره */
-  --canvas: #111a1d;
-  --surface: #18252a;
-  --reader: #152127;
-  --text: #e7edeb;
-  --muted: #a8b8b3;
+  /* توکن‌های دقیق DESIGN.md — حالت تیره (زمرد شب) + بوم مطالعه سبز جنگلی */
+  --canvas: #10191c;
+  --chrome: #162328;
+  --surface: #203239;
+  --reader: #0E3A22;
+  --reader-text: #D9EBDD;
+  --reader-muted: #8FB89F;
+  --reader-ctrl: #154C2F;
+  --text: #edf4f2;
+  --muted: #b8cbc7;
   --primary: #8ed3bd;
-  --link: #8ac7f8;
-  --border: #364950;
-  --control-border: #697f77;
+  --link: #a4d5ff;
+  --border: #425e67;
+  --control-border: #6d8d97;
   --match: #59481f;
 
   /* توکن‌های مشتق برای shadcn */
-  --on-primary: #0e181b;
-  --muted-soft: #1a262b;
-  --paper-2: #1c2a30;
-  --accent-soft: #22323a;
+  --on-primary: #10251f;
+  --muted-soft: #162328;
+  --paper-2: #2a4149;
+  --accent-soft: #254d43;
   --ring: #8ed3bd;
   --destructive: #e0796f;
 
@@ -208,16 +216,21 @@
 }
 
 /* ────────────────────────────────────────────────────────────────────
- * قالب‌های رنگی — هر قالب «تمام» توکن‌ها را بازتعریف می‌کند تا بوم،
- * سطح، متن، حاشیه، highlight، رنگ‌های معنایی و سایه با هم هماهنگ بمانند.
- * قالب‌های روشن: :root[data-palette=…]   قالب‌های تیره: .dark[data-palette=…]
+ * قالب‌های رنگی یکپارچه — توکن‌های رابط کاربری (هدر/فوتر/سایت) از پوسته‌های
+ * اصلی سایت تبعیت می‌کنند و توکن‌های بوم مطالعه (--reader، --reader-text،
+ * --reader-muted) پس‌زمینهٔ متمایز صفحهٔ کتاب را درون همان پوسته فراهم می‌کنند.
+ * قالب‌های روشن: :root:not(.dark)[data-palette=…]
+ * قالب‌های تیره: .dark[data-palette=…]
  * ──────────────────────────────────────────────────────────────────── */
 
-/* — روشن: کاغذ کهنه (کرم گرم #faf4e5، مرکب قهوه‌ای) — */
-:root[data-palette="l-parchment"] {
+/* — روشن: کاغذ کهنه (کرم گرم #faf4e5 + بوم مطالعه سپیا #F4E8D1) — */
+:root:not(.dark)[data-palette="l-parchment"] {
   --canvas: #faf4e5;
   --surface: #fffaf0;
-  --reader: #fbf6e9;
+  --reader: #F4E8D1;
+  --reader-text: #4A3B28;
+  --reader-muted: #7A6A52;
+  --reader-ctrl: #EADDC2;
   --text: #3d3229;
   --muted: #6f6152;
   --primary: #7a4a21;
@@ -241,11 +254,14 @@
   --shadow-color: 61 50 41;
 }
 
-/* — روشن: مه‌آلود (خاکستری سرد #eaecf0، سبزآبی فولادی) — */
-:root[data-palette="l-mist"] {
+/* — روشن: مه‌آلود (خاکستری سرد #eaecf0 + بوم مطالعه خاکستری/آسمانی #E2ECF5) — */
+:root:not(.dark)[data-palette="l-mist"] {
   --canvas: #eaecf0;
   --surface: #f8f9fb;
-  --reader: #f4f6f8;
+  --reader: #E2ECF5;
+  --reader-text: #1E2A32;
+  --reader-muted: #5A6B78;
+  --reader-ctrl: #D6E4F0;
   --text: #2b3440;
   --muted: #5d6b7a;
   --primary: #2e6e73;
@@ -269,11 +285,14 @@
   --shadow-color: 43 52 64;
 }
 
-/* — روشن: باغ سبز (سبز ملایم #eef3ea) — */
-:root[data-palette="l-sage"] {
+/* — روشن: باغ سبز (سبز ملایم #eef3ea + بوم مطالعه سبز روشن #D8ECD9) — */
+:root:not(.dark)[data-palette="l-sage"] {
   --canvas: #eef3ea;
   --surface: #f9fbf7;
-  --reader: #f3f7ef;
+  --reader: #D8ECD9;
+  --reader-text: #1C3121;
+  --reader-muted: #4E6A54;
+  --reader-ctrl: #CBE2CC;
   --text: #2c362e;
   --muted: #5f6f61;
   --primary: #3e7048;
@@ -297,11 +316,15 @@
   --shadow-color: 44 54 46;
 }
 
-/* — تیره: اقیانوس (فیروزهٔ عمیق #0a333e) — */
+/* — تیره: اقیانوس (فیروزهٔ عمیق #0a333e + بوم مطالعه بنفش گرگ‌ومیش #30204A) — */
 .dark[data-palette="d-ocean"] {
   --canvas: #0a333e;
+  --chrome: #082a33;
   --surface: #0e404d;
-  --reader: #0c3a46;
+  --reader: #30204A;
+  --reader-text: #DED9EE;
+  --reader-muted: #A79BC8;
+  --reader-ctrl: #3B2A5E;
   --text: #d9ecf0;
   --muted: #8fb4bc;
   --primary: #62cdbf;
@@ -318,18 +341,22 @@
   --destructive: #e88b80;
 
   --ayah: #7fd0a8;
-  --ayah-soft: #0f3d33;
-  --sharh-soft: #124a56;
+  --ayah-soft: #1d2f3a;
+  --sharh-soft: #261b3d;
   --warning: #e5b562;
 
   --shadow-color: 0 0 0;
 }
 
-/* — تیره: گرافیت (خاکستری دودی #282c34 با کهربا) — */
+/* — تیره: گرافیت (خاکستری دودی #282c34 + بوم مطالعه سیاه شب #14161A) — */
 .dark[data-palette="d-graphite"] {
   --canvas: #21252b;
+  --chrome: #1c2026;
   --surface: #282c34;
-  --reader: #24282e;
+  --reader: #14161A;
+  --reader-text: #D6DAE0;
+  --reader-muted: #8A929C;
+  --reader-ctrl: #2A2F38;
   --text: #d7dce3;
   --muted: #9aa3af;
   --primary: #d9a868;
@@ -346,18 +373,22 @@
   --destructive: #e0796f;
 
   --ayah: #96c98f;
-  --ayah-soft: #263128;
-  --sharh-soft: #31363f;
+  --ayah-soft: #1d2620;
+  --sharh-soft: #1d2026;
   --warning: #e0834f;
 
   --shadow-color: 0 0 0;
 }
 
-/* — تیره: چوب گردو (قهوه‌ای شبانهٔ گرم) — */
+/* — تیره: چوب گردو (قهوه‌ای شبانهٔ گرم #221a12 + بوم مطالعه قهوه‌ای #261A10) — */
 .dark[data-palette="d-walnut"] {
   --canvas: #221a12;
+  --chrome: #1c150e;
   --surface: #2b2118;
-  --reader: #281f16;
+  --reader: #261A10;
+  --reader-text: #EADCCB;
+  --reader-muted: #B29B82;
+  --reader-ctrl: #362619;
   --text: #ecdfd0;
   --muted: #b3a28d;
   --primary: #d9a05b;
@@ -366,19 +397,29 @@
   --control-border: #7d6b55;
   --match: #6b4e1f;
 
-  --on-primary: #2b1c0b;
-  --muted-soft: #322720;
-  --paper-2: #352a21;
-  --accent-soft: #3a2e24;
+  --on-primary: #271b0d;
+  --muted-soft: #31261b;
+  --paper-2: #33281d;
+  --accent-soft: #382c20;
   --ring: #d9a05b;
-  --destructive: #e08573;
+  --destructive: #e0796f;
 
-  --ayah: #a9c48f;
-  --ayah-soft: #2c331f;
-  --sharh-soft: #352b1f;
-  --warning: #d9b36a;
+  --ayah: #a8c686;
+  --ayah-soft: #252b1b;
+  --sharh-soft: #312519;
+  --warning: #e09f5a;
 
   --shadow-color: 0 0 0;
+}
+
+/* بوم مطالعه: متن و رنگ‌های فرعی درون محیط کتاب از توکن‌های اختصاصی مطالعه تبعیت می‌کنند */
+.reader-surface {
+  --text: var(--reader-text, #182a32);
+  --muted: var(--reader-muted, #55646b);
+  --color-foreground: var(--reader-text, #182a32);
+  --color-muted-foreground: var(--reader-muted, #55646b);
+  background-color: var(--reader);
+  color: var(--reader-text, var(--text));
 }
 
 @layer base {

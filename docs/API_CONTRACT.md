@@ -25,9 +25,18 @@ Mutationها باید هدر `X-Noor-CSRF` داشته باشند (token از `GE
 قواعد: محدودسازی تلاش ورود (بدون افشای وجود حساب)، رمز Argon2id، آخرین ادمین غیرفعال نمی‌شود، هیچ حساب demo وجود ندارد.
 
 ## کتابخانه
-- `GET /works?q=&language=&author=&sort=title|volumes&page=&page_size=` → `{items:[{uid,title,short_title,author,publisher,year,language,collection_uid,volumes_count,documents_count,cover_uid,topics:[],features:{hadith,quran,footnotes,links,topics,media,searchable_text},published}],total,page,page_size}` — دادهٔ ناموجود `null` است (حدس زده نمی‌شود — LIB-09).
-- `GET /works/{uid}` → بالا + `documents:[{uid,label,kind,pages_count,language,coverage:{toc,hadith,quran,footnotes,links,topics,searchable_text}}]` (coverage: supported|partial|absent|failed).
+- `GET /works?q=&language=&author=&sort=title|volumes&content=text|pdf|audio&page=&page_size=` → `{items:[{uid,title,short_title,author,publisher,year,language,collection_uid,volumes_count,documents_count,cover_uid,formats:[],topics:[],features:{hadith,quran,footnotes,links,topics,media,searchable_text},published}],total,page,page_size}` — دادهٔ ناموجود `null` است (حدس زده نمی‌شود — LIB-09).
+  - `formats` فرمت‌های موجود اسناد اثر است: `text|pdf|image|audio|other` (از پسوند فایل مشتق می‌شود؛ `catalog.json` دست نمی‌خورد).
+  - `content` نمایش را به آثاری محدود می‌کند که ≥۱ سند **دقیقاً** از آن فرمت دارند؛ مقدار نامعتبر نادیده گرفته می‌شود. `image` در فیلتر نیست (کاور قابل مطالعه نیست).
+  - `features.media` وقتی `supported` است که اثر ≥۱ سند `pdf|audio` داشته باشد؛ سه مقدار دیگر (`absent|unknown|failed`) یعنی رسانهٔ قابل پخش ندارد. مقادیر `features` رشتهٔ وضعیت‌اند نه boolean.
+- `GET /works/{uid}` → بالا + `documents:[{uid,label,kind,format,pages_count,language,coverage:{toc,hadith,quran,footnotes,links,topics,searchable_text}}]` (coverage: supported|partial|absent|failed؛ `format`: text|pdf|image|audio|other).
 - `GET /works/{uid}/related` → `[{relation_type, target_work_uid?, target_title?, resolved:boolean, note}]`
+
+## رسانه (فایل اسکن/کاور/صوت)
+- `GET /documents/{uid}/media` (نشست لازم) → `{uid,format,content_type,size_bytes,accept_ranges:true,available}`؛ سند متنی/اثر منتشرنشده → 404.
+- `GET /documents/{uid}/file` (نشست لازم) → بدنهٔ فایل با `Content-Type` واقعی، `ETag`، `Last-Modified`، `Accept-Ranges: bytes`، `Cache-Control: private, no-cache`، `Content-Disposition: inline`. `Range`/`If-Range`/`If-None-Match` پشتیبانی می‌شود (`206`/`304`؛ `HEAD` مجاز).
+  - وب این مسیر را با استریم بدون بافر از `/api/v1/documents/{uid}/file` (Next) عبور می‌دهد؛ **`Content-Disposition` در پروکسی حذف می‌شود** چون کروم پاسخ PDF دارای این هدر را در `fetch` قطع می‌کند (204) و pdf.js شکست می‌خورد.
+
 
 ## مطالعه
 - `GET /documents/{uid}/toc` → `{sections:[{uid,title,kind,page_label,children:[...]}]}` (کلیک → anchor همان گره)
@@ -128,5 +137,11 @@ Mutationها باید هدر `X-Noor-CSRF` داشته باشند (token از `GE
 - `GET /admin/users` / `POST /admin/invitations {role:admin|reader}` → `{code}` / `POST /admin/users/{uid}/disable|enable` / `POST /admin/users/{uid}/role {role}` (MFA؛ آخرین ادمین محافظت می‌شود)
 - `GET /admin/audit?page=` — عملیات حساس
 
+## افزودهٔ هماهنگ‌سازی ریدر (۲۰۲۶-۱۰-۳۱)
+
+- جست‌وجو: `ignore_spacing?: boolean` (پیش‌فرض `false`) فقط برای `normalized_phrase` در دامنهٔ جلد/اثر با شناسهٔ مشخص معتبر است؛ دامنه یا حالت ناسازگار خطای اعتبارسنجی می‌دهد. فاصلهٔ معمولی، NBSP و نیم‌فاصله نادیده گرفته می‌شوند؛ علائم و مرز پاراگراف باقی می‌مانند. آفست نتیجه code point متن اصلی است. مقدار گزینه در کش و نشست جست‌وجو حفظ می‌شود؛ وضعیت برش/ناقص‌بودن پاسخ تغییری نمی‌کند.
+- موضع مطالعه: دادهٔ `position` می‌تواند `document_uid`، `page_uid`، `block_id` و `offset_cp` داشته باشد. مواضع قدیمیِ فقط صفحه همچنان خوانده می‌شوند؛ `sub` مشخصهٔ صفحه‌بندی است. schema جدید یا migration لازم نیست.
+
 ## داخلی (بدون proxy عمومی؛ service token)
+
 - `POST /internal/jobs/claim` / `POST /internal/jobs/{uid}/progress|complete|fail` / `POST /internal/audit`

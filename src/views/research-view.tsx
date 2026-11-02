@@ -41,7 +41,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EmptyState, ErrorState, ListSkeleton } from "@/components/feedback";
 import { api, ApiError, errorMessage } from "@/lib/api";
 import { fetchProjects } from "@/lib/projects";
@@ -218,6 +218,12 @@ export function ResearchView() {
                 </Badge>
               </TabsTrigger>
             </TabsList>
+            {/* فهرست اصلی پرونده‌ها بیرون از <Tabs> رندر می‌شود؛ پنل‌های forceMount
+                برای آنکه idهای aria-controls واقعاً در DOM موجود باشند ( رفع
+                فلگ axe/Lighthouse «aria-valid-attr-value ») نامرئی اضافه می‌شوند */}
+            <TabsContent value="all" forceMount className="hidden" />
+            <TabsContent value="active" forceMount className="hidden" />
+            <TabsContent value="archived" forceMount className="hidden" />
           </Tabs>
 
           {visible.length === 0 ? (

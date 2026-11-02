@@ -144,7 +144,7 @@ func (s *DB) migrate() error {
                         uid TEXT PRIMARY KEY, user_uid TEXT NOT NULL, document_uid TEXT NOT NULL,
                         page_uid TEXT NOT NULL, block_id TEXT NOT NULL,
                         start_cp INTEGER NOT NULL, end_cp INTEGER NOT NULL,
-                        text TEXT NOT NULL, color TEXT NOT NULL DEFAULT 'yellow', note TEXT,
+                        text TEXT NOT NULL, color TEXT NOT NULL DEFAULT 'yellow', note TEXT, group_uid TEXT,
                         created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
 		`CREATE INDEX IF NOT EXISTS idx_highlights_owner ON highlights(user_uid, document_uid, created_at)`,
 		// اشتراک صریح و لغوشدنی — مقصد snapshot تا لغو واقعاً دسترسی را قطع کند
@@ -203,6 +203,9 @@ func (s *DB) migrate() error {
 	// مهاجرت افزایشی ستون‌ها (idempotent): برای پایگاه‌های موجود که CREATE TABLE
 	// دیگر رویشان اجرا نمی‌شود.
 	if err := ensureColumn(conn, "users", "last_totp_step", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return fmt.Errorf("migrate: ensureColumn: %w", err)
+	}
+	if err := ensureColumn(conn, "highlights", "group_uid", "TEXT"); err != nil {
 		return fmt.Errorf("migrate: ensureColumn: %w", err)
 	}
 	var v int

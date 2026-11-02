@@ -38,6 +38,7 @@ import {
 import { HashLink } from "@/lib/hash-router";
 import { api, errorMessage } from "@/lib/api";
 import { faNum } from "@/lib/format";
+import { readHref as readerHref, readShareHref, workHref } from "@/lib/href";
 import { matchTypeLabels } from "@/lib/labels";
 import type {
   ClipKind,
@@ -499,7 +500,7 @@ export function ResultCard({
   const hlOffsets = normalizeOffsets(result.match_offsets) ?? offsets;
   const readHref = hasDocument
     ? {
-        to: `/read/${result.document.uid}`,
+        to: readerHref(result.document.uid),
         query: {
           ...(result.page?.uid ? { pg: result.page.uid } : {}),
           ...(hlOffsets ? { hl: `${hlOffsets.start}:${hlOffsets.end}` } : {}),
@@ -523,17 +524,13 @@ export function ResultCard({
     ]
       .filter(Boolean)
       .join("، ");
+    // فاز ۲: نشانی معنایی کامل (path نام‌دار + pg عددی + uid در query)
     const address = readHref
-      ? `#/read/${result.document.uid}${
-          readHref.query.pg || readHref.query.hl
-            ? `?${[
-                readHref.query.pg ? `pg=${readHref.query.pg}` : "",
-                readHref.query.hl ? `hl=${readHref.query.hl}` : "",
-              ]
-                .filter(Boolean)
-                .join("&")}`
-            : ""
-        }`
+      ? readShareHref(result.document.uid, {
+          title: result.work?.title,
+          pgUid: readHref.query.pg ?? null,
+          hl: readHref.query.hl ?? null,
+        })
       : "";
     try {
       await navigator.clipboard.writeText([citation, address].filter(Boolean).join("\n"));
@@ -644,6 +641,7 @@ export function ResultCard({
             <HashLink
               to={readHref.to}
               query={readHref.query}
+              slug={result.work?.title}
               className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground shadow-sm transition-all hover:bg-primary/90 hover:shadow"
             >
               <BookOpenText className="size-4" aria-hidden="true" />
@@ -665,7 +663,7 @@ export function ResultCard({
           </>
         ) : result.work?.uid ? (
           <HashLink
-            to={`/book/${result.work.uid}`}
+            to={workHref(result.work.uid)}
             className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground shadow-sm transition-all hover:bg-primary/90 hover:shadow"
           >
             <BookOpenText className="size-4" aria-hidden="true" />

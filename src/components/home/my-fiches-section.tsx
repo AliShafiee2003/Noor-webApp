@@ -29,6 +29,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { api, errorMessage } from "@/lib/api";
 import { HashLink } from "@/lib/hash-router";
 import { faDate, faNum } from "@/lib/format";
+import { readHref as readerHref } from "@/lib/href";
 import type { ClipKind, ClipTagSummary, MyClipSummary } from "@/lib/types";
 
 /** نشان نوع فیش — هم‌واژگان پروژه (KIND_META در footnote-panel و project-view) */
@@ -141,7 +142,8 @@ function FicheCard({ clip }: { clip: MyClipSummary }) {
           </HashLink>
           {clip.document_uid ? (
             <HashLink
-              to={`/read/${clip.document_uid}`}
+              to={readerHref(clip.document_uid)}
+              slug={clip.work_title}
               query={clip.page_uid ? { pg: clip.page_uid } : undefined}
               className="inline-flex min-h-8 items-center gap-1 rounded-md border border-border px-2 text-[11px] font-medium text-primary transition-colors hover:bg-primary/10 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-primary"
             >

@@ -7,7 +7,6 @@ package httpapi
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -286,7 +285,7 @@ func TestUGCSharesTwoUsers(t *testing.T) {
 	if !strings.HasPrefix(uid, "sh-") {
 		t.Fatalf("share uid = %q", uid)
 	}
-	wantURL := fmt.Sprintf("#/read/doc-bahar-2?pg=p-001&shared=%s", uid)
+	wantURL := "/library/book/read?d=doc-bahar-2&pg=1&shared=" + uid
 	if created["url_path"] != wantURL {
 		t.Fatalf("url_path = %q, want %q", created["url_path"], wantURL)
 	}
@@ -589,5 +588,91 @@ func TestUGCPdfJobsTwoUsers(t *testing.T) {
 	resp = ugcDo(t, ts, "POST", "/api/v1/internal/pdf-jobs/claim", "", map[string]any{}, svcHdr)
 	if job := ugcJSON(t, resp)["job"]; job != nil {
 		t.Fatalf("expected null job, got %v", job)
+	}
+}
+
+// ---- هایلایت چندپاراگرافی (group_uid) ----
+func TestUGCHighlightGroupCascade(t *testing.T) {
+	s, ts := ugcTestServer(t)
+	token := ugcUser(t, s, "hl-group", "گروه")
+	group := "grp-test-1"
+	mk := func(block string, start, end int, text string) map[string]any {
+		return map[string]any{
+			"document_uid": "doc-group", "page_uid": "p-001", "block_id": block,
+			"start": start, "end": end, "text": text, "color": "pink", "group_uid": group,
+		}
+	}
+	resp := ugcDo(t, ts, "POST", "/api/v1/annotations", token, mk("b-1", 0, 10, "پاراگراف نخست"), nil)
+	if resp.StatusCode != 201 {
+		t.Fatalf("POST first = %d, want 201", resp.StatusCode)
+	}
+	first := ugcJSON(t, resp)
+	if first["group_uid"] != group {
+		t.Fatalf("first group_uid = %v, want %q", first["group_uid"], group)
+	}
+	resp = ugcDo(t, ts, "POST", "/api/v1/annotations", token, mk("b-2", 0, 8, "پاراگراف دوم"), nil)
+	if resp.StatusCode != 201 {
+		t.Fatalf("POST second = %d, want 201", resp.StatusCode)
+	}
+	second := ugcJSON(t, resp)
+	if second["group_uid"] != group {
+		t.Fatalf("second group_uid = %v, want %q", second["group_uid"], group)
+	}
+	// تک‌هایلایت بدون گروه باید مستقل بماند
+	single := map[string]any{
+		"document_uid": "doc-group", "page_uid": "p-001", "block_id": "b-3",
+		"start": 0, "end": 5, "text": "تک", "color": "green",
+	}
+	resp = ugcDo(t, ts, "POST", "/api/v1/annotations", token, single, nil)
+	if resp.StatusCode != 201 {
+		t.Fatalf("POST single = %d", resp.StatusCode)
+	}
+	singleUID, _ := ugcJSON(t, resp)["uid"].(string)
+
+	// PATCH یک قطعه → یادداشت/رنگ روی کل گروه
+	resp = ugcDo(t, ts, "PATCH", "/api/v1/annotations/"+first["uid"].(string), token,
+		map[string]any{"note": "یادداشت گروهی", "color": "green"}, nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("PATCH group = %d", resp.StatusCode)
+	}
+	resp = ugcDo(t, ts, "GET", "/api/v1/annotations?document_uid=doc-group", token, nil, nil)
+	if n := len(ugcItems(t, ugcJSON(t, resp))); n != 3 {
+		t.Fatalf("list len = %d, want 3", n)
+	}
+	resp = ugcDo(t, ts, "GET", "/api/v1/annotations?document_uid=doc-group", token, nil, nil)
+	for _, it := range ugcItems(t, ugcJSON(t, resp)) {
+		row, _ := it.(map[string]any)
+		if row["group_uid"] != group {
+			continue
+		}
+		if row["note"] != "یادداشت گروهی" || row["color"] != "green" {
+			t.Fatalf("group row not patched: %v", row)
+		}
+	}
+
+	// حذف یک قطعه → کل گروه حذف می‌شود؛ تک‌هایلایت می‌ماند
+	resp = ugcDo(t, ts, "DELETE", "/api/v1/annotations/"+first["uid"].(string), token, nil, nil)
+	if resp.StatusCode != 204 {
+		t.Fatalf("DELETE group row = %d, want 204", resp.StatusCode)
+	}
+	resp.Body.Close()
+	resp = ugcDo(t, ts, "GET", "/api/v1/annotations?document_uid=doc-group", token, nil, nil)
+	items := ugcItems(t, ugcJSON(t, resp))
+	if len(items) != 1 {
+		t.Fatalf("after group delete len = %d, want 1", len(items))
+	}
+	left, _ := items[0].(map[string]any)
+	if left["uid"] != singleUID || left["group_uid"] != nil {
+		t.Fatalf("remaining = %v, want single uid %q without group", left, singleUID)
+	}
+
+	// group_uid بیش از ۱۰۰ نویسه → 422
+	long := strings.Repeat("g", 101)
+	resp = ugcDo(t, ts, "POST", "/api/v1/annotations", token, map[string]any{
+		"document_uid": "doc-group", "page_uid": "p-001", "block_id": "b-4",
+		"start": 0, "end": 3, "text": "متن", "group_uid": long,
+	}, nil)
+	if resp.StatusCode != 422 {
+		t.Fatalf("long group_uid = %d, want 422", resp.StatusCode)
 	}
 }

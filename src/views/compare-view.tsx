@@ -27,6 +27,7 @@ import { EmptyState, ErrorState } from "@/components/feedback";
 import { PageRenderer } from "@/components/reader/page-renderer";
 import { api, errorMessage } from "@/lib/api";
 import { faNum } from "@/lib/format";
+import { readHref as readerHref, readShareHref } from "@/lib/href";
 import { documentKindLabel } from "@/lib/labels";
 import { useWorkspaceStore } from "@/store/workspace";
 import type {
@@ -138,7 +139,7 @@ function ComparePane({ sideLabel }: { sideLabel: string }) {
   const workDetailQuery = useQuery({
     queryKey: ["compare-work", workUid],
     enabled: !!workUid,
-    queryFn: () => api.get<WorkDetail>(`/works/${workUid}`),
+    queryFn: () => api.get<WorkDetail>(`/works/${encodeURIComponent(workUid!)}`),
     staleTime: 5 * 60_000,
   });
   const documents = workDetailQuery.data?.documents ?? [];
@@ -146,7 +147,7 @@ function ComparePane({ sideLabel }: { sideLabel: string }) {
   const pagesQuery = useQuery({
     queryKey: ["compare-pages", docUid],
     enabled: !!docUid,
-    queryFn: () => api.get<{ items: PageRef[] }>(`/documents/${docUid}/pages`),
+    queryFn: () => api.get<{ items: PageRef[] }>(`/documents/${encodeURIComponent(docUid!)}/pages`),
     retry: false,
   });
   const pages = pagesQuery.data?.items ?? [];
@@ -162,7 +163,10 @@ function ComparePane({ sideLabel }: { sideLabel: string }) {
   const pageQuery = useQuery({
     queryKey: ["compare-page", docUid, effectivePageUid],
     enabled: !!docUid && !!effectivePageUid,
-    queryFn: () => api.get<PagePayload>(`/documents/${docUid}/pages/${effectivePageUid}`),
+    queryFn: () =>
+      api.get<PagePayload>(
+        `/documents/${encodeURIComponent(docUid!)}/pages/${encodeURIComponent(effectivePageUid!)}`,
+      ),
     retry: false,
   });
   const page = pageQuery.data ?? null;
@@ -188,7 +192,11 @@ function ComparePane({ sideLabel }: { sideLabel: string }) {
     ]
       .filter(Boolean)
       .join("، ");
-    const address = `#/read/${docUid}${effectivePageUid ? `?pg=${effectivePageUid}` : ""}`;
+    // فاز ۲: نشانی معنایی کامل برای کپی (path نام‌دار + pg عددی)
+    const address = readShareHref(docUid, {
+      title: workTitle,
+      pgUid: effectivePageUid,
+    });
     try {
       await navigator.clipboard.writeText(`${citation}\n${address}`);
     } catch {

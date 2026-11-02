@@ -86,7 +86,7 @@ test("highlight → اشتراک → کاربر دوم می‌بیند → ما�
   test.setTimeout(180_000);
 
   /* ---------- ۱) مالک (admin): ورود + ساخت هایلایت و لینک اشتراک ---------- */
-  await login(page, "admin", "zaB3v-XPngB-fXcYw");
+  await login(page, "admin", "NoorDev-2026-Temp");
   const ann = await pageFetch(page, "POST", "/annotations", {
     document_uid: DOC,
     page_uid: PAGE,
@@ -121,7 +121,7 @@ test("highlight → اشتراک → کاربر دوم می‌بیند → ما�
 
   /* ---------- ۳) مالک: لغو از تنظیمات (UI) ---------- */
   await logout(page);
-  await login(page, "admin", "zaB3v-XPngB-fXcYw");
+  await login(page, "admin", "NoorDev-2026-Temp");
   await page.goto("/#/settings");
   await page.getByRole("tab", { name: "اشتراک و خروجی" }).click();
   const shareRow = page.locator("li").filter({ hasText: HIGHLIGHT_TEXT }).first();
@@ -144,6 +144,6 @@ test("highlight → اشتراک → کاربر دوم می‌بیند → ما�
 
   /* ---------- پاک‌سازی: حذف هایلایت آزمون (best-effort؛ قفل گذرای SQLite 500 ممکن است) ---------- */
   await logout(page);
-  await login(page, "admin", "zaB3v-XPngB-fXcYw");
+  await login(page, "admin", "NoorDev-2026-Temp");
   await pageFetch(page, "DELETE", `/annotations/${annUID}`);
 });
